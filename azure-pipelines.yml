@@ -1,0 +1,4 @@
+trigger: none
+pr: none
+steps:
+- checkout: none
