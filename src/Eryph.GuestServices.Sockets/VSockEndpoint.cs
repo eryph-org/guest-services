@@ -27,7 +27,9 @@ public class VSockEndpoint : EndPoint
 
     public override EndPoint Create(SocketAddress socketAddress)
     {
-        if (socketAddress.Family != VsockAddressFamily || socketAddress.Size != AddressLength)
+        // TODO is this correct?
+        // socketAddress.Family == VsockAddressFamily will fail
+        if (socketAddress.Size != AddressLength)
             throw new ArgumentException("Invalid VSock socket address.");
         var cid = BitConverter.ToUInt32(socketAddress.Buffer.Span[4..8]);
         var port = BitConverter.ToUInt32(socketAddress.Buffer.Span[8..12]);
