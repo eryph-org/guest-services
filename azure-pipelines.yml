@@ -31,6 +31,7 @@ jobs:
       projects: 'src/Eryph.GuestServices.Service/*.csproj'
       arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --output $(Build.ArtifactStagingDirectory)/egs_build/linux_amd64'
       zipAfterPublish: false
+      modifyOutputPath: false
   
   - task: ArchiveFiles@2
     displayName: pack zero build
@@ -48,6 +49,7 @@ jobs:
       projects: 'src/Eryph.GuestServices.Service/*.csproj'
       arguments: '--configuration $(buildConfiguration) --runtime win-x64 --output $(Build.ArtifactStagingDirectory)/egs_build/windows_amd64'
       zipAfterPublish: false
+      modifyOutputPath: false
 
   - task: ArchiveFiles@2
     displayName: pack zero build
