@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
+  </ItemGroup>
+
+</Project>
