@@ -29,8 +29,16 @@ jobs:
       command: 'publish'
       publishWebProjects: false
       projects: 'src/Eryph.GuestServices.Service/*.csproj'
-      arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --output $(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_linux_amd64'
-      zipAfterPublish: true
+      arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --output $(Build.ArtifactStagingDirectory)/egs_build/linux_amd64'
+      zipAfterPublish: false
+  
+  - task: ArchiveFiles@2
+    displayName: pack zero build
+    inputs:
+      rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs_build/linux_amd64'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_linux_amd64.zip'
 
   - task: DotNetCoreCLI@2
     displayName: publish services (Windows)
@@ -38,8 +46,16 @@ jobs:
       command: 'publish'
       publishWebProjects: false
       projects: 'src/Eryph.GuestServices.Service/*.csproj'
-      arguments: '--configuration $(buildConfiguration) --runtime win-x64 --output $(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_windows_amd64'
-      zipAfterPublish: true
+      arguments: '--configuration $(buildConfiguration) --runtime win-x64 --output $(Build.ArtifactStagingDirectory)/egs_build/windows_amd64'
+      zipAfterPublish: false
+
+  - task: ArchiveFiles@2
+    displayName: pack zero build
+    inputs:
+      rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs_build/windows_amd64'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_windows_amd64.zip'
 
   # TODO sign executables
 
