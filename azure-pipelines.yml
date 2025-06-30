@@ -61,8 +61,8 @@ jobs:
 
   # TODO sign executables
 
-  - task: PublishBuildArtifacts@1
-    displayName: upload zero artifact
+  - task: PublishPipelineArtifact@1
+    displayName: upload egs artifact
     inputs:
-      PathtoPublish: '$(Build.ArtifactStagingDirectory)/egs'
-      ArtifactName: 'egs'
+      targetPath: '$(Build.ArtifactStagingDirectory)/egs'
+      artifactName: 'egs'
