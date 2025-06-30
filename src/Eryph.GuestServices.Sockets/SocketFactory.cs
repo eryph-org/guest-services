@@ -39,6 +39,8 @@ public static partial class SocketFactory
             {
                 ListenMode.Any => unchecked((uint)-1),
                 ListenMode.Loopback => 1,
+                // TODO fix me
+                ListenMode.Parent => 1,
                 _ => throw new ArgumentOutOfRangeException(nameof(listenMode), listenMode, "The listen mode is not supported")
             };
             uint port = PortNumberConverter.ToPortNumber(serviceId); 

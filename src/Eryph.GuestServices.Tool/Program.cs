@@ -1,4 +1,23 @@
-﻿// See https://aka.ms/new-console-template for more information
-Console.WriteLine("Hello, World!");
+﻿using Eryph.GuestServices.Tool.Commands;
+using Eryph.GuestServices.Tool.Interceptors;
+using Spectre.Console.Cli;
 
-// TODO use 0x80070005 for elevation missing
+var app = new CommandApp();
+app.Configure(config =>
+{
+    config.SetInterceptor(new IsElevatedInterceptor());
+
+    config.AddCommand<ProxyCommand>("proxy")
+        .WithDescription(
+            "Provides a proxy command for connecting to the eryph guest services with a standard SSH client.");
+
+    config.AddCommand<ProxyCommand>("register")
+        .WithDescription(
+            "Registers the eryph guest services as a Hyper-V integration service.");
+
+    config.AddCommand<ProxyCommand>("unregister")
+        .WithDescription(
+            "Unregisters the eryph guest services from Hyper-V.");
+});
+
+return await app.RunAsync(args);
