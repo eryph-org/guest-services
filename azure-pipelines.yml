@@ -34,7 +34,7 @@ jobs:
       modifyOutputPath: false
   
   - task: ArchiveFiles@2
-    displayName: pack zero build
+    displayName: pack tool (Linux)
     inputs:
       rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs_build/linux_amd64'
       includeRootFolder: false
@@ -52,12 +52,31 @@ jobs:
       modifyOutputPath: false
 
   - task: ArchiveFiles@2
-    displayName: pack zero build
+    displayName: pack tool (Windows)
     inputs:
       rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs_build/windows_amd64'
       includeRootFolder: false
       archiveType: 'zip'
       archiveFile: '$(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_windows_amd64.zip'
+
+  - task: DotNetCoreCLI@2
+    displayName: publish tool (Windows)
+    inputs:
+      command: 'publish'
+      publishWebProjects: false
+      projects: 'src/Eryph.GuestServices.Tool/*.csproj'
+      arguments: '--configuration $(buildConfiguration) --runtime win-x64 --output $(Build.ArtifactStagingDirectory)/egs-tool_build/windows_amd64'
+      zipAfterPublish: false
+      modifyOutputPath: false
+
+  - task: ArchiveFiles@2
+    displayName: pack tool (Windows)
+    inputs:
+      rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs-tool_build/windows_amd64'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/egs-tool/egs-tool_$(Build.BuildNumber)_windows_amd64.zip'
+
 
   # TODO sign executables
 
@@ -66,3 +85,9 @@ jobs:
     inputs:
       targetPath: '$(Build.ArtifactStagingDirectory)/egs'
       artifactName: 'egs'
+
+  - task: PublishPipelineArtifact@1
+    displayName: upload egs-tool artifact
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/egs-tool'
+      artifactName: 'egs-tool'
