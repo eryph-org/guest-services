@@ -15,7 +15,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
     public IKeyPair? GetClientKey()
     {
         var keyFilePath = Path.Combine(
-            "/opt", "etc", "eryph", "guest-services", "egs.pub");
+            "/etc", "opt", "eryph", "guest-services", "egs.pub");
 
         if (!File.Exists(keyFilePath))
             return null;
@@ -26,7 +26,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
     public IKeyPair GetHostKey()
     {
         var directoryPath = Path.Combine(
-            "/opt", "etc", "eryph", "guest-services", "private");
+            "/etc", "opt", "eryph", "guest-services", "private");
 
         EnsureDirectory(directoryPath);
 

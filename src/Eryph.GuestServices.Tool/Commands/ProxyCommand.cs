@@ -51,5 +51,6 @@ public class ProxyCommand : AsyncCommand<ProxyCommand.Settings>
         });
 
         await Task.WhenAll(stdinTask, stdoutTask);
+        return 0;
     }
 }
