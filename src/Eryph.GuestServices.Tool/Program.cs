@@ -7,6 +7,10 @@ app.Configure(config =>
 {
     config.SetInterceptor(new IsElevatedInterceptor());
 
+    config.AddCommand<GetSshKeyCommand>("get-ssh-key")
+        .WithDescription(
+            "Returns the public key.");
+
     config.AddCommand<UpdateSshConfigCommand>("update-ssh-config")
         .WithDescription(
             "Updates the SSH config to allow connecting to the catlets.");
