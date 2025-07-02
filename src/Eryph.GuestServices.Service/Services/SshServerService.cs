@@ -51,12 +51,22 @@ internal sealed class SshServerService(
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {
+        logger.LogWarning("Authentication type: {AuthType}", e.AuthenticationType);
         if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey
             or SshAuthenticationType.ClientPublicKeyQuery))
             return;
 
-        if (e.Username != "egs" || e.PublicKey is null)
+        if (e.Username != "egs")
+        {
+            logger.LogWarning("Incorrect user name {Username}", e.Password);
             return;
+        }
+
+        if (e.PublicKey is null)
+        {
+            logger.LogWarning("Public key is null for user {Username}", e.Username);
+            return;
+        }
 
         var clientKey = keyStorage.GetClientKey();
         if (clientKey is null)
@@ -66,7 +76,10 @@ internal sealed class SshServerService(
         }
 
         if (e.PublicKey.GetPublicKeyBytes() != clientKey.GetPublicKeyBytes())
+        {
+            logger.LogWarning("Public key mismatch for user {Username}: {PublicKey}", e.Username, e.PublicKey.GetPublicKeyBytes().ToBase64());
             return;
+        }
         
         // TODO should some of this code be async?
         e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
