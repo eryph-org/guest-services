@@ -42,6 +42,7 @@ internal class InitializeCommand : Command<InitializeCommand.Settings>
 
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
         KeyPair.ExportPrivateKeyFile(keyPair, keyFilePath, keyFormat: KeyFormat.OpenSsh);
+        KeyPair.ExportPublicKeyFile(keyPair, Path.Combine(privateConfigPath, "id_egs.pub"), KeyFormat.Ssh);
 
         return 0;
     }
