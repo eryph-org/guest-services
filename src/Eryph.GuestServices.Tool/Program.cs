@@ -7,17 +7,32 @@ app.Configure(config =>
 {
     config.SetInterceptor(new IsElevatedInterceptor());
 
+    config.AddCommand<UpdateSshConfigCommand>("update-ssh-config")
+        .WithDescription(
+            "Updates the SSH config to allow connecting to the catlets.");
+
     config.AddCommand<ProxyCommand>("proxy")
         .WithDescription(
             "Provides a proxy command for connecting to the eryph guest services with a standard SSH client.");
 
-    config.AddCommand<ProxyCommand>("register")
+    config.AddCommand<InitializeCommand>("initialize")
         .WithDescription(
-            "Registers the eryph guest services as a Hyper-V integration service.");
+            "Initializes the eryph guest services on the Hyper-V host.");
 
-    config.AddCommand<ProxyCommand>("unregister")
+    config.AddCommand<UnregisterCommand>("unregister")
         .WithDescription(
             "Unregisters the eryph guest services from Hyper-V.");
 });
 
-return await app.RunAsync(args);
+if (args.Length != 1 || args[0] != "repl")
+    return await app.RunAsync(args);
+
+while (true)
+{
+    Console.Write("egs-tool> ");
+    var command = Console.ReadLine();
+    if (string.IsNullOrEmpty(command))
+        return 0;
+
+    await app.RunAsync(command.Split(' '));
+}
