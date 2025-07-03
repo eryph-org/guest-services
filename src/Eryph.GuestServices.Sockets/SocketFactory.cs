@@ -54,7 +54,7 @@ public static partial class SocketFactory
     {
         var socket = new Socket(HyperVConstants.AddressFamily, SocketType.Stream, HyperVConstants.ProtocolType);
         // ConnectAsync() fails with an uninformative SocketException: "An invalid argument was supplied."
-        await Task.Run(() => socket.Connect(new HyperVEndPoint(vmId, serviceId)));
+        await Task.Run(() => socket.Connect(new HyperVEndPoint(vmId, serviceId))).ConfigureAwait(false);
         return socket;
     }
 

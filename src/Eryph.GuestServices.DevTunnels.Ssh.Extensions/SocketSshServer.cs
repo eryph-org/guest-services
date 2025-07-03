@@ -43,7 +43,8 @@ public sealed class SocketSshServer : IDisposable
     {
         while (!_disposeCancellationTokenSource.IsCancellationRequested)
         {
-            var socket = await serverSocket.AcceptAsync().ConfigureAwait(false);
+            var socket = await serverSocket.AcceptAsync(_disposeCancellationTokenSource.Token)
+                .ConfigureAwait(false);
             ConfigureSocketOptionsForSsh(socket);
             var session = new SshServerSession(_config, _trace);
             session.Credentials = Credentials;
