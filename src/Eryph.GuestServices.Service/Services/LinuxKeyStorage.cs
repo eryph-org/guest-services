@@ -10,7 +10,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
     public IKeyPair? GetClientKey()
     {
         var keyFilePath = Path.Combine(
-            "/etc", "opt", "eryph", "guest-services", "egs.pub");
+            "/etc", "opt", "eryph", "guest-services", "id_egs.pub");
 
         return !File.Exists(keyFilePath) ? null : KeyPair.ImportKeyFile(keyFilePath);
     }

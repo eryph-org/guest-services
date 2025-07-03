@@ -15,7 +15,7 @@ public class WindowsKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "eryph",
             "guest-services",
-            "egs.pub");
+            "id_egs.pub");
 
         if (!File.Exists(keyFilePath))
             return null;
