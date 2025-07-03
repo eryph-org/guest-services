@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
-    <AssemblyName>egs</AssemblyName>
+    <AssemblyName>egs-service</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,12 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Eryph.GuestServices.Sockets;
 
@@ -18,18 +12,18 @@ public static partial class SocketFactory
 
     public static Task<Socket> CreateServerSocket(ListenMode listenMode, Guid serviceId, int backLog)
     {
-        var listenId = listenMode switch
-        {
-            ListenMode.Any => HyperVAddresses.Wildcard,
-            ListenMode.Children => HyperVAddresses.Children,
-            ListenMode.Loopback => HyperVAddresses.Loopback,
-            ListenMode.Parent => HyperVAddresses.Parent,
-            _ => throw new ArgumentOutOfRangeException(nameof(listenMode), listenMode, "The listen mode is not supported")
-        };
-
         Socket socket;
         if (OperatingSystem.IsWindows())
-        { 
+        {
+            var listenId = listenMode switch
+            {
+                ListenMode.Any => HyperVAddresses.Wildcard,
+                ListenMode.Children => HyperVAddresses.Children,
+                ListenMode.Loopback => HyperVAddresses.Loopback,
+                ListenMode.Parent => HyperVAddresses.Parent,
+                _ => throw new ArgumentOutOfRangeException(nameof(listenMode), listenMode, "The listen mode is not supported")
+            };
+
             socket = new Socket(HyperVConstants.AddressFamily, SocketType.Stream, HyperVConstants.ProtocolType);
             socket.Bind(new HyperVEndPoint(listenId, serviceId));
         }
@@ -43,7 +37,7 @@ public static partial class SocketFactory
                 ListenMode.Parent => 1,
                 _ => throw new ArgumentOutOfRangeException(nameof(listenMode), listenMode, "The listen mode is not supported")
             };
-            uint port = PortNumberConverter.ToPortNumber(serviceId); 
+            var port = PortNumberConverter.ToPortNumber(serviceId); 
             socket = CreateVSockSocket();
             socket.Bind(new VSockEndpoint(cid, port));
         }
@@ -59,10 +53,10 @@ public static partial class SocketFactory
     public static async Task<Socket> CreateClientSocket(Guid vmId, Guid serviceId)
     {
         var socket = new Socket(HyperVConstants.AddressFamily, SocketType.Stream, HyperVConstants.ProtocolType);
-        await socket.ConnectAsync(new HyperVEndPoint(vmId, serviceId)).ConfigureAwait(false);
+        // ConnectAsync() fails with an uninformative SocketException: "An invalid argument was supplied."
+        await Task.Run(() => socket.Connect(new HyperVEndPoint(vmId, serviceId)));
         return socket;
     }
-
 
     [SupportedOSPlatform("linux")]
     private static Socket CreateVSockSocket()
@@ -78,5 +72,3 @@ public static partial class SocketFactory
     [LibraryImport("libc", EntryPoint = "socket", SetLastError = true)]
     private static partial int CreateSocket(int domain, int type, int protocol);
 }
-
-

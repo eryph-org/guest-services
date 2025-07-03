@@ -1,11 +1,17 @@
 ﻿using Eryph.GuestServices.Tool.Commands;
 using Eryph.GuestServices.Tool.Interceptors;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 var app = new CommandApp();
 app.Configure(config =>
 {
     config.SetInterceptor(new IsElevatedInterceptor());
+    config.SetExceptionHandler((ex, _) =>
+    {
+        AnsiConsole.WriteException(ex, ExceptionFormats.ShortenEverything);
+        return ex.HResult;
+    });
 
     config.AddCommand<GetSshKeyCommand>("get-ssh-key")
         .WithDescription(

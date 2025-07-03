@@ -1,26 +1,17 @@
-﻿using Eryph.ClientRuntime.Configuration;
+﻿using System.Text;
+using Eryph.ClientRuntime.Configuration;
 using Eryph.ComputeClient;
 using Eryph.ComputeClient.Models;
 using Eryph.IdentityModel.Clients;
-using Spectre.Console.Cli;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
-using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Tasks;
 using Spectre.Console;
+using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
 public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settings>
 {
-
-
     public class Settings : CommandSettings
     {
-        // Add any settings you need here
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
@@ -31,7 +22,7 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             "config");
 
         var eryphSshConfigPath = Path.Combine(
-            // The config should not be in local (non-roaming) profile as the connection
+            // The config should not be in the local (non-roaming) profile as the connection
             // only works on the specific machine.
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             ".eryph",
@@ -58,7 +49,6 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             "guest-services",
             "private",
             "id_egs");
-
 
         var catletsClient = CreateClient();
         if (catletsClient is null)

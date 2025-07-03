@@ -26,7 +26,6 @@ public class HyperVEndPoint : EndPoint
 
     // The address layout is defined by SOCKADDR_HV
 
-
     public override EndPoint Create(SocketAddress socketAddress)
     {
         if (socketAddress.Family != HyperVAddressFamily || socketAddress.Size != AddressLength)
@@ -36,7 +35,6 @@ public class HyperVEndPoint : EndPoint
         var integrationId = new Guid(socketAddress.Buffer.Span[20..36]);
 
         return new HyperVEndPoint(vmId, integrationId);
-        return base.Create(socketAddress);
     }
 
     public override SocketAddress Serialize()
@@ -46,7 +44,7 @@ public class HyperVEndPoint : EndPoint
 
         VmId.TryWriteBytes(span[4..]);
         ServiceId.TryWriteBytes(span[20..]);
-
+        
         return socketAddress;
     }
 }

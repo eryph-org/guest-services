@@ -1,11 +1,6 @@
-﻿using Microsoft.DevTunnels.Ssh.Algorithms;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.Versioning;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Runtime.Versioning;
 using Microsoft.DevTunnels.Ssh;
+using Microsoft.DevTunnels.Ssh.Algorithms;
 
 namespace Eryph.GuestServices.Service.Services;
 
@@ -17,10 +12,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
         var keyFilePath = Path.Combine(
             "/etc", "opt", "eryph", "guest-services", "egs.pub");
 
-        if (!File.Exists(keyFilePath))
-            return null;
-
-        return KeyPair.ImportKeyFile(keyFilePath);
+        return !File.Exists(keyFilePath) ? null : KeyPair.ImportKeyFile(keyFilePath);
     }
 
     public IKeyPair GetHostKey()
@@ -31,7 +23,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
         EnsureDirectory(directoryPath);
 
         // TODO fix file name
-        var keyFilePath = Path.Combine(directoryPath, "host.pem");
+        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
         if (File.Exists(keyFilePath))
         {
             try
@@ -64,7 +56,7 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
             return;
 
         File.SetUnixFileMode(directoryPath, GetDirectoryFileMode());
-        var keyFilePath = Path.Combine(directoryPath, "host.pem");
+        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
         if (File.Exists(keyFilePath))
         {
             // The key might be compromised -> delete it
@@ -76,6 +68,4 @@ public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
     {
         return UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
     }
-
-    
 }

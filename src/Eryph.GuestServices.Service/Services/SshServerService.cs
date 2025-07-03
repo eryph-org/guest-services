@@ -1,21 +1,13 @@
-﻿using Eryph.GuestServices.Core;
+﻿using System.Diagnostics;
+using System.Security.Claims;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 using Eryph.GuestServices.Sockets;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
-using Microsoft.DevTunnels.Ssh.Messages;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Net.Sockets;
-using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
-using Microsoft.DevTunnels.Ssh.Algorithms;
 
 namespace Eryph.GuestServices.Service.Services;
 
@@ -37,7 +29,6 @@ internal sealed class SshServerService(
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
         _server.ExceptionRaised += ExceptionRaised;
-        //_server.ChannelOpening += ChannelOpening;
 
         await using var _ = stoppingToken.Register(_server.Dispose);
         using var socket = await SocketFactory.CreateServerSocket(ListenMode.Parent, Constants.ServiceId, 1);
@@ -81,7 +72,6 @@ internal sealed class SshServerService(
             return;
         }
         
-        // TODO should some of this code be async?
         e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
     }
 

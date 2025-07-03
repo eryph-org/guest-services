@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Eryph.GuestServices.Sockets;
 
@@ -27,10 +22,11 @@ public class VSockEndpoint : EndPoint
 
     public override EndPoint Create(SocketAddress socketAddress)
     {
-        // TODO is this correct?
+        // TODO Investigate better validation
         // socketAddress.Family == VsockAddressFamily will fail
         if (socketAddress.Size != AddressLength)
             throw new ArgumentException("Invalid VSock socket address.");
+
         var cid = BitConverter.ToUInt32(socketAddress.Buffer.Span[4..8]);
         var port = BitConverter.ToUInt32(socketAddress.Buffer.Span[8..12]);
         return new VSockEndpoint(cid, port);

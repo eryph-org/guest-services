@@ -1,16 +1,10 @@
-﻿using Eryph.GuestServices.Core;
-using Microsoft.DevTunnels.Ssh;
-using Spectre.Console.Cli;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Security.AccessControl;
+﻿using System.Security.AccessControl;
 using System.Security.Principal;
-using System.Text;
-using System.Threading.Tasks;
+using Eryph.GuestServices.Core;
+using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Keys;
 using Spectre.Console;
+using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 

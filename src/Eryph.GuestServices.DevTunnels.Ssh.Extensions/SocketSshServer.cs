@@ -78,7 +78,7 @@ public sealed class SocketSshServer : IDisposable
                 }
             };
 
-            var task = Task.Run(async () =>
+            _ = Task.Run(async () =>
             {
                 try
                 {

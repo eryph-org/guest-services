@@ -1,7 +1,7 @@
-﻿using Eryph.GuestServices.Service.Services;
+﻿using System.Diagnostics;
+using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using System.Diagnostics;
 
 Trace.Listeners.Add(new ConsoleTraceListener());
 
