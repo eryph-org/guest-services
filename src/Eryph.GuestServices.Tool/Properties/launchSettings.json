@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Eryph.GuestServices.Tool": {
+      "commandName": "Project",
+      "commandLineArgs": "repl"
+    }
+  }
+}
