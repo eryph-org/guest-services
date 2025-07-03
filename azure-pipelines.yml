@@ -38,8 +38,9 @@ jobs:
     inputs:
       rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/egs_build/linux_amd64'
       includeRootFolder: false
-      archiveType: 'zip'
-      archiveFile: '$(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_linux_amd64.zip'
+      archiveType: 'tar'
+      tarCompression: 'gz'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/egs/egs_$(Build.BuildNumber)_linux_amd64.tar.gz'
 
   - task: DotNetCoreCLI@2
     displayName: publish services (Windows)
