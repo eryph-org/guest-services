@@ -32,6 +32,7 @@ jobs:
       projects: '**/*.csproj'
       feedsToUse: 'config'
       nugetConfigPath: 'nuget.config'
+      arguments: '--runtime win-x64'
   
   - task: DotNetCoreCLI@2
     displayName: dotnet build
@@ -118,6 +119,7 @@ jobs:
       projects: '**/*.csproj'
       feedsToUse: 'config'
       nugetConfigPath: 'nuget.config'
+      arguments: '--runtime linux-x64'
   
   - task: DotNetCoreCLI@2
     displayName: dotnet build
