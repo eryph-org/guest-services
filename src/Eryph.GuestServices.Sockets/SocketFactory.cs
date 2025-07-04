@@ -52,10 +52,29 @@ public static partial class SocketFactory
 
     public static async Task<Socket> CreateClientSocket(Guid vmId, Guid serviceId)
     {
-        var socket = new Socket(HyperVConstants.AddressFamily, SocketType.Stream, HyperVConstants.ProtocolType);
-        // ConnectAsync() fails with an uninformative SocketException: "An invalid argument was supplied."
-        await Task.Run(() => socket.Connect(new HyperVEndPoint(vmId, serviceId))).ConfigureAwait(false);
-        return socket;
+        if (OperatingSystem.IsWindows())
+        {
+            var socket = new Socket(HyperVConstants.AddressFamily, SocketType.Stream, HyperVConstants.ProtocolType);
+            // ConnectAsync() fails with an uninformative SocketException: "An invalid argument was supplied."
+            await Task.Run(() => socket.Connect(new HyperVEndPoint(vmId, serviceId))).ConfigureAwait(false);
+            return socket;
+        }
+        
+        if (OperatingSystem.IsLinux())
+        {
+            if (vmId != HyperVAddresses.Loopback)
+                throw new ArgumentException(
+                    "Only well-known ID for a loopback connection is supported on Linux",
+                    nameof(vmId));
+
+            uint cid = 1;
+            var port = PortNumberConverter.ToPortNumber(serviceId);
+            var socket = CreateVSockSocket();
+            await Task.Run(() => socket.Connect(new VSockEndpoint(cid, port))).ConfigureAwait(false);
+            return socket;
+        }
+
+        throw new PlatformNotSupportedException("The current platform is not supported.");
     }
 
     [SupportedOSPlatform("linux")]
