@@ -37,7 +37,7 @@ jobs:
     inputs:
       command: test
       projects: '**/test/**/*.csproj'
-      arguments: '--configuration $(buildConfiguration) --collect "Code coverage" --no-build'
+      arguments: '--configuration $(buildConfiguration) --runtime win-x64 --collect "Code coverage" --no-build'
 
   - task: DotNetCoreCLI@2
     displayName: dotnet publish (service)
@@ -115,7 +115,7 @@ jobs:
     inputs:
       command: test
       projects: '**/test/**/*.csproj'
-      arguments: '--configuration $(buildConfiguration) --collect "Code coverage" --no-build'
+      arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --collect "Code coverage" --no-build'
 
   - task: DotNetCoreCLI@2
     displayName: dotnet publish (service)
