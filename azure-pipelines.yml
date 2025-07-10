@@ -13,9 +13,9 @@ jobs:
   
   variables:
   - name: serviceArtifactName
-    value: egs_$(Build.BuildNumber)_windows_amd64.tar.gz
+    value: egs_$(Build.BuildNumber)_windows_amd64.zip
   - name: toolArtifactName
-    value: egs-tool_$(Build.BuildNumber)_windows_amd64.tar.gz
+    value: egs-tool_$(Build.BuildNumber)_windows_amd64.zip
   
   steps:
   - checkout: self
