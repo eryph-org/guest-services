@@ -22,7 +22,7 @@ public class GetSshKeyCommand : Command<GetSshKeyCommand.Settings>
         
         if (!Path.Exists(keyFilePath))
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/red]");
+            AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/]");
             return -1;
         }
 
