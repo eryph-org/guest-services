@@ -24,7 +24,7 @@ public class GetStatusCommand : Command<GetStatusCommand.Settings>
         var hostDataExchange = new HostDataExchange();
         var guestData = hostDataExchange.GetGuestData(settings.VmId);
         guestData.TryGetValue(Constants.StatusKey, out var status);
-        AnsiConsole.WriteLine($"Status: {status ?? "unknown"}");
+        AnsiConsole.WriteLine(string.IsNullOrEmpty(status) ? "unknown" : status);
         
         return 0;
     }
