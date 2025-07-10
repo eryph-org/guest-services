@@ -17,6 +17,10 @@ app.Configure(config =>
         .WithDescription(
             "Returns the public key.");
 
+    config.AddCommand<GetStatusCommand>("get-status")
+        .WithDescription(
+            "Returns the status of the guest services in the VM.");
+
     config.AddCommand<UpdateSshConfigCommand>("update-ssh-config")
         .WithDescription(
             "Updates the SSH config to allow connecting to the catlets.");

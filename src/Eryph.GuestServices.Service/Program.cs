@@ -15,6 +15,7 @@ builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
 if (OperatingSystem.IsWindows())
 {
     builder.Services.AddSingleton<IKeyStorage, WindowsKeyStorage>();
+    builder.Services.AddSingleton<IHyperVKeyValueStore, WindowsHyperVKeyValueStore>();
     builder.Services.AddWindowsService(options =>
     {
         options.ServiceName = "eryph guest services";
@@ -23,6 +24,7 @@ if (OperatingSystem.IsWindows())
 else if (OperatingSystem.IsLinux())
 {
     builder.Services.AddSingleton<IKeyStorage, LinuxKeyStorage>();
+    builder.Services.AddSingleton<IHyperVKeyValueStore, LinuxHyperVKeyValueStore>();
     builder.Services.AddSystemd();
 }
 
