@@ -16,4 +16,6 @@ public static class Constants
     public static readonly Guid ServiceId = Guid.Parse("0000138a-facb-11e6-bd58-64006a7986d3");
 
     public static readonly string ServiceName = "Eryph Guest Services";
+
+    public static readonly string StatusKey = "eryph:guest-services:status";
 }

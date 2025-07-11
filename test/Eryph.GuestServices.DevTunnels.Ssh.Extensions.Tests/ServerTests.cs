@@ -8,11 +8,11 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 
 public class ServerTests
 {
-    [SkippableFact, SupportedOSPlatform("windows")]
+    [Fact]
     public async Task CanConnect()
     {
         // The loopback connection works without actually registering the Hyper-V integration.
-        var serviceId = Guid.NewGuid();
+        var serviceId = PortNumberConverter.ToIntegrationId(42424);
         
         var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
         var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();

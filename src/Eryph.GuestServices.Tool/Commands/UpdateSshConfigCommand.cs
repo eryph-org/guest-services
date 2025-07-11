@@ -71,7 +71,11 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             builder.AppendLine($"    HostName vm-{catlet.VmId}");
             builder.AppendLine($"    User egs");
             builder.AppendLine($"    IdentityFile {identityFilePath}");
+            builder.AppendLine($"    KbdInteractiveAuthentication no");
+            builder.AppendLine($"    PasswordAuthentication no");
+            builder.AppendLine($"    StrictHostKeyChecking accept-new");
             builder.AppendLine($"    ProxyCommand  hvc nc -t vsock {catlet.VmId} 5002");
+            // TODO Fix proxy command first
             //builder.AppendLine($"    ProxyCommand egs-tool.exe proxy {catlet.VmId}");
             builder.AppendLine("");
         }

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
+using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Sockets;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
@@ -11,8 +12,10 @@ using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Service.Services;
 
+// TODO migrate to IHostedService
 internal sealed class SshServerService(
     IKeyStorage keyStorage,
+    IGuestDataExchange guestDataExchange,
     ILogger<SshServerService> logger) : BackgroundService
 {
     private SocketSshServer? _server;
@@ -32,7 +35,19 @@ internal sealed class SshServerService(
 
         await using var _ = stoppingToken.Register(_server.Dispose);
         using var socket = await SocketFactory.CreateServerSocket(ListenMode.Parent, Constants.ServiceId, 1);
-        await _server.AcceptSessionsAsync(socket);
+        await Task.WhenAll(
+            _server.AcceptSessionsAsync(socket),
+            SetStatusAsync());
+    }
+
+    private async Task SetStatusAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        var values = new Dictionary<string, string?>
+        {
+            [Constants.StatusKey] = "available"
+        };
+        await guestDataExchange.SetGuestValues(values);
     }
 
     private void ExceptionRaised(object? sender, Exception e)
@@ -77,6 +92,11 @@ internal sealed class SshServerService(
 
     public override void Dispose()
     {
+        var values = new Dictionary<string, string?>
+        {
+            [Constants.StatusKey] = null,
+        };
+        guestDataExchange.SetGuestValues(values).GetAwaiter().GetResult();
         base.Dispose();
         _server?.Dispose();
     }
