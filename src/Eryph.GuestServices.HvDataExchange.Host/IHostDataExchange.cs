@@ -3,9 +3,12 @@
 public interface IHostDataExchange
 {
     /// <summary>
-    /// The data from the pool Virtual Machine\Guest.
+    /// Gets the guest data of the virtual machine with the
+    /// given <paramref name="vmId"/>.
     /// </summary>
-    /// <param name="vmId"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// This data is stored in <c>Virtual Machine\Guest</c> pool
+    /// of the Hyper-V data exchange.
+    /// </remarks>
     public IReadOnlyDictionary<string, string> GetGuestData(Guid vmId);
 }

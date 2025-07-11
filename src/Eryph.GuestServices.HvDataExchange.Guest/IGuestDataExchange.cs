@@ -12,7 +12,7 @@ public interface IGuestDataExchange
     Task<IReadOnlyDictionary<string, string>> GetGuestData();
 
     /// <summary>
-    /// Set the given <paramref name="values"/> in the guest data
+    /// Sets the given <paramref name="values"/> in the guest data
     /// of this virtual machine. When the value is <see langword="null"/>,
     /// the key is removed from the guest data.
     /// </summary>

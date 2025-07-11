@@ -16,7 +16,6 @@
     <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
     <PackageReference Include="Spectre.Console" Version="0.50.0" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.50.0" />
-    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>
