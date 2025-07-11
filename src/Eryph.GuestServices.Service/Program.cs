@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -15,7 +16,7 @@ builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
 if (OperatingSystem.IsWindows())
 {
     builder.Services.AddSingleton<IKeyStorage, WindowsKeyStorage>();
-    builder.Services.AddSingleton<IHyperVKeyValueStore, WindowsHyperVKeyValueStore>();
+    builder.Services.AddSingleton<IGuestDataExchange, WindowsGuestDataExchange>();
     builder.Services.AddWindowsService(options =>
     {
         options.ServiceName = "eryph guest services";
@@ -24,7 +25,7 @@ if (OperatingSystem.IsWindows())
 else if (OperatingSystem.IsLinux())
 {
     builder.Services.AddSingleton<IKeyStorage, LinuxKeyStorage>();
-    builder.Services.AddSingleton<IHyperVKeyValueStore, LinuxHyperVKeyValueStore>();
+    builder.Services.AddSingleton<IGuestDataExchange, LinuxGuestDataExchange>();
     builder.Services.AddSystemd();
 }
 

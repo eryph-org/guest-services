@@ -1,22 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.Management;
-using System.Runtime.Versioning;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Management;
 using System.Xml.Linq;
 using System.Xml.XPath;
 
-namespace Eryph.GuestServices.DataExchange;
+namespace Eryph.GuestServices.HvDataExchange.Host;
 
-[SupportedOSPlatform("windows")]
 public class HostDataExchange : IHostDataExchange
 {
     public IReadOnlyDictionary<string, string> GetGuestData(Guid vmId)
     {
-
         using var searcher = new ManagementObjectSearcher(
             new ManagementScope(@"root\virtualization\v2"),
             new ObjectQuery("SELECT SystemName,GuestExchangeItems "
@@ -27,10 +18,9 @@ public class HostDataExchange : IHostDataExchange
         try
         {
             var mo = managementObjects.SingleOrDefault();
-            if (mo is null)
+            if (mo is null || mo["GuestExchangeItems"] is not string[] items)
                 return new Dictionary<string, string>();
 
-            var items = (string[])mo["GuestExchangeItems"];
             var keyValuePairs = items
                 .Select(item =>
                 {

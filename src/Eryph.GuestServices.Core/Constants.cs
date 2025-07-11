@@ -17,5 +17,5 @@ public static class Constants
 
     public static readonly string ServiceName = "Eryph Guest Services";
 
-    public static readonly string StatusKey = "egsStatus";
+    public static readonly string StatusKey = "eryph:guest-services:status";
 }

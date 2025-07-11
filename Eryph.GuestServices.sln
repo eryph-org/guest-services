@@ -21,7 +21,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.Core", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests", "test\Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests\Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests.csproj", "{6138A64B-D557-4F3D-953A-090498BCE2C9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.DataExchange", "src\Eryph.GuestServices.DataExchange\Eryph.GuestServices.DataExchange.csproj", "{7D0BAA6D-6912-4993-B12F-188F6BF047B5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.HvDataExchange.Host", "src\Eryph.GuestServices.HvDataExchange.Host\Eryph.GuestServices.HvDataExchange.Host.csproj", "{A039928A-B4A9-4A0A-BDBC-98BCC9165479}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.HvDataExchange.Guest", "src\Eryph.GuestServices.HvDataExchange.Guest\Eryph.GuestServices.HvDataExchange.Guest.csproj", "{FA95DC1D-DB83-4192-923A-F7766647A979}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -57,10 +59,14 @@ Global
 		{6138A64B-D557-4F3D-953A-090498BCE2C9}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6138A64B-D557-4F3D-953A-090498BCE2C9}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6138A64B-D557-4F3D-953A-090498BCE2C9}.Release|Any CPU.Build.0 = Release|Any CPU
-		{7D0BAA6D-6912-4993-B12F-188F6BF047B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{7D0BAA6D-6912-4993-B12F-188F6BF047B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{7D0BAA6D-6912-4993-B12F-188F6BF047B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{7D0BAA6D-6912-4993-B12F-188F6BF047B5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A039928A-B4A9-4A0A-BDBC-98BCC9165479}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A039928A-B4A9-4A0A-BDBC-98BCC9165479}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A039928A-B4A9-4A0A-BDBC-98BCC9165479}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A039928A-B4A9-4A0A-BDBC-98BCC9165479}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FA95DC1D-DB83-4192-923A-F7766647A979}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FA95DC1D-DB83-4192-923A-F7766647A979}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FA95DC1D-DB83-4192-923A-F7766647A979}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FA95DC1D-DB83-4192-923A-F7766647A979}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -73,7 +79,8 @@ Global
 		{AE32F083-2772-4C09-AFB9-31659C23FD1A} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{A7C08BD0-9EFD-45C5-AF05-0DFFF16D2FAA} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{6138A64B-D557-4F3D-953A-090498BCE2C9} = {05E9B947-5A63-40BB-880E-DBD388C498CD}
-		{7D0BAA6D-6912-4993-B12F-188F6BF047B5} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{A039928A-B4A9-4A0A-BDBC-98BCC9165479} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{FA95DC1D-DB83-4192-923A-F7766647A979} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C56A3222-9C44-4134-967D-CEC0E50E55D5}

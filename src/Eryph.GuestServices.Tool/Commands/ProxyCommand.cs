@@ -7,7 +7,6 @@ namespace Eryph.GuestServices.Tool.Commands;
 
 public class ProxyCommand : AsyncCommand<ProxyCommand.Settings>
 {
-
     public class Settings : CommandSettings
     {
         [CommandArgument(0, "<VmId>")] public Guid VmId { get; set; }

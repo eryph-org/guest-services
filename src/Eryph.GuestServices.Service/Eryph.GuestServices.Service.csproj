@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.HvDataExchange.Guest\Eryph.GuestServices.HvDataExchange.Guest.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
   </ItemGroup>
 

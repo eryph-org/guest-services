@@ -1,12 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Management;
-using System.Text;
-using System.Threading.Tasks;
-using System.Xml.Linq;
-using Eryph.GuestServices.Core;
-using Eryph.GuestServices.DataExchange;
+﻿using Eryph.GuestServices.Core;
+using Eryph.GuestServices.HvDataExchange.Host;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
