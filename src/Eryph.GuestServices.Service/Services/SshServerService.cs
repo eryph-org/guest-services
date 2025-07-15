@@ -28,6 +28,7 @@ internal sealed class SshServerService(
 
         var config = new SshSessionConfiguration(useSecurity: true);
         config.Services.Add(typeof(SubsystemService), null);
+        config.Services.Add(typeof(ExecService), null);
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
