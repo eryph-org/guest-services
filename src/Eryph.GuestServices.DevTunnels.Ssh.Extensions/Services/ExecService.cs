@@ -9,6 +9,8 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Command)]
 public class ExecService(SshSession session) : SshService(session)
 {
+    private const int BufferSize = 8192;
+
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
         SshRequestEventArgs<ChannelRequestMessage> request,
@@ -41,10 +43,11 @@ public class ExecService(SshSession session) : SshService(session)
             process.Start();
 
             // TODO Do we need to await or cancel these tasks?
-            var outputTask = process.StandardOutput.BaseStream.CopyToAsync(stream, request.Cancellation);
-            var inputTask = stream.CopyToAsync(process.StandardInput.BaseStream, request.Cancellation);
+            var outputTask = process.StandardOutput.BaseStream.CopyToAsync(stream, BufferSize, request.Cancellation);
+            var inputTask = stream.CopyToAsync(process.StandardInput.BaseStream, BufferSize, request.Cancellation);
 
             await process.WaitForExitAsync(request.Cancellation);
+            await outputTask;
             await channel.CloseAsync(unchecked((uint)process.ExitCode), request.Cancellation);
         };
 
