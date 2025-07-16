@@ -27,6 +27,12 @@ internal sealed class SshServerService(
         var hostKey = keyStorage.GetHostKey();
 
         var config = new SshSessionConfiguration(useSecurity: true);
+        
+        // Limit the supported encryption algorithms to CBC mode as
+        // the CTR mode implementation as significantly slower.
+        config.EncryptionAlgorithms.Clear();
+        config.EncryptionAlgorithms.Add(SshAlgorithms.Encryption.Aes256Cbc);
+        
         config.Services.Add(typeof(SubsystemService), null);
         config.Services.Add(typeof(ExecService), null);
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
