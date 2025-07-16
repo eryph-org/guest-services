@@ -9,7 +9,8 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Command)]
 public class ExecService(SshSession session) : SshService(session)
 {
-    private const int BufferSize = 8192;
+    // private const int BufferSize = 8192;
+    private const int BufferSize = (int)(2 * SshChannel.DefaultMaxPacketSize);
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,

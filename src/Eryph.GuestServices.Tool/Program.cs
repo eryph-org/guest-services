@@ -13,6 +13,9 @@ app.Configure(config =>
         return ex.HResult;
     });
 
+    config.AddCommand<CopyFileCommand>("copy-file")
+        .WithDescription("Copies a file from the host to the catlet.");
+
     config.AddCommand<GetSshKeyCommand>("get-ssh-key")
         .WithDescription(
             "Returns the public key.");
