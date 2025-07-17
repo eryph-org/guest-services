@@ -81,7 +81,7 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             builder.AppendLine($"    Ciphers aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr");
             builder.AppendLine($"    ProxyCommand  hvc nc -t vsock {catlet.VmId} 5002");
             // TODO Fix proxy command first
-            //builder.AppendLine($"    ProxyCommand egs-tool.exe proxy {catlet.VmId}");
+            // builder.AppendLine($"    ProxyCommand egs-tool.exe proxy {catlet.VmId}");
             builder.AppendLine("");
         }
 

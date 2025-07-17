@@ -13,22 +13,14 @@ public class GetSshKeyCommand : Command<GetSshKeyCommand.Settings>
 
     public override int Execute(CommandContext context, Settings settings)
     {
-        var keyFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "eryph",
-            "guest-services",
-            "private",
-            "id_egs");
-        
-        if (!Path.Exists(keyFilePath))
+        var keyPair = ClientKeyHelper.GetPrivateKey();
+        if (keyPair is null)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/]");
             return -1;
         }
 
-        var keyPair = KeyPair.ImportKeyFile(keyFilePath);
         var publicKey = KeyPair.ExportPublicKey(keyPair, keyFormat: KeyFormat.Ssh);
-
         AnsiConsole.WriteLine(publicKey);
 
         return 0;

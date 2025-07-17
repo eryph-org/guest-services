@@ -1,16 +1,10 @@
-﻿using Eryph.GuestServices.Sockets;
-using Microsoft.DevTunnels.Ssh;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
+﻿using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Claims;
-using System.Text;
-using System.Threading.Tasks;
 using AwesomeAssertions;
+using Eryph.GuestServices.Sockets;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
-using Microsoft.DevTunnels.Ssh.Events;
+using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 
@@ -32,7 +26,7 @@ public class FileTransferTests
         var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
 
         var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(FileTransferService), null);
+        config.Services.Add(typeof(UploadFileService), null);
 
         using var server = new SocketSshServer(config, new TraceSource("Server"));
         server.Credentials = new SshServerCredentials(serverKeyPair);
@@ -52,7 +46,7 @@ public class FileTransferTests
 
         await using (var srcStream = new FileStream(srcPath, FileMode.Open, FileAccess.Read))
         {
-            await clientSession.TransferFileAsync(targetPath, srcStream, CancellationToken.None);
+            await clientSession.TransferFileAsync(targetPath, srcStream, false, CancellationToken.None);
         }
 
         await clientSession.CloseAsync(SshDisconnectReason.None);

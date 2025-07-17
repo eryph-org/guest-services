@@ -7,15 +7,15 @@ using Microsoft.DevTunnels.Ssh.Services;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
-[ServiceActivation(ChannelRequest = CustomChannelRequestTypes.FileTransfer)]
-public class FileTransferService(SshSession session) : SshService(session)
+[ServiceActivation(ChannelRequest = CustomChannelRequestTypes.UploadFile)]
+public class UploadFileService(SshSession session) : SshService(session)
 {
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
         SshRequestEventArgs<ChannelRequestMessage> request,
         CancellationToken cancellation)
     {
-        var fileTransferRequest = request.Request.ConvertTo<FileTransferRequestMessage>();
+        var fileTransferRequest = request.Request.ConvertTo<UploadFileRequestMessage>();
 
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
         request.ResponseContinuation = async _ =>
@@ -24,6 +24,19 @@ public class FileTransferService(SshSession session) : SshService(session)
             var stream = new SshStream(channel);
             using var memoryOwner = MemoryPool<byte>.Shared.Rent((int)(2 * SshChannel.DefaultMaxPacketSize));
             var buffer = memoryOwner.Memory;
+
+            if (!fileTransferRequest.Overwrite && File.Exists(fileTransferRequest.Path))
+            {
+                await channel.CloseAsync(unchecked((uint)ErrorCodes.FileExists), request.Cancellation);
+                return;
+            }
+
+            var directory = Path.GetDirectoryName(fileTransferRequest.Path);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             await using var fileStream = new FileStream(fileTransferRequest.Path, FileMode.OpenOrCreate, FileAccess.Write);
             while (fileStream.Length < expectedLength)
             {

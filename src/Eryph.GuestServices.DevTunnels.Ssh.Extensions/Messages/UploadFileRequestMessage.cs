@@ -9,22 +9,25 @@ using System.Xml.Linq;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 
-public class FileTransferRequestMessage : ChannelRequestMessage
+public class UploadFileRequestMessage : ChannelRequestMessage
 {
-    public FileTransferRequestMessage()
+    public UploadFileRequestMessage()
     {
-        RequestType = CustomChannelRequestTypes.FileTransfer;
+        RequestType = CustomChannelRequestTypes.UploadFile;
     }
     
     public string Path { get; set; } = "";
 
     public ulong Length { get; set; }
 
+    public bool Overwrite { get; set; }
+
     protected override void OnRead(ref SshDataReader reader)
     {
         base.OnRead(ref reader);
         Path = reader.ReadString(Encoding.UTF8);
         Length = reader.ReadUInt64();
+        Overwrite = reader.ReadBoolean();
     }
 
     protected override void OnWrite(ref SshDataWriter writer)
@@ -32,5 +35,6 @@ public class FileTransferRequestMessage : ChannelRequestMessage
         base.OnWrite(ref writer);
         writer.Write(Path, Encoding.UTF8);
         writer.Write(Length);
+        writer.Write(Overwrite);
     }
 }

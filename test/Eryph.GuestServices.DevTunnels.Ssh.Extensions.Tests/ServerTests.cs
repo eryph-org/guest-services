@@ -19,13 +19,13 @@ public class ServerTests
 
         var config = new SshSessionConfiguration();
 
-        var server = new SocketSshServer(config, new TraceSource("Server"));
+        using var server = new SocketSshServer(config, new TraceSource("Server"));
         server.Credentials = new SshServerCredentials(serverKeyPair);
-        var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
+        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
         _ = server.AcceptSessionsAsync(serverSocket);
 
 
-        var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
+        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
         await using var clientStream = new NetworkStream(clientSocket, true);
         var clientSession = new SshClientSession(config, new TraceSource("Client"));
         await clientSession.ConnectAsync(clientStream);

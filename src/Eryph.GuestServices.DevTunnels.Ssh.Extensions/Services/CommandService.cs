@@ -7,7 +7,7 @@ using Microsoft.DevTunnels.Ssh.Services;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Command)]
-public class ExecService(SshSession session) : SshService(session)
+public class CommandService(SshSession session) : SshService(session)
 {
     // private const int BufferSize = 8192;
     private const int BufferSize = (int)(2 * SshChannel.DefaultMaxPacketSize);
@@ -40,10 +40,8 @@ public class ExecService(SshSession session) : SshService(session)
                 CreateNoWindow = false,
             };
             
-            
             process.Start();
 
-            // TODO Do we need to await or cancel these tasks?
             var outputTask = process.StandardOutput.BaseStream.CopyToAsync(stream, BufferSize, request.Cancellation);
             var inputTask = stream.CopyToAsync(process.StandardInput.BaseStream, BufferSize, request.Cancellation);
 

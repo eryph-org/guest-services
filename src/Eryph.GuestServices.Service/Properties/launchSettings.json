@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Eryph.GuestServices.Service": {
+      "commandName": "Project",
+      "remoteDebugEnabled": true,
+      "remoteDebugMachine": "10.249.248.82:4026",
+      "authenticationMode": "Windows"
+    }
+  }
+}
