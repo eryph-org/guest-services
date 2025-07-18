@@ -52,7 +52,8 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
 
         await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
         var result = await clientSession.TransferFileAsync(settings.TargetPath, fileStream, settings.Overwrite, CancellationToken.None);
-        if (result == ErrorCodes.FileExists)
+        
+        if (unchecked((int)result) == ErrorCodes.FileExists)
             AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
 
         return unchecked((int)result);
