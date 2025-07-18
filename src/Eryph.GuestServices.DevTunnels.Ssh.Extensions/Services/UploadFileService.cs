@@ -39,8 +39,9 @@ public class UploadFileService(SshSession session) : SshService(session)
                     Directory.CreateDirectory(directory);
                 }
 
-                await using var fileStream =
-                    new FileStream(fileTransferRequest.Path, FileMode.OpenOrCreate, FileAccess.Write);
+                await using var fileStream = new FileStream(fileTransferRequest.Path, FileMode.OpenOrCreate, FileAccess.Write);
+                // Reset the file in case we are overwriting it
+                fileStream.SetLength(0);
                 while (fileStream.Length < expectedLength)
                 {
                     var bytesRead = await stream.ReadAsync(buffer, request.Cancellation);
