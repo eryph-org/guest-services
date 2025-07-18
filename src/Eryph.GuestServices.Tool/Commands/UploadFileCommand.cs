@@ -11,7 +11,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
-public class CopyFileCommand : AsyncCommand<CopyFileCommand.Settings>
+public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
 {
     public class Settings : CommandSettings
     {
