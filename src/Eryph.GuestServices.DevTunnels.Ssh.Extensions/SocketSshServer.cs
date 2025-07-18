@@ -1,17 +1,11 @@
 ﻿// Based on https://github.com/microsoft/dev-tunnels-ssh/blob/main/src/cs/Ssh.Tcp/SshServer.cs
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+using System.Diagnostics;
+using System.Net.Sockets;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Messages;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading.Tasks;
-using static System.Collections.Specialized.BitVector32;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
@@ -47,12 +41,13 @@ public sealed class SocketSshServer : IDisposable
                 .ConfigureAwait(false);
             ConfigureSocketOptionsForSsh(socket);
             var session = new SshServerSession(_config, _trace);
-            session.Credentials = Credentials;
-
+            
             lock (_lock)
             {
                 _sessions.Add(session);
             }
+
+            session.Credentials = Credentials;
 
             session.Authenticating += (s, e) =>
             {

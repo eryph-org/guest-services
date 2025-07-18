@@ -13,6 +13,9 @@ app.Configure(config =>
         return ex.HResult;
     });
 
+    config.AddCommand<UploadFileCommand>("upload-file")
+        .WithDescription("Uploads a file from the host to the VM.");
+
     config.AddCommand<GetSshKeyCommand>("get-ssh-key")
         .WithDescription(
             "Returns the public key.");

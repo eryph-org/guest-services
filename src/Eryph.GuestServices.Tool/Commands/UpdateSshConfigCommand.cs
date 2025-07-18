@@ -74,9 +74,14 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             builder.AppendLine($"    KbdInteractiveAuthentication no");
             builder.AppendLine($"    PasswordAuthentication no");
             builder.AppendLine($"    StrictHostKeyChecking accept-new");
+            // Prefer the GCM ciphers as they are significantly faster in
+            // Microsoft.DevTunnels.SSH. In OpenSSH 9.9, this is the default
+            // anyway. Unfortunately, Windows still ships an older version which
+            // prefers the CTR ciphers.
+            builder.AppendLine($"    Ciphers aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr");
             builder.AppendLine($"    ProxyCommand  hvc nc -t vsock {catlet.VmId} 5002");
             // TODO Fix proxy command first
-            //builder.AppendLine($"    ProxyCommand egs-tool.exe proxy {catlet.VmId}");
+            // builder.AppendLine($"    ProxyCommand egs-tool.exe proxy {catlet.VmId}");
             builder.AppendLine("");
         }
 
