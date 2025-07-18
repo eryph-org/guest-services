@@ -21,12 +21,12 @@ jobs:
   - checkout: self
     fetchDepth: 0
 
-  - task: gitversion/setup@4.0.1
+  - task: gitversion/setup@3.1.11
     displayName: Install GitVersion
     inputs:
       versionSpec: '5.11.x'
 
-  - task: gitversion/execute@4.0.1
+  - task: gitversion/execute@3.1.11
     displayName: Execute GitVersion
   
   - task: DotNetCoreCLI@2
@@ -103,12 +103,12 @@ jobs:
   - checkout: self
     fetchDepth: 0
 
-  - task: gitversion/setup@4.0.1
+  - task: gitversion/setup@3.1.11
     displayName: Install GitVersion
     inputs:
       versionSpec: '5.11.x'
 
-  - task: gitversion/execute@4.0.1
+  - task: gitversion/execute@3.1.11
     displayName: Execute GitVersion
   
   - task: DotNetCoreCLI@2
