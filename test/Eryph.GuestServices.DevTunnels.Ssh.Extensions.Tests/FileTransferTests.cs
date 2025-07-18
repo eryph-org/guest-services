@@ -8,16 +8,23 @@ using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 
-public class FileTransferTests
+[Collection("e2e")]
+public sealed class FileTransferTests : IDisposable
 {
-    [Fact(Skip = "race condition")]
+    private readonly string _path;
+
+    public FileTransferTests()
+    {
+        _path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(_path);
+    }
+
+    [Fact]
     public async Task Test()
     {
-        var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        Directory.CreateDirectory(path);
-        var srcPath = Path.Combine(path, "src.bin");
+        var srcPath = Path.Combine(_path, "src.bin");
         await File.WriteAllTextAsync(srcPath, "Hello World!");
-        var targetPath = Path.Combine(path, "target.bin");
+        var targetPath = Path.Combine(_path, "target.bin");
 
         // The loopback connection works without actually registering the Hyper-V integration.
         var serviceId = PortNumberConverter.ToIntegrationId(42424);
@@ -43,16 +50,19 @@ public class FileTransferTests
 
         await clientSession.ConnectAsync(clientStream);
         var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
+        isAuthenticated.Should().BeTrue();
 
         await using (var srcStream = new FileStream(srcPath, FileMode.Open, FileAccess.Read))
         {
             await clientSession.TransferFileAsync(targetPath, srcStream, false, CancellationToken.None);
         }
 
-        await clientSession.CloseAsync(SshDisconnectReason.None);
-        serverSocket.Close();
-        
         var targetContent = await File.ReadAllTextAsync(targetPath);
         targetContent.Should().Be("Hello World!");
+    }
+
+    public void Dispose()
+    {
+        Directory.Delete(_path, true);
     }
 }
