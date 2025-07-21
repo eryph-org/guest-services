@@ -4,14 +4,11 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.8" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.Pty.ShellHost\Eryph.GuestServices.Pty.ShellHost.csproj" />
   </ItemGroup>
 
 </Project>
