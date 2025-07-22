@@ -17,7 +17,6 @@ public static class PtyProvider
         if (OperatingSystem.IsWindows())
             return new WindowsLegacyPty();
 
-
         if (OperatingSystem.IsLinux())
             throw new PlatformNotSupportedException("Linux support is not implemented yet.");
 

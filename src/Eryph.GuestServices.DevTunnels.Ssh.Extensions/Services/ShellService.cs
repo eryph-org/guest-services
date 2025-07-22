@@ -13,10 +13,6 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 public class ShellService(SshSession session) : SshService(session)
 {
     private readonly ConcurrentDictionary<uint, PtyInstance> _instances = new();
-    private readonly SemaphoreSlim _lock = new(1, 1);
-
-
-    // TODO add signal support
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
