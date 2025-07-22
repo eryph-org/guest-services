@@ -5,7 +5,6 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml.XPath;
 using Eryph.GuestServices.Pty;
-using Eryph.GuestServices.Pty.Windows;
 using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
@@ -20,11 +19,12 @@ public sealed class PtyInstance : IDisposable
 
     public async Task<int> RunAsync(SshStream stream, CancellationToken cancellation)
     {
-        _pty = new WindowsPty();
-        await _pty.StartAsync(_width, _height, "pwsh.exe");
+        _pty = PtyProvider.CreatePty();
+        var command = OperatingSystem.IsWindows() ? "powershell.exe" : "bash";
+        await _pty.StartAsync(_width, _height, command);
 
-        var t1 = _pty.Output.CopyToAsync(stream, cancellation);
-        var t2 = stream.CopyToAsync(_pty.Input, cancellation);
+        _ = _pty.Output.CopyToAsync(stream, cancellation);
+        _ = stream.CopyToAsync(_pty.Input, cancellation);
 
         var result = await _pty.WaitForExitAsync(cancellation);
         return result;
@@ -51,6 +51,7 @@ public sealed class PtyInstance : IDisposable
 
     public void Dispose()
     {
+        _pty?.Dispose();
         _lock.Dispose();
     }
 }

@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.HvDataE
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.HvDataExchange.Guest", "src\Eryph.GuestServices.HvDataExchange.Guest\Eryph.GuestServices.HvDataExchange.Guest.csproj", "{FA95DC1D-DB83-4192-923A-F7766647A979}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Eryph.GuestServices.Pty", "src\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj", "{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -67,6 +69,10 @@ Global
 		{FA95DC1D-DB83-4192-923A-F7766647A979}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FA95DC1D-DB83-4192-923A-F7766647A979}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FA95DC1D-DB83-4192-923A-F7766647A979}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -81,6 +87,7 @@ Global
 		{6138A64B-D557-4F3D-953A-090498BCE2C9} = {05E9B947-5A63-40BB-880E-DBD388C498CD}
 		{A039928A-B4A9-4A0A-BDBC-98BCC9165479} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{FA95DC1D-DB83-4192-923A-F7766647A979} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{7A67A6EF-DD16-4A4E-9EFB-1B8CDA5D87D2} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {C56A3222-9C44-4134-967D-CEC0E50E55D5}

@@ -7,8 +7,4 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Eryph.GuestServices.Pty.ShellHost\Eryph.GuestServices.Pty.ShellHost.csproj" />
-  </ItemGroup>
-
 </Project>

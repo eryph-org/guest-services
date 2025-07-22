@@ -1,12 +1,13 @@
-﻿using System.Diagnostics;
+﻿using Microsoft.Win32.SafeHandles;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
-using Microsoft.Win32.SafeHandles;
 
 namespace Eryph.GuestServices.Pty.Windows;
 
-public sealed partial class WindowsPty : IPty, IDisposable
+public sealed partial class WindowsPty : IPty
 {
     private SafePipeHandle? _ptyReadPipe;
     private SafePipeHandle? _ptyWritePipe;
@@ -23,17 +24,18 @@ public sealed partial class WindowsPty : IPty, IDisposable
     private AnonymousPipeClientStream? _readStream;
     private AnonymousPipeClientStream? _writeStream;
 
-    public Stream Input  => _writeStream!;
+    public Stream? Input { get; private set; }
 
-    public Stream Output => _readStream!;
+    public Stream? Output { get; private set; }
 
+    [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
     public Task StartAsync(uint width, uint height, string command)
     {
         if (!CreatePipe(out _ptyReadPipe, out _writePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console input pipe: 0x{Marshal.GetLastWin32Error():x8}.");
+            throw new InvalidOperationException($"Could not create pseudo console input pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
 
         if (!CreatePipe(out _readPipe, out _ptyWritePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console output pipe: 0x{Marshal.GetLastWin32Error():x8}.");
+            throw new InvalidOperationException($"Could not create pseudo console output pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
 
         var hResult = CreatePseudoConsole(
             new Coordinates
@@ -54,12 +56,14 @@ public sealed partial class WindowsPty : IPty, IDisposable
             dwFlags: 0,
             attribute: ProcThreadAttributePseudoConsole,
             lpValue: _pseudoConsoleHandle,
-            cbSize: 0,
+            cbSize: nint.Size,
             lpPreviousValue: 0,
             lpReturnSize: 0);
-        
+
         if (!success)
-            throw new InvalidOperationException($"Could not update ProcTheadAttributeList: 0x{Marshal.GetLastWin32Error():x8}.");
+            throw new InvalidOperationException($"Could not update ProcTheadAttributeList: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        
+            
 
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
@@ -82,7 +86,7 @@ public sealed partial class WindowsPty : IPty, IDisposable
             lpProcessInformation: out ProcessInformation pInfo);
 
         if (!success)
-            throw new InvalidOperationException($"Could not create pseudo console process 0x{Marshal.GetLastWin32Error():x8}.");
+            throw new InvalidOperationException($"Could not create pseudo console process 0x{Marshal.GetHRForLastWin32Error():x8}.");
         
         _processHandle = new SafeWaitHandle(pInfo.hProcess, true);
         _threadHandle = new SafeWaitHandle(pInfo.hThread, true);
@@ -91,6 +95,9 @@ public sealed partial class WindowsPty : IPty, IDisposable
 
         _readStream = new AnonymousPipeClientStream(PipeDirection.In, _readPipe);
         _writeStream = new AnonymousPipeClientStream(PipeDirection.Out, _writePipe);
+
+        Input = _writeStream;
+        Output = _readStream;
 
         return Task.CompletedTask;
     }

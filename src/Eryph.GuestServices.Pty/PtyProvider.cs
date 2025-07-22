@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Eryph.GuestServices.Pty.WindowsFallback;
+using Eryph.GuestServices.Pty.WindowsLegacy;
 
 namespace Eryph.GuestServices.Pty;
 
@@ -15,13 +15,13 @@ public static class PtyProvider
             return new Windows.WindowsPty();
 
         if (OperatingSystem.IsWindows())
-            return new WindowsFallbackPty();
+            return new WindowsLegacyPty();
+
 
         if (OperatingSystem.IsLinux())
-            return new Linux.LinuxPty();
+            throw new PlatformNotSupportedException("Linux support is not implemented yet.");
 
         throw new PlatformNotSupportedException(
             "Pty support is only available on Windows and Linux platforms.");
     }
-
 }

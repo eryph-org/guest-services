@@ -6,13 +6,11 @@ using System.Threading.Tasks;
 
 namespace Eryph.GuestServices.Pty.Linux;
 
-internal sealed class LinuxPty : IPty, IDisposable
+public sealed class LinuxPty : IPty, IDisposable
 {
     public Stream Input => throw new NotImplementedException();
 
     public Stream Output => throw new NotImplementedException();
-
-
 
     public Task StartAsync(uint width, uint height, string command)
     {

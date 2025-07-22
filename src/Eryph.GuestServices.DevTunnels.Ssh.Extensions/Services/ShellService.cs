@@ -1,11 +1,9 @@
 ﻿using System.Collections.Concurrent;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
-using Eryph.GuestServices.Pty.Windows;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Messages;
 using Microsoft.DevTunnels.Ssh.Services;
-using System.Threading.Channels;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 

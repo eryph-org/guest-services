@@ -38,7 +38,7 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
             lpSize: ref lpSize
         );
         if (success || lpSize == IntPtr.Zero)
-            throw new InvalidOperationException($"Could not calculate the number of bytes for the attribute list: 0x{Marshal.GetLastWin32Error():x8}.");
+            throw new InvalidOperationException($"Could not calculate the number of bytes for the attribute list: 0x{Marshal.GetHRForLastWin32Error():x8}.");
 
         var safeHandle = new ProcThreadAttributeListSafeHandle();
         safeHandle.SetHandle(Marshal.AllocHGlobal(lpSize));
@@ -47,14 +47,14 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
         {
             success = InitializeProcThreadAttributeList(
                 lpAttributeList: safeHandle.handle,
-                dwAttributeCount: 1,
+                dwAttributeCount: size,
                 dwFlags: 0,
                 lpSize: ref lpSize
             );
             
             if (!success)
-                throw new InvalidOperationException($"Could not initialize ProcThreadAttributeList: 0x{Marshal.GetLastWin32Error():x8}.");
-            
+                throw new InvalidOperationException($"Could not initialize ProcThreadAttributeList: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+
             safeHandle._isInitialized = true;
             return safeHandle;
         }
