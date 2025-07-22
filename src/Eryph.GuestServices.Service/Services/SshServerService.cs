@@ -30,6 +30,7 @@ internal sealed class SshServerService(
         
         config.Services.Add(typeof(SubsystemService), null);
         config.Services.Add(typeof(CommandService), null);
+        config.Services.Add(typeof(ShellService), null);
         config.Services.Add(typeof(UploadFileService), null);
         
         _server = new SocketSshServer(config, new TraceSource("SshServer"));

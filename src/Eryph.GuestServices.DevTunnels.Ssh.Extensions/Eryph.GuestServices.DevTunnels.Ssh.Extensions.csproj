@@ -10,4 +10,8 @@
     <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.8" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj" />
+  </ItemGroup>
+
 </Project>
