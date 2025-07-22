@@ -22,8 +22,7 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
     }
 
     /// <summary>
-    /// Allocates a <c>ProcThreadAttributeList</c> and returns a <see cref="SafeHandle"/>
-    /// for it.
+    /// Allocates a <c>ProcThreadAttributeList</c> and returns a <see cref="SafeHandle"/> for it.
     /// </summary>
     /// <remarks>
     /// This code uses the double call pattern described here:
@@ -31,7 +30,7 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
     /// </remarks>
     public static ProcThreadAttributeListSafeHandle Allocate(int size)
     {
-        var lpSize = IntPtr.Zero;
+        nint lpSize = 0;
         var success = InitializeProcThreadAttributeList(
             lpAttributeList: IntPtr.Zero,
             dwAttributeCount: size,
@@ -39,7 +38,7 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
             lpSize: ref lpSize
         );
         if (success || lpSize == IntPtr.Zero)
-            throw new InvalidOperationException("Could not calculate the number of bytes for the attribute list. " + Marshal.GetLastWin32Error());
+            throw new InvalidOperationException($"Could not calculate the number of bytes for the attribute list: 0x{Marshal.GetLastWin32Error():x8}.");
 
         var safeHandle = new ProcThreadAttributeListSafeHandle();
         safeHandle.SetHandle(Marshal.AllocHGlobal(lpSize));
@@ -52,11 +51,10 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
                 dwFlags: 0,
                 lpSize: ref lpSize
             );
+            
             if (!success)
-            {
-                throw new InvalidOperationException("Could not set up attribute list. " + Marshal.GetLastWin32Error());
-            }
-
+                throw new InvalidOperationException($"Could not initialize ProcThreadAttributeList: 0x{Marshal.GetLastWin32Error():x8}.");
+            
             safeHandle._isInitialized = true;
             return safeHandle;
         }
@@ -70,13 +68,11 @@ internal partial class ProcThreadAttributeListSafeHandle() : SafeHandleZeroOrMin
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool InitializeProcThreadAttributeList(
-        IntPtr lpAttributeList,
+        nint lpAttributeList,
         int dwAttributeCount,
         int dwFlags,
-        ref IntPtr lpSize);
+        ref nint lpSize);
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool DeleteProcThreadAttributeList(
-        IntPtr lpAttributeList);
+    private static partial void DeleteProcThreadAttributeList(nint lpAttributeList);
 }

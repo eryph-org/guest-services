@@ -12,5 +12,5 @@ internal partial class PseudoConsoleSafeHandle() : SafeHandleZeroOrMinusOneIsInv
     }
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
-    private static partial void ClosePseudoConsole(IntPtr handle);
+    private static partial void ClosePseudoConsole(nint handle);
 }
