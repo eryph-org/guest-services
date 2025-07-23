@@ -7,4 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Include="runtimes\linux-x64\native\spawnptylib.so" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

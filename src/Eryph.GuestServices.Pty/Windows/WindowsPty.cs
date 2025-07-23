@@ -160,14 +160,14 @@ public sealed partial class WindowsPty : IPty
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    internal struct StartupInfoEx
+    private struct StartupInfoEx
     {
         public StartupInfo StartupInfo;
         public IntPtr lpAttributeList;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    internal struct StartupInfo
+    private struct StartupInfo
     {
         public int cb;
         // These fields are actually strings (LPSTR or LPWSTR) but
@@ -195,7 +195,7 @@ public sealed partial class WindowsPty : IPty
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct ProcessInformation
+    private struct ProcessInformation
     {
         public nint hProcess;
         public nint hThread;
@@ -205,7 +205,7 @@ public sealed partial class WindowsPty : IPty
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UpdateProcThreadAttribute(
+    private static partial bool UpdateProcThreadAttribute(
         SafeHandle lpAttributeList,
         uint dwFlags,
         nint attribute,
@@ -216,7 +216,7 @@ public sealed partial class WindowsPty : IPty
 
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, EntryPoint = "CreateProcessW")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool CreateProcess(
+    private static partial bool CreateProcess(
         string? lpApplicationName,
         byte[] lpCommandLine,
         nint lpProcessAttributes,

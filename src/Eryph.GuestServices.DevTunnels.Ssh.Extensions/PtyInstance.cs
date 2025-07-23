@@ -20,7 +20,7 @@ public sealed class PtyInstance : IDisposable
     public async Task<int> RunAsync(SshStream stream, CancellationToken cancellation)
     {
         _pty = PtyProvider.CreatePty();
-        var command = OperatingSystem.IsWindows() ? "powershell.exe" : "bash";
+        var command = OperatingSystem.IsWindows() ? "powershell.exe" : "/bin/bash";
         await _pty.StartAsync(_width, _height, command);
 
         _ = _pty.Output.CopyToAsync(stream, cancellation);

@@ -51,6 +51,7 @@ public class ShellService(SshSession session) : SshService(session)
             var stream = new SshStream(channel);
             var result = await pty.RunAsync(stream, request.Cancellation);
             await channel.CloseAsync(unchecked((uint)result), cancellation);
+            pty.Dispose();
         };
 
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
