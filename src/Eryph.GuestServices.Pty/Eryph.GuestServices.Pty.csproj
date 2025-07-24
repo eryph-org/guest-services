@@ -10,5 +10,6 @@
   <ItemGroup>
     <None Include="native\linux-x64\spawnpty.so" CopyToOutputDirectory="PreserveNewest" />
     <None Include="native\win-x64\ssh-shellhost.exe" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="native\win-x64\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
