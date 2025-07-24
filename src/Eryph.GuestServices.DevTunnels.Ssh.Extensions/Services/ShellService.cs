@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
+using Eryph.GuestServices.Pty;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Messages;
@@ -44,17 +45,33 @@ public class ShellService(SshSession session) : SshService(session)
         ShellRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        
-        var pty = GetPtyInstance(channel.ChannelId);
-        request.ResponseContinuation = async (response) =>
+        if (!_instances.TryGetValue(channel.ChannelId, out var pty))
         {
-            var stream = new SshStream(channel);
-            var result = await pty.RunAsync(stream, request.Cancellation);
-            await channel.CloseAsync(unchecked((uint)result), cancellation);
-            pty.Dispose();
-        };
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
+
+        if (pty.IsRunning)
+        {
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
 
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
+        request.ResponseContinuation = async (_) =>
+        {
+            var stream = new SshStream(channel);
+            try
+            {
+                await pty.StartAsync(stream, request.Cancellation);
+            }
+            catch (Exception ex)
+            {
+                var result = ex is PtyException pe ? pe.Result : ErrorCodes.ShellGenericError;
+                await channel.CloseAsync(unchecked((uint)result), cancellation);
+            }
+        };
+
         return Task.CompletedTask;
     }
 
@@ -64,20 +81,43 @@ public class ShellService(SshSession session) : SshService(session)
         TerminalRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        var pty = GetPtyInstance(channel.ChannelId);
+        var pty = new PtyInstance();
+        if (!_instances.TryAdd(channel.ChannelId, pty))
+        {
+            pty.Dispose();
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return;
+        }
+
+        channel.Closed += (_, _ ) => 
+        {
+            _instances.TryRemove(channel.ChannelId, out _);
+            pty.Dispose();
+        };
+        
         await pty.ResizeAsync(requestMessage.Columns, requestMessage.Rows, request.Cancellation);
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
     }
 
-    private async Task OnWindowChangeRequestAsync(
+    private Task OnWindowChangeRequestAsync(
         SshChannel channel,
         SshRequestEventArgs<ChannelRequestMessage> request,
         WindowChangeRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        var pty = GetPtyInstance(channel.ChannelId);
-        await pty.ResizeAsync(requestMessage.Width, requestMessage.Height, request.Cancellation);
+        if (!_instances.TryGetValue(channel.ChannelId, out var pty))
+        {
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
+
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
+        request.ResponseContinuation = async (_) =>
+        {
+            await pty.ResizeAsync(requestMessage.Width, requestMessage.Height, request.Cancellation);
+        };
+
+        return Task.CompletedTask;
     }
 
     protected override void Dispose(bool disposing)
@@ -88,10 +128,5 @@ public class ShellService(SshSession session) : SshService(session)
         }
 
         base.Dispose(disposing);
-    }
-
-    private PtyInstance GetPtyInstance(uint channelId)
-    {
-        return _instances.GetOrAdd(channelId, (_) => new PtyInstance());
     }
 }

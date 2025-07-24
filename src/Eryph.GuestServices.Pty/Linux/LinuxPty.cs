@@ -38,7 +38,7 @@ public sealed partial class LinuxPty : IPty
         _processHandle = new SafeProcessHandle(processId, ownsHandle: true);
 
         if (result != 0)
-            throw new InvalidOperationException($"Could not create pseudo console or process: {result}.");
+            throw new PtyException($"Could not create pseudo console or process: {result}.", result);
 
         Input = new FileStream(_masterFd, FileAccess.Write);
         Output = new FileStream(_masterFd, FileAccess.Read);

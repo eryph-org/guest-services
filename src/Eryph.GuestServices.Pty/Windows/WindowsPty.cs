@@ -34,10 +34,16 @@ public sealed partial class WindowsPty : IPty
     public Task StartAsync(uint width, uint height, string command)
     {
         if (!CreatePipe(out _ptyReadPipe, out _writePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console input pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console input pipe: 0x{error:x8}.", error);
+        }
 
         if (!CreatePipe(out _readPipe, out _ptyWritePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console output pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console output pipe: 0x{error:x8}.", error);
+        }
 
         var hResult = CreatePseudoConsole(
             new Coordinates
@@ -50,7 +56,7 @@ public sealed partial class WindowsPty : IPty
             0,
             out _pseudoConsoleHandle);
         if (hResult != 0)
-            throw new InvalidOperationException($"Could not create pseudo console: 0x{hResult:x8}.");
+            throw new PtyException($"Could not create pseudo console: 0x{hResult:x8}.", hResult);
         
         _attributeListHandle = ProcThreadAttributeListSafeHandle.Allocate(1);
         var success = UpdateProcThreadAttribute(
@@ -63,7 +69,10 @@ public sealed partial class WindowsPty : IPty
             lpReturnSize: 0);
 
         if (!success)
-            throw new InvalidOperationException($"Could not update ProcTheadAttributeList: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not update ProcTheadAttributeList: 0x{error:x8}.", error);
+        }
         
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
@@ -86,7 +95,10 @@ public sealed partial class WindowsPty : IPty
             lpProcessInformation: out var pInfo);
 
         if (!success)
-            throw new InvalidOperationException($"Could not create pseudo console process 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console process 0x{error:x8}.", error); 
+        }
         
         _processHandle = new SafeProcessHandle(pInfo.hProcess, true);
         _threadHandle = new SafeWaitHandle(pInfo.hThread, true);
@@ -107,7 +119,7 @@ public sealed partial class WindowsPty : IPty
         if (_pseudoConsoleHandle is null)
             return Task.CompletedTask;
 
-        var success = ResizePseudoConsole(
+        var result = ResizePseudoConsole(
             _pseudoConsoleHandle,
             new Coordinates
             {
@@ -115,8 +127,8 @@ public sealed partial class WindowsPty : IPty
                 Y = (short)Math.Min(height, short.MaxValue)
             });
 
-        if(success != 0)
-            throw new InvalidOperationException($"Could not resize pseudo console: 0x{success:x8}.");
+        if(result != 0)
+            throw new PtyException($"Could not resize pseudo console: 0x{result:x8}.", result);
 
         return Task.CompletedTask;
     }
@@ -145,12 +157,12 @@ public sealed partial class WindowsPty : IPty
         // See https://learn.microsoft.com/en-us/windows/console/closepseudoconsole.
         _pseudoConsoleHandle?.Dispose();
 
+        _process?.Kill(true);
+        _process?.Dispose();
+
         _processHandle?.Dispose();
         _threadHandle?.Dispose();
         _attributeListHandle?.Dispose();
-
-        _process?.Kill(true);
-        _process?.Dispose();
     }
 
     private const uint ExtendedStartupInfoPresent = 0x00080000;

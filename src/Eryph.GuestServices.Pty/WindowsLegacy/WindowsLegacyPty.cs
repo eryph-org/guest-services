@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 
 namespace Eryph.GuestServices.Pty.WindowsLegacy;
 
@@ -16,12 +17,14 @@ public sealed class WindowsLegacyPty : IPty
     [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
     public Task StartAsync(uint width, uint height, string command)
     {
+        var shellHostPath = Path.Combine(
+            Assembly.GetExecutingAssembly().Location,
+            "native", "win-x64", "ssh-shellhost.exe");
         _process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                // TODO Fix path when shellhost is properly packaged
-                FileName = "ssh-shellhost.exe",
+                FileName = shellHostPath,
                 Arguments = $"---pty {command}",
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
