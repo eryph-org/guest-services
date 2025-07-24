@@ -1,10 +1,10 @@
-#include "spawnptylib.h"
+#include "spawnpty.h"
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <pty.h>
 
-int spawn_pty(
+int spawnpty(
     const char *command,
     const struct termios *termios,
     const struct winsize *winsize,
@@ -13,8 +13,7 @@ int spawn_pty(
 {
     pid_t pid = forkpty(master_fd, NULL, termios, winsize);
     if (pid == -1) {
-        // TODO grep errno
-        return -1;
+        return errno;
     }
     
     if (pid == 0) {

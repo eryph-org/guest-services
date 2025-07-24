@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using Eryph.GuestServices.Pty.Linux;
+﻿using Eryph.GuestServices.Pty.Linux;
 using Eryph.GuestServices.Pty.WindowsLegacy;
 
 namespace Eryph.GuestServices.Pty;

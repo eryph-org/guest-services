@@ -9,6 +9,8 @@ namespace Eryph.GuestServices.Pty.Windows;
 
 public sealed partial class WindowsPty : IPty
 {
+    private int _disposed;
+
     private SafePipeHandle? _ptyReadPipe;
     private SafePipeHandle? _ptyWritePipe;
     private SafePipeHandle? _readPipe;
@@ -16,7 +18,7 @@ public sealed partial class WindowsPty : IPty
     private PseudoConsoleSafeHandle? _pseudoConsoleHandle;
     private ProcThreadAttributeListSafeHandle? _attributeListHandle;
 
-    private SafeWaitHandle? _processHandle;
+    private SafeProcessHandle? _processHandle;
     private SafeWaitHandle? _threadHandle;
 
     private Process? _process;
@@ -63,8 +65,6 @@ public sealed partial class WindowsPty : IPty
         if (!success)
             throw new InvalidOperationException($"Could not update ProcTheadAttributeList: 0x{Marshal.GetHRForLastWin32Error():x8}.");
         
-            
-
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
         startupInfo.lpAttributeList = _attributeListHandle.DangerousGetHandle();
@@ -83,12 +83,12 @@ public sealed partial class WindowsPty : IPty
             lpEnvironment: 0,
             lpCurrentDirectory: null,
             lpStartupInfo: in startupInfo,
-            lpProcessInformation: out ProcessInformation pInfo);
+            lpProcessInformation: out var pInfo);
 
         if (!success)
             throw new InvalidOperationException($"Could not create pseudo console process 0x{Marshal.GetHRForLastWin32Error():x8}.");
         
-        _processHandle = new SafeWaitHandle(pInfo.hProcess, true);
+        _processHandle = new SafeProcessHandle(pInfo.hProcess, true);
         _threadHandle = new SafeWaitHandle(pInfo.hThread, true);
 
         _process = Process.GetProcessById(pInfo.dwProcessId);
@@ -129,6 +129,9 @@ public sealed partial class WindowsPty : IPty
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
         _readStream?.Dispose();
         _writeStream?.Dispose();
 
@@ -146,6 +149,7 @@ public sealed partial class WindowsPty : IPty
         _threadHandle?.Dispose();
         _attributeListHandle?.Dispose();
 
+        _process?.Kill(true);
         _process?.Dispose();
     }
 
@@ -241,7 +245,6 @@ public sealed partial class WindowsPty : IPty
         PseudoConsoleSafeHandle hPc,
         Coordinates size);
 
-    // CharSet = CharSet.Auto
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CreatePipe(

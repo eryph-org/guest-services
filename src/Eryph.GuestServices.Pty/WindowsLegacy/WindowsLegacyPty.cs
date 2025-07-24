@@ -1,11 +1,12 @@
 ﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 
 namespace Eryph.GuestServices.Pty.WindowsLegacy;
 
-internal sealed class WindowsLegacyPty : IPty
+public sealed class WindowsLegacyPty : IPty
 {
+    private int _disposed;
+
     private Process? _process;
 
     public Stream? Input { get; private set; }
@@ -52,6 +53,10 @@ internal sealed class WindowsLegacyPty : IPty
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
+        _process?.Kill(true);
         _process?.Dispose();
     }
 }

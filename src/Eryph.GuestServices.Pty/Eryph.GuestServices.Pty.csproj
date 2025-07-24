@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="runtimes\linux-x64\native\spawnptylib.so" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="native\linux-x64\spawnpty.so" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="native\win-x64\ssh-shellhost.exe" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
