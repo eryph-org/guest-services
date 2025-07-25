@@ -7,6 +7,6 @@
 /**
  * Spawns a PTY which executes the given command.
  */
-int spawnpty(const char *command, const struct termios *termios, const struct winsize *winsize, int *master_fd, pid_t *pid);
+int spawnpty(char* const arguments[], const struct termios *termios, const struct winsize *winsize, int *master_fd, pid_t *child_pid);
 
 #endif

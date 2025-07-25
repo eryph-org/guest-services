@@ -15,17 +15,20 @@ public sealed class WindowsLegacyPty : IPty
     public Stream? Output { get; private set; }
 
     [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
-    public Task StartAsync(uint width, uint height, string command)
+    public async Task StartAsync(uint width, uint height, string command, string arguments)
     {
+        await Task.Yield();
+
+        var commandLine = string.IsNullOrEmpty(arguments) ? command : $"{command} {arguments}";
         var shellHostPath = Path.Combine(
-            Assembly.GetExecutingAssembly().Location,
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!,
             "native", "win-x64", "ssh-shellhost.exe");
         _process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
                 FileName = shellHostPath,
-                Arguments = $"---pty {command}",
+                Arguments = $"---pty {commandLine}",
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -35,9 +38,9 @@ public sealed class WindowsLegacyPty : IPty
         };
 
         _process.Start();
+
         Input = _process.StandardInput.BaseStream;
         Output = _process.StandardOutput.BaseStream;
-        return Task.CompletedTask;
     }
 
     public async Task<int> WaitForExitAsync(CancellationToken cancellation)

@@ -4,8 +4,8 @@ It considers three distinct cases:
 - Modern Windows (Windows 1809 or later): these versions of Windows have native PTY support.
   We need to invoke the Win32 APIs directly as no support is available in .NET.
 - Legacy Windows: older versions of Windows do not support PTYs natively.
-  We use the `ssh-shellhost.exe` from Windows OpenSSH project.
-- Linux: native support for PTY exists. We must use a small native helper library for
+  We use the `ssh-shellhost.exe` from the Windows OpenSSH project.
+- Linux: native support for PTY exists. We use a small native helper library for
   starting the PTY process. The helper can be found here: [spawnpty](./../spawnpty/).
 
 The code for the native Windows support is based on a sample from the Microsoft Terminal project.
@@ -23,4 +23,10 @@ See https://github.com/PowerShell/openssh-portable. Licensed as follows:
   Unfortunately,  these packages no longer work with .NET 8+. These packages just perform
   the necessary libc calls with `[DllImport]` with include a `fork()` and `exec`. This
   fails in .NET 8+ due to security changes in the runtime but also has never been supported.
-  See https://github.com/dotnet/runtime/issues/95890.
+  See https://github.com/dotnet/runtime/issues/95890 and
+  https://github.com/dotnet/runtime/blob/15a290ad5fea2e5d9c15f712959d139f199d1e04/src/libraries/System.Diagnostics.Process/src/System/Diagnostics/Process.Unix.cs#L514-L523.
+
+## Known limitations
+- The legacy Windows support using `ssh-shellhost.exe` does not work correctly when the
+  new Windows Terminal is the default terminal as it always creates a new window for the
+  spawned console. See https://github.com/microsoft/terminal/issues/12464.

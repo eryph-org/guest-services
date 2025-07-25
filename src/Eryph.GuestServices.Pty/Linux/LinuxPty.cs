@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -20,16 +21,19 @@ public sealed partial class LinuxPty : IPty
     public Stream? Output { get; private set; }
 
     [MemberNotNull(nameof(Input), nameof(Output))]
-    public Task StartAsync(uint width, uint height, string command)
+    public async Task StartAsync(uint width, uint height, string fileName, string arguments)
     {
+        await Task.Yield();
+
         var winSize = new WinSize
         {
             Columns = (ushort)Math.Min(width, ushort.MaxValue),
             Rows = (ushort)Math.Min(height, ushort.MaxValue),
         };
-
+        
         var result = spawnpty(
-            command,
+            // The arguments array must be terminated with null
+            [..ParseArguments(fileName, arguments), null],
             0, // We do not pass the termios struct at the moment as the defaults seem to work
             winSize,
             out var masterFd,
@@ -42,29 +46,32 @@ public sealed partial class LinuxPty : IPty
 
         Input = new FileStream(_masterFd, FileAccess.Write);
         Output = new FileStream(_masterFd, FileAccess.Read);
-        return Task.CompletedTask;
     }
 
     public async Task<int> WaitForExitAsync(CancellationToken cancellation)
     {
         while (true)
         {
+            await Task.Delay(100, cancellation);
+
             // On Linux, we must use waitpid to check if the process has exited.
             // Otherwise, the process remains as a zombie process. Also,
             // Process.WaitForExitAsync() just never completes.
             if (waitpid(_processHandle!, out var status, WaitPidOptions.WNOHANG) != 0)
             {
                 // The exit code is only 8 bits and encoded within the returned status.
-                var result = (status & 0xff00) >> 8;
+                var exitCode = (status & 0xff00) >> 8;
+                // Wrap the exit code into a custom HResult with our custom facility code.
+                var result = PtyErrorCodes.LinuxExitCode & exitCode;
                 return result;
             }
-
-            await Task.Delay(100, cancellation);
         }
     }
 
-    public Task ResizeAsync(uint width, uint height)
+    public async Task ResizeAsync(uint width, uint height)
     {
+        await Task.Yield();
+
         var winSize = new WinSize
         {
             Columns = (ushort)Math.Min(width, ushort.MaxValue),
@@ -76,7 +83,6 @@ public sealed partial class LinuxPty : IPty
             var error = Marshal.GetLastPInvokeError();
             throw new PtyException($"Could not resize the PTY: {error}.", error);
         };
-        return Task.CompletedTask;
     }
 
     private void KillProcess()
@@ -88,6 +94,32 @@ public sealed partial class LinuxPty : IPty
             // Even OpenSSH does not perform such a cleanup.
             killpg(_processHandle!, Signals.SIGKILL);
         }
+    }
+
+    private static string[] ParseArguments(string fileName, string arguments)
+    {
+        if (!Path.IsPathFullyQualified(fileName))
+            throw new ArgumentException($"The {nameof(fileName)} must be fully qualified.", nameof(fileName));
+
+        var processStartInfo = new ProcessStartInfo()
+        {
+            FileName = fileName,
+            Arguments = arguments,
+        };
+        
+        var method = typeof(Process).GetMethod("ParseArgv", BindingFlags.Static | BindingFlags.NonPublic);
+        if (method is null)
+            throw new PtyException(
+                "The method Process.ParseArgv does not exist.",
+                PtyErrorCodes.FailedToParseArguments);
+
+        var result = method.Invoke(null, [processStartInfo, null, false]);
+        if (result is not string[] args)
+            throw new PtyException(
+                "The method Process.ParseArgv did not return a string array.",
+                PtyErrorCodes.FailedToParseArguments);
+
+        return args;
     }
 
     public void Dispose()
@@ -212,7 +244,7 @@ public sealed partial class LinuxPty : IPty
     }
 
     [LibraryImport("native/linux-x64/spawnpty.so", EntryPoint = "spawnpty", StringMarshalling = StringMarshalling.Utf8)]
-    private static partial int spawnpty(string command, nint termios, in WinSize winSize, out int masterFd, out int childPid);
+    private static partial int spawnpty(string?[] args, nint termios, in WinSize winSize, out int masterFd, out int childPid);
 
     [LibraryImport("libc", EntryPoint = "ioctl", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int ioctl(SafeFileHandle fd, IOCtlCodes opcode, in WinSize winSize);

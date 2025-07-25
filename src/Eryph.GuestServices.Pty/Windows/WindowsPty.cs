@@ -23,16 +23,15 @@ public sealed partial class WindowsPty : IPty
 
     private Process? _process;
 
-    private AnonymousPipeClientStream? _readStream;
-    private AnonymousPipeClientStream? _writeStream;
-
     public Stream? Input { get; private set; }
 
     public Stream? Output { get; private set; }
 
     [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
-    public Task StartAsync(uint width, uint height, string command)
+    public async Task StartAsync(uint width, uint height, string command, string arguments)
     {
+        await Task.Yield();
+
         if (!CreatePipe(out _ptyReadPipe, out _writePipe, 0, 0))
         {
             var error = Marshal.GetHRForLastWin32Error();
@@ -77,14 +76,16 @@ public sealed partial class WindowsPty : IPty
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
         startupInfo.lpAttributeList = _attributeListHandle.DangerousGetHandle();
-        
+
+        var commandLine = string.IsNullOrEmpty(arguments) ? $"{command}" : $"{command} {arguments}";
+
         success = CreateProcess(
             lpApplicationName: null,
             // According to the documentation, CreateProcessW might actually
             // modify the provided string (the documentation states that the pointer
             // must be mutable). Not sure  if this is necessary, but we explicitly
-            // pass a byte array to make sure that the memory is writable.
-            lpCommandLine: Encoding.Unicode.GetBytes(command + '\0'),
+            // pass a char array to make sure that the memory is writable.
+            lpCommandLine: commandLine.ToCharArray(),
             lpProcessAttributes: 0,
             lpThreadAttributes: 0,
             bInheritHandles: false,
@@ -105,19 +106,16 @@ public sealed partial class WindowsPty : IPty
 
         _process = Process.GetProcessById(pInfo.dwProcessId);
 
-        _readStream = new AnonymousPipeClientStream(PipeDirection.In, _readPipe);
-        _writeStream = new AnonymousPipeClientStream(PipeDirection.Out, _writePipe);
-
-        Input = _writeStream;
-        Output = _readStream;
-
-        return Task.CompletedTask;
+        Input = new AnonymousPipeClientStream(PipeDirection.Out, _writePipe);
+        Output = new AnonymousPipeClientStream(PipeDirection.In, _readPipe);
     }
 
-    public Task ResizeAsync(uint width, uint height)
+    public async Task ResizeAsync(uint width, uint height)
     {
+        await Task.Yield();
+
         if (_pseudoConsoleHandle is null)
-            return Task.CompletedTask;
+            return;
 
         var result = ResizePseudoConsole(
             _pseudoConsoleHandle,
@@ -130,7 +128,7 @@ public sealed partial class WindowsPty : IPty
         if(result != 0)
             throw new PtyException($"Could not resize pseudo console: 0x{result:x8}.", result);
 
-        return Task.CompletedTask;
+        return;
     }
 
     public async Task<int> WaitForExitAsync(CancellationToken cancellation)
@@ -144,8 +142,8 @@ public sealed partial class WindowsPty : IPty
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
-        _readStream?.Dispose();
-        _writeStream?.Dispose();
+        Input?.Dispose();
+        Output?.Dispose();
 
         _readPipe?.Dispose();
         _writePipe?.Dispose();
@@ -234,7 +232,7 @@ public sealed partial class WindowsPty : IPty
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CreateProcess(
         string? lpApplicationName,
-        byte[] lpCommandLine,
+        char[] lpCommandLine,
         nint lpProcessAttributes,
         nint lpThreadAttributes,
         [MarshalAs(UnmanagedType.Bool)] bool bInheritHandles,

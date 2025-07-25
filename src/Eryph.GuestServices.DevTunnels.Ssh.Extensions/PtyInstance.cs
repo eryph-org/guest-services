@@ -23,20 +23,22 @@ public sealed class PtyInstance : IDisposable
 
         _pty = PtyProvider.CreatePty();
         var command = "powershell.exe";
+        var arguments = "-WindowStyle Hidden";
         if (OperatingSystem.IsLinux())
         {
             var shell = Environment.GetEnvironmentVariable("SHELL");
             command = string.IsNullOrEmpty(shell) ? "/bin/bash" : shell;
+            arguments = "-i";
         }
         
-        await _pty.StartAsync(_width, _height, command);
+        await _pty.StartAsync(_width, _height, command, arguments);
         _ = RunAsync(stream, _pty);
     }
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        _ = pty.Output.CopyToAsync(stream, _cts.Token); 
-        _ = stream.CopyToAsync(pty.Input, _cts.Token);
+        _ = pty.Output!.CopyToAsync(stream, _cts.Token); 
+        _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);

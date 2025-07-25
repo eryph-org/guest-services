@@ -22,15 +22,9 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 ///     <facility><c>0x002</c></facility>
 ///     <description>The custom file uploads</description>
 ///   </item>
-///   <item>
-///     <facility><c>0x003</c></facility>
-///     <description>The shell support</description>
-///   </item>
 /// </list>
 /// </remarks>
 public class ErrorCodes
 {
     public static readonly int FileExists = unchecked((int)0xa002_0001);
-
-    public static readonly int ShellGenericError = unchecked((int)0xa003_0001);
 }

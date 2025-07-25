@@ -1,3 +1,7 @@
+ssh-shellhost.exe is part of OpenSSH for Windows which can be found
+here: https://github.com/PowerShell/openssh-portable. ssh-shellhost.exe 
+is licensed as follows:
+
 Author: Manoj Ampalam <manoj.ampalam@microsoft.com>
 Primitive shell-host to support parsing of cmd.exe input and async IO redirection
 

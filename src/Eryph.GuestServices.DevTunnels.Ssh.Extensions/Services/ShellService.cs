@@ -67,7 +67,7 @@ public class ShellService(SshSession session) : SshService(session)
             }
             catch (Exception ex)
             {
-                var result = ex is PtyException pe ? pe.Result : ErrorCodes.ShellGenericError;
+                var result = ex is PtyException pe ? pe.Result : PtyErrorCodes.GenericError;
                 await channel.CloseAsync(unchecked((uint)result), cancellation);
             }
         };
