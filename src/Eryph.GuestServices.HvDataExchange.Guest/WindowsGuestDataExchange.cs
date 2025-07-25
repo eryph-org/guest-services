@@ -8,6 +8,11 @@ public class WindowsGuestDataExchange : IGuestDataExchange
 {
     private const string DxRegistryKey = @"SOFTWARE\Microsoft\Virtual Machine\Guest";
 
+    public Task<IReadOnlyDictionary<string, string>> GetExternalData()
+    {
+        throw new NotImplementedException();
+    }
+
     public Task<IReadOnlyDictionary<string, string>> GetGuestData()
     {
         var result = new Dictionary<string, string>();

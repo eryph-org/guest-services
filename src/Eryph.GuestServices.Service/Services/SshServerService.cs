@@ -6,6 +6,7 @@ using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Sockets;
 using Microsoft.DevTunnels.Ssh;
+using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -15,7 +16,9 @@ namespace Eryph.GuestServices.Service.Services;
 // TODO migrate to IHostedService
 internal sealed class SshServerService(
     IKeyStorage keyStorage,
+    IHostKeyGenerator hostKeyGenerator,
     IGuestDataExchange guestDataExchange,
+    IClientKeyProvider clientKeyProvider,
     ILogger<SshServerService> logger) : BackgroundService
 {
     private SocketSshServer? _server;
@@ -24,7 +27,13 @@ internal sealed class SshServerService(
     {
         await Task.Yield();
 
-        var hostKey = keyStorage.GetHostKey();
+        var hostKey = await keyStorage.GetHostKeyAsync();
+        if (hostKey is null)
+        {
+            logger.LogInformation("No host key found. Generating a new one.");
+            hostKey = hostKeyGenerator.GenerateHostKey();
+            await keyStorage.SetHostKeyAsync(hostKey);
+        }
 
         var config = new SshSessionConfiguration(useSecurity: true);
         
@@ -79,20 +88,26 @@ internal sealed class SshServerService(
             return;
         }
 
-        var clientKey = keyStorage.GetClientKey();
-        if (clientKey is null)
+        e.AuthenticationTask = CheckClientKey(e.PublicKey);
+    }
+
+    private async Task<ClaimsPrincipal?> CheckClientKey(IKeyPair clientKey)
+    {
+        var expectedClientKey = await clientKeyProvider.GetClientKey();
+        if (expectedClientKey is null)
         {
-            logger.LogWarning("Failed to authenticate client. The client public key is missing.");
-            return;
+            logger.LogInformation("Failed to authenticate client. The client public key is missing.");
+            return null;
         }
 
-        if (e.PublicKey.GetPublicKeyBytes() != clientKey.GetPublicKeyBytes())
+        if (clientKey.GetPublicKeyBytes() != expectedClientKey.GetPublicKeyBytes())
         {
-            logger.LogWarning("Public key mismatch for user {Username}: {PublicKey}", e.Username, e.PublicKey.GetPublicKeyBytes().ToBase64());
-            return;
+            logger.LogInformation(
+                "Failed to authenticate client. The provided public does not match the expected public key: {FingerPrint}.",
+                expectedClientKey.GetFingerPrint());
+            return null;
         }
-        
-        e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
+        return new ClaimsPrincipal();
     }
 
     public override void Dispose()

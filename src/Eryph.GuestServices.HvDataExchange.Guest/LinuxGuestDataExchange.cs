@@ -21,6 +21,11 @@ public class LinuxGuestDataExchange : IGuestDataExchange
 
     private const string DxFilePath = "/var/lib/hyperv/.kvp_pool_1";
 
+    public Task<IReadOnlyDictionary<string, string>> GetExternalData()
+    {
+        throw new NotImplementedException();
+    }
+
     public async Task<IReadOnlyDictionary<string, string>> GetGuestData()
     {
         await using var fileStream = File.Open(DxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);

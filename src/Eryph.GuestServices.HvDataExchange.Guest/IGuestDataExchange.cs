@@ -3,6 +3,15 @@
 public interface IGuestDataExchange
 {
     /// <summary>
+    /// Gets the external data of this virtual machine.
+    /// </summary>
+    /// <remarks>
+    /// This data is stored in <c>Virtual Machine\External</c> pool
+    /// of the Hyper-V data exchange.
+    /// </remarks>
+    Task<IReadOnlyDictionary<string, string>> GetExternalData();
+
+    /// <summary>
     /// Gets the guest data of this virtual machine.
     /// </summary>
     /// <remarks>

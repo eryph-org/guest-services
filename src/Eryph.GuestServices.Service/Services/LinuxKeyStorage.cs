@@ -5,62 +5,96 @@ using Microsoft.DevTunnels.Ssh.Algorithms;
 namespace Eryph.GuestServices.Service.Services;
 
 [SupportedOSPlatform("linux")]
-public class LinuxKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
+public class LinuxKeyStorage : IKeyStorage
 {
-    public IKeyPair? GetClientKey()
-    {
-        var keyFilePath = Path.Combine(
-            "/etc", "opt", "eryph", "guest-services", "id_egs.pub");
+    private static string ConfigDirectoryPath => Path.Combine(
+        "/etc", "opt", "eryph", "guest-services");
 
-        return !File.Exists(keyFilePath) ? null : KeyPair.ImportKeyFile(keyFilePath);
+    private static string ClientKeyPath => Path.Combine(ConfigDirectoryPath, "id_egs.pub");
+
+    private static string PrivateDirectoryPath => Path.Combine(ConfigDirectoryPath, "private");
+
+    private static string HostKeyPath => Path.Combine(PrivateDirectoryPath, "egs_host_key");
+
+    public async Task<IKeyPair?> GetClientKeyAsync()
+    {
+        if (!File.Exists(ClientKeyPath))
+            return null;
+
+        var keyBytes = await File.ReadAllBytesAsync(ClientKeyPath);
+        var key = KeyPair.ImportKeyBytes(keyBytes);
+        
+        return key;
     }
 
-    public IKeyPair GetHostKey()
+    public async Task SetClientKeyAsync(IKeyPair keyPair)
     {
-        var directoryPath = Path.Combine(
-            "/etc", "opt", "eryph", "guest-services", "private");
+        EnsureConfigDirectory();
 
-        EnsureDirectory(directoryPath);
+        if (Path.Exists(ClientKeyPath))
+            throw new InvalidOperationException("Cannot update the client key. It already exists.");
+        
+        var keyBytes = KeyPair.ExportPublicKeyBytes(keyPair);
+        await File.WriteAllBytesAsync(ClientKeyPath, keyBytes);
+    }
 
-        // TODO fix file name
-        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
-        if (File.Exists(keyFilePath))
+    public async Task<IKeyPair?> GetHostKeyAsync()
+    {
+        EnsurePrivateDirectory();
+        
+        if (!File.Exists(HostKeyPath))
+            return null;
+
+        var keyBytes = await File.ReadAllBytesAsync(HostKeyPath);
+
+        try
         {
-            try
-            {
-                return KeyPair.ImportKeyFile(keyFilePath);
-            }
-            catch (Exception ex)
-            {
-                File.Delete(keyFilePath);
-                throw new InvalidOperationException(
-                    $"Could not delete existing host key file at {keyFilePath}.", ex);
-            }
+            return KeyPair.ImportKeyBytes(keyBytes);
         }
-
-        var keyPair = hostKeyGenerator.GenerateHostKey();
-        KeyPair.ExportPrivateKeyFile(keyPair, keyFilePath);
-        return keyPair;
+        catch
+        {
+            File.Delete(HostKeyPath);
+            return null;
+        }
     }
 
-    private static void EnsureDirectory(string directoryPath)
+    public async Task SetHostKeyAsync(IKeyPair keyPair)
     {
-        if (!Directory.Exists(directoryPath))
+        EnsurePrivateDirectory();
+        if (File.Exists(HostKeyPath))
+            throw new InvalidOperationException("Cannot update the host key. It already exists.");
+        
+        var keyBytes = KeyPair.ExportPrivateKeyBytes(keyPair);
+        await File.WriteAllBytesAsync(HostKeyPath, keyBytes);
+    }
+
+    private static void EnsureConfigDirectory()
+    {
+        if (Directory.Exists(ConfigDirectoryPath))
+            return;
+        
+        Directory.CreateDirectory(ConfigDirectoryPath);
+    }
+
+    private static void EnsurePrivateDirectory()
+    {
+        EnsureConfigDirectory();
+
+        if (!Directory.Exists(PrivateDirectoryPath))
         {
-            Directory.CreateDirectory(directoryPath);
-            File.SetUnixFileMode(directoryPath, GetDirectoryFileMode());
+            Directory.CreateDirectory(PrivateDirectoryPath);
+            File.SetUnixFileMode(PrivateDirectoryPath, GetDirectoryFileMode());
             return;
         }
 
-        if (File.GetUnixFileMode(directoryPath) == GetDirectoryFileMode())
+        if (File.GetUnixFileMode(PrivateDirectoryPath) == GetDirectoryFileMode())
             return;
 
-        File.SetUnixFileMode(directoryPath, GetDirectoryFileMode());
-        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
-        if (File.Exists(keyFilePath))
+        File.SetUnixFileMode(PrivateDirectoryPath, GetDirectoryFileMode());
+        if (File.Exists(HostKeyPath))
         {
             // The key might be compromised -> delete it
-            File.Delete(keyFilePath);
+            File.Delete(HostKeyPath);
         }
     }
 

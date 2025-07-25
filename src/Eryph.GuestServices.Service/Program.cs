@@ -12,6 +12,7 @@ var builder = Host.CreateApplicationBuilder();
 builder.Services.AddLogging();
 builder.Services.AddHostedService<SshServerService>();
 builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
+builder.Services.AddSingleton<IClientKeyProvider, ClientKeyProvider>();
 
 if (OperatingSystem.IsWindows())
 {
