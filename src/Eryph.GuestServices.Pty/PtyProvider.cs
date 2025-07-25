@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Eryph.GuestServices.Pty.Linux;
 using Eryph.GuestServices.Pty.WindowsLegacy;
 
 namespace Eryph.GuestServices.Pty;
@@ -18,7 +14,7 @@ public static class PtyProvider
             return new WindowsLegacyPty();
 
         if (OperatingSystem.IsLinux())
-            throw new PlatformNotSupportedException("Linux support is not implemented yet.");
+            return new LinuxPty();
 
         throw new PlatformNotSupportedException(
             "Pty support is only available on Windows and Linux platforms.");

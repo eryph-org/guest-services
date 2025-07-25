@@ -4,8 +4,10 @@ using System.Reflection;
 
 namespace Eryph.GuestServices.Pty.WindowsLegacy;
 
-internal sealed class WindowsLegacyPty : IPty
+public sealed class WindowsLegacyPty : IPty
 {
+    private int _disposed;
+
     private Process? _process;
 
     public Stream? Input { get; private set; }
@@ -13,15 +15,20 @@ internal sealed class WindowsLegacyPty : IPty
     public Stream? Output { get; private set; }
 
     [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
-    public Task StartAsync(uint width, uint height, string command)
+    public async Task StartAsync(uint width, uint height, string command, string arguments)
     {
+        await Task.Yield();
+
+        var commandLine = string.IsNullOrEmpty(arguments) ? command : $"{command} {arguments}";
+        var shellHostPath = Path.Combine(
+            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!,
+            "native", "win-x64", "ssh-shellhost.exe");
         _process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                // TODO Fix path when shellhost is properly packaged
-                FileName = "ssh-shellhost.exe",
-                Arguments = $"---pty {command}",
+                FileName = shellHostPath,
+                Arguments = $"---pty {commandLine}",
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -31,9 +38,9 @@ internal sealed class WindowsLegacyPty : IPty
         };
 
         _process.Start();
+
         Input = _process.StandardInput.BaseStream;
         Output = _process.StandardOutput.BaseStream;
-        return Task.CompletedTask;
     }
 
     public async Task<int> WaitForExitAsync(CancellationToken cancellation)
@@ -52,6 +59,10 @@ internal sealed class WindowsLegacyPty : IPty
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
+        _process?.Kill(true);
         _process?.Dispose();
     }
 }

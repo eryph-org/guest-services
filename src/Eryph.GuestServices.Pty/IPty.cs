@@ -1,16 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Diagnostics.CodeAnalysis;
 
 namespace Eryph.GuestServices.Pty;
 
 public interface IPty : IDisposable
 {
     [MemberNotNull(nameof(Input), nameof(Output))]
-    Task StartAsync(uint width, uint height, string command);
+    Task StartAsync(uint width, uint height, string command, string arguments);
 
     Task<int> WaitForExitAsync(CancellationToken cancellation);
 

@@ -9,6 +9,8 @@ namespace Eryph.GuestServices.Pty.Windows;
 
 public sealed partial class WindowsPty : IPty
 {
+    private int _disposed;
+
     private SafePipeHandle? _ptyReadPipe;
     private SafePipeHandle? _ptyWritePipe;
     private SafePipeHandle? _readPipe;
@@ -16,26 +18,31 @@ public sealed partial class WindowsPty : IPty
     private PseudoConsoleSafeHandle? _pseudoConsoleHandle;
     private ProcThreadAttributeListSafeHandle? _attributeListHandle;
 
-    private SafeWaitHandle? _processHandle;
+    private SafeProcessHandle? _processHandle;
     private SafeWaitHandle? _threadHandle;
 
     private Process? _process;
-
-    private AnonymousPipeClientStream? _readStream;
-    private AnonymousPipeClientStream? _writeStream;
 
     public Stream? Input { get; private set; }
 
     public Stream? Output { get; private set; }
 
     [MemberNotNull(nameof(_process), nameof(Input), nameof(Output))]
-    public Task StartAsync(uint width, uint height, string command)
+    public async Task StartAsync(uint width, uint height, string command, string arguments)
     {
+        await Task.Yield();
+
         if (!CreatePipe(out _ptyReadPipe, out _writePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console input pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console input pipe: 0x{error:x8}.", error);
+        }
 
         if (!CreatePipe(out _readPipe, out _ptyWritePipe, 0, 0))
-            throw new InvalidOperationException($"Could not create pseudo console output pipe: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console output pipe: 0x{error:x8}.", error);
+        }
 
         var hResult = CreatePseudoConsole(
             new Coordinates
@@ -48,7 +55,7 @@ public sealed partial class WindowsPty : IPty
             0,
             out _pseudoConsoleHandle);
         if (hResult != 0)
-            throw new InvalidOperationException($"Could not create pseudo console: 0x{hResult:x8}.");
+            throw new PtyException($"Could not create pseudo console: 0x{hResult:x8}.", hResult);
         
         _attributeListHandle = ProcThreadAttributeListSafeHandle.Allocate(1);
         var success = UpdateProcThreadAttribute(
@@ -61,21 +68,24 @@ public sealed partial class WindowsPty : IPty
             lpReturnSize: 0);
 
         if (!success)
-            throw new InvalidOperationException($"Could not update ProcTheadAttributeList: 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not update ProcTheadAttributeList: 0x{error:x8}.", error);
+        }
         
-            
-
         var startupInfo = new StartupInfoEx();
         startupInfo.StartupInfo.cb = Marshal.SizeOf<StartupInfoEx>();
         startupInfo.lpAttributeList = _attributeListHandle.DangerousGetHandle();
-        
+
+        var commandLine = string.IsNullOrEmpty(arguments) ? $"{command}" : $"{command} {arguments}";
+
         success = CreateProcess(
             lpApplicationName: null,
             // According to the documentation, CreateProcessW might actually
             // modify the provided string (the documentation states that the pointer
             // must be mutable). Not sure  if this is necessary, but we explicitly
-            // pass a byte array to make sure that the memory is writable.
-            lpCommandLine: Encoding.Unicode.GetBytes(command + '\0'),
+            // pass a char array to make sure that the memory is writable.
+            lpCommandLine: commandLine.ToCharArray(),
             lpProcessAttributes: 0,
             lpThreadAttributes: 0,
             bInheritHandles: false,
@@ -83,31 +93,31 @@ public sealed partial class WindowsPty : IPty
             lpEnvironment: 0,
             lpCurrentDirectory: null,
             lpStartupInfo: in startupInfo,
-            lpProcessInformation: out ProcessInformation pInfo);
+            lpProcessInformation: out var pInfo);
 
         if (!success)
-            throw new InvalidOperationException($"Could not create pseudo console process 0x{Marshal.GetHRForLastWin32Error():x8}.");
+        {
+            var error = Marshal.GetHRForLastWin32Error();
+            throw new PtyException($"Could not create pseudo console process 0x{error:x8}.", error); 
+        }
         
-        _processHandle = new SafeWaitHandle(pInfo.hProcess, true);
+        _processHandle = new SafeProcessHandle(pInfo.hProcess, true);
         _threadHandle = new SafeWaitHandle(pInfo.hThread, true);
 
         _process = Process.GetProcessById(pInfo.dwProcessId);
 
-        _readStream = new AnonymousPipeClientStream(PipeDirection.In, _readPipe);
-        _writeStream = new AnonymousPipeClientStream(PipeDirection.Out, _writePipe);
-
-        Input = _writeStream;
-        Output = _readStream;
-
-        return Task.CompletedTask;
+        Input = new AnonymousPipeClientStream(PipeDirection.Out, _writePipe);
+        Output = new AnonymousPipeClientStream(PipeDirection.In, _readPipe);
     }
 
-    public Task ResizeAsync(uint width, uint height)
+    public async Task ResizeAsync(uint width, uint height)
     {
-        if (_pseudoConsoleHandle is null)
-            return Task.CompletedTask;
+        await Task.Yield();
 
-        var success = ResizePseudoConsole(
+        if (_pseudoConsoleHandle is null)
+            return;
+
+        var result = ResizePseudoConsole(
             _pseudoConsoleHandle,
             new Coordinates
             {
@@ -115,10 +125,10 @@ public sealed partial class WindowsPty : IPty
                 Y = (short)Math.Min(height, short.MaxValue)
             });
 
-        if(success != 0)
-            throw new InvalidOperationException($"Could not resize pseudo console: 0x{success:x8}.");
+        if(result != 0)
+            throw new PtyException($"Could not resize pseudo console: 0x{result:x8}.", result);
 
-        return Task.CompletedTask;
+        return;
     }
 
     public async Task<int> WaitForExitAsync(CancellationToken cancellation)
@@ -129,8 +139,11 @@ public sealed partial class WindowsPty : IPty
 
     public void Dispose()
     {
-        _readStream?.Dispose();
-        _writeStream?.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+
+        Input?.Dispose();
+        Output?.Dispose();
 
         _readPipe?.Dispose();
         _writePipe?.Dispose();
@@ -142,11 +155,12 @@ public sealed partial class WindowsPty : IPty
         // See https://learn.microsoft.com/en-us/windows/console/closepseudoconsole.
         _pseudoConsoleHandle?.Dispose();
 
+        _process?.Kill(true);
+        _process?.Dispose();
+
         _processHandle?.Dispose();
         _threadHandle?.Dispose();
         _attributeListHandle?.Dispose();
-
-        _process?.Dispose();
     }
 
     private const uint ExtendedStartupInfoPresent = 0x00080000;
@@ -160,14 +174,14 @@ public sealed partial class WindowsPty : IPty
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    internal struct StartupInfoEx
+    private struct StartupInfoEx
     {
         public StartupInfo StartupInfo;
         public IntPtr lpAttributeList;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    internal struct StartupInfo
+    private struct StartupInfo
     {
         public int cb;
         // These fields are actually strings (LPSTR or LPWSTR) but
@@ -195,7 +209,7 @@ public sealed partial class WindowsPty : IPty
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct ProcessInformation
+    private struct ProcessInformation
     {
         public nint hProcess;
         public nint hThread;
@@ -205,7 +219,7 @@ public sealed partial class WindowsPty : IPty
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool UpdateProcThreadAttribute(
+    private static partial bool UpdateProcThreadAttribute(
         SafeHandle lpAttributeList,
         uint dwFlags,
         nint attribute,
@@ -216,9 +230,9 @@ public sealed partial class WindowsPty : IPty
 
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, EntryPoint = "CreateProcessW")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool CreateProcess(
+    private static partial bool CreateProcess(
         string? lpApplicationName,
-        byte[] lpCommandLine,
+        char[] lpCommandLine,
         nint lpProcessAttributes,
         nint lpThreadAttributes,
         [MarshalAs(UnmanagedType.Bool)] bool bInheritHandles,
@@ -241,7 +255,6 @@ public sealed partial class WindowsPty : IPty
         PseudoConsoleSafeHandle hPc,
         Coordinates size);
 
-    // CharSet = CharSet.Auto
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool CreatePipe(
