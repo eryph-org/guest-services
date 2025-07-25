@@ -106,7 +106,11 @@ public sealed partial class LinuxPty : IPty
             FileName = fileName,
             Arguments = arguments,
         };
-        
+
+        // For Linux, we need the arguments as an array. We reuse an existing method in
+        // the .NET runtime for this to achieve consistent behavior. Unfortunately, this
+        // method is exposed, so we use reflection to access it. The method has been
+        // stable for a long time.
         var method = typeof(Process).GetMethod("ParseArgv", BindingFlags.Static | BindingFlags.NonPublic);
         if (method is null)
             throw new PtyException(
