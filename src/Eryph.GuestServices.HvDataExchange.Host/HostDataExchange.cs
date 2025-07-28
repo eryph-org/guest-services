@@ -2,6 +2,7 @@
 using System.Management;
 using System.Xml.Linq;
 using System.Xml.XPath;
+using Eryph.GuestServices.HvDataExchange.Common;
 
 namespace Eryph.GuestServices.HvDataExchange.Host;
 
@@ -84,6 +85,15 @@ public class HostDataExchange : IHostDataExchange
     {
         await Task.Run(async () =>
         {
+            foreach (var kvp in values)
+            {
+                if (!DataValidator.IsKeyValid(kvp.Key, out var keyError))
+                    throw new DataExchangeException($"The key '{kvp.Key}' is invalid. {keyError}");
+
+                if (!DataValidator.IsValueValid(kvp.Value, out var valueError))
+                    throw new DataExchangeException($"The value for key '{kvp.Key}' is invalid. {valueError}");
+            }
+
             var existingValues = await GetExternalDataAsync(vmId);
 
             var missing = values

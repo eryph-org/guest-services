@@ -1,6 +1,7 @@
 ﻿using System.Buffers;
 using System.Runtime.Versioning;
 using System.Text;
+using Eryph.GuestServices.HvDataExchange.Common;
 
 namespace Eryph.GuestServices.HvDataExchange.Guest;
 
@@ -41,7 +42,14 @@ public class LinuxGuestDataExchange : IGuestDataExchange
         await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var currentValues = await ReadValues(fileStream);
 
-        // TODO add validation
+        foreach (var kvp in values)
+        {
+            if (!DataValidator.IsKeyValid(kvp.Key, out var keyError))
+                throw new DataExchangeException($"The key '{kvp.Key}' is invalid. {keyError}");
+
+            if (!DataValidator.IsValueValid(kvp.Value, out var valueError))
+                throw new DataExchangeException($"The value for key '{kvp.Key}' is invalid. {valueError}");
+        }
 
         foreach (var kvp in values)
         {

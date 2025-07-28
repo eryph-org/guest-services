@@ -1,4 +1,5 @@
 ﻿using System.Runtime.Versioning;
+using Eryph.GuestServices.HvDataExchange.Common;
 using Microsoft.Win32;
 
 namespace Eryph.GuestServices.HvDataExchange.Guest;
@@ -50,6 +51,15 @@ public class WindowsGuestDataExchange : IGuestDataExchange
     {
         await Task.Run(() =>
         {
+            foreach (var kvp in values)
+            {
+                if (!DataValidator.IsKeyValid(kvp.Key, out var keyError))
+                    throw new DataExchangeException($"The key '{kvp.Key}' is invalid. {keyError}");
+
+                if (!DataValidator.IsValueValid(kvp.Value, out var valueError))
+                    throw new DataExchangeException($"The value for key '{kvp.Key}' is invalid. {valueError}");
+            }
+
             var poolKey = Registry.LocalMachine.CreateSubKey(pool);
             foreach (var kvp in values)
             {
