@@ -9,7 +9,7 @@ public interface IGuestDataExchange
     /// This data is stored in <c>Virtual Machine\External</c> pool
     /// of the Hyper-V data exchange.
     /// </remarks>
-    Task<IReadOnlyDictionary<string, string>> GetExternalData();
+    Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync();
 
     /// <summary>
     /// Gets the guest data of this virtual machine.
@@ -18,7 +18,7 @@ public interface IGuestDataExchange
     /// This data is stored in <c>Virtual Machine\Guest</c> pool
     /// of the Hyper-V data exchange.
     /// </remarks>
-    Task<IReadOnlyDictionary<string, string>> GetGuestData();
+    Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync();
 
     /// <summary>
     /// Sets the given <paramref name="values"/> in the guest data
@@ -29,5 +29,5 @@ public interface IGuestDataExchange
     /// This data is stored in <c>Virtual Machine\Guest</c> pool
     /// of the Hyper-V data exchange.
     /// </remarks>
-    Task SetGuestValues(IReadOnlyDictionary<string, string?> values);
+    Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values);
 }

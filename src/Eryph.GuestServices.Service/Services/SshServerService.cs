@@ -61,7 +61,7 @@ internal sealed class SshServerService(
         {
             [Constants.StatusKey] = "available"
         };
-        await guestDataExchange.SetGuestValues(values);
+        await guestDataExchange.SetGuestValuesAsync(values);
     }
 
     private void ExceptionRaised(object? sender, Exception e)
@@ -71,6 +71,7 @@ internal sealed class SshServerService(
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {
+        
         logger.LogWarning("Authentication type: {AuthType}", e.AuthenticationType);
         if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey
             or SshAuthenticationType.ClientPublicKeyQuery))
@@ -116,7 +117,7 @@ internal sealed class SshServerService(
         {
             [Constants.StatusKey] = null,
         };
-        guestDataExchange.SetGuestValues(values).GetAwaiter().GetResult();
+        guestDataExchange.SetGuestValuesAsync(values).GetAwaiter().GetResult();
         base.Dispose();
         _server?.Dispose();
     }

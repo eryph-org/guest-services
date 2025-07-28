@@ -24,6 +24,10 @@ app.Configure(config =>
         .WithDescription(
             "Returns the status of the guest services in the VM.");
 
+    config.AddCommand<AddSshConfigCommand>("add-ssh-config")
+        .WithDescription(
+            "Adds the necessary config for connecting to the given VM.");
+
     config.AddCommand<UpdateSshConfigCommand>("update-ssh-config")
         .WithDescription(
             "Updates the SSH config to allow connecting to the catlets.");

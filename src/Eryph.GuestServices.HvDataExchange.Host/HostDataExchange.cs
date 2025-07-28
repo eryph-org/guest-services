@@ -1,10 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Management;
-using System.Runtime.InteropServices;
-using System.Threading;
 using System.Xml.Linq;
 using System.Xml.XPath;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Eryph.GuestServices.HvDataExchange.Host;
 
@@ -16,53 +13,56 @@ public class HostDataExchange : IHostDataExchange
 
     public async Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync(Guid vmId)
     {
-        await Task.Yield();
-
-        using var searcher = new ManagementObjectSearcher(
-            new ManagementScope(Scope),
-            new ObjectQuery("SELECT SystemName,GuestExchangeItems "
-                            + "FROM Msvm_KvpExchangeComponent "
-                            + $"WHERE SystemName = '{vmId.ToString().ToUpperInvariant()}'"));
-        using var collection = searcher.Get();
-        var managementObjects = collection.Cast<ManagementBaseObject>().ToList();
-        try
+        return await Task.Run(() =>
         {
-            var mo = managementObjects.SingleOrDefault();
-            if (mo is null || mo["GuestExchangeItems"] is not string[] items)
-                return new Dictionary<string, string>();
+            using var searcher = new ManagementObjectSearcher(
+                new ManagementScope(Scope),
+                new ObjectQuery("SELECT SystemName,GuestExchangeItems "
+                                + "FROM Msvm_KvpExchangeComponent "
+                                + $"WHERE SystemName = '{vmId.ToString().ToUpperInvariant()}'"));
+            
+            using var collection = searcher.Get();
+            var managementObjects = collection.Cast<ManagementBaseObject>().ToList();
+            try
+            {
+                var mo = managementObjects.SingleOrDefault();
+                if (mo is null || mo["GuestExchangeItems"] is not string[] items)
+                    return new Dictionary<string, string>();
 
-            return ParseItems(items);
-        }
-        finally
-        {
-            DisposeAll(managementObjects);
-        }
+                return ParseItems(items);
+            }
+            finally
+            {
+                DisposeAll(managementObjects);
+            }
+        });
     }
 
     public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync(Guid vmId)
     {
-        await Task.Yield();
-
-        using var searcher = new ManagementObjectSearcher(
-            new ManagementScope(Scope),
-            new ObjectQuery("SELECT InstanceID,HostExchangeItems "
-                            + "FROM Msvm_KvpExchangeComponentSettingData "
-                            + @$"WHERE InstanceID LIKE 'Microsoft:{vmId.ToString().ToUpperInvariant()}\\%'"));
-
-        using var collection = searcher.Get();
-        var managementObjects = collection.Cast<ManagementBaseObject>().ToList();
-        try
+        return await Task.Run(() =>
         {
-            var mo = managementObjects.SingleOrDefault();
-            if (mo is null || mo["HostExchangeItems"] is not string[] items)
-                return new Dictionary<string, string>();
+            using var searcher = new ManagementObjectSearcher(
+                new ManagementScope(Scope),
+                new ObjectQuery("SELECT InstanceID,HostExchangeItems "
+                                + "FROM Msvm_KvpExchangeComponentSettingData "
+                                + @$"WHERE InstanceID LIKE 'Microsoft:{vmId.ToString().ToUpperInvariant()}\\%'"));
 
-            return ParseItems(items);
-        }
-        finally
-        {
-            DisposeAll(managementObjects);
-        }
+            using var collection = searcher.Get();
+            var managementObjects = collection.Cast<ManagementBaseObject>().ToList();
+            try
+            {
+                var mo = managementObjects.SingleOrDefault();
+                if (mo is null || mo["HostExchangeItems"] is not string[] items)
+                    return new Dictionary<string, string>();
+
+                return ParseItems(items);
+            }
+            finally
+            {
+                DisposeAll(managementObjects);
+            }
+        });
     }
     
     private IReadOnlyDictionary<string, string> ParseItems(string[] items)
@@ -82,98 +82,62 @@ public class HostDataExchange : IHostDataExchange
 
     public async Task SetExternalDataAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
     {
-        var existingValues = await GetExternalDataAsync(vmId);
-
-        var missing = values
-            .Where(kvp => !existingValues.ContainsKey(kvp.Key) && kvp.Value is not null)
-            .ToList();
-
-        var changed = values
-            .Where(kvp => existingValues.ContainsKey(kvp.Key) && kvp.Value is not null)
-            .ToList();
-
-        var removed = values
-            .Where(kvp => existingValues.ContainsKey(kvp.Key) && kvp.Value is null)
-            .ToList();
-
-        ManagementObject? vmms = null;
-        ManagementBaseObject? vm = null;
-        try
+        await Task.Run(async () =>
         {
-            vmms = GetVmms();
-            vm = GetVm(vmId);
-            if (vm is null)
-                throw new Exception($"The virtual machine with ID '{vmId}' does not exist.");
+            var existingValues = await GetExternalDataAsync(vmId);
 
-            await AddExternalData(vmms, vm, missing);
-            await UpdateExternalData(vmms, vm, changed);
-            await RemoveExternalData(vmms, vm, removed);
-        }
-        finally
-        {
-            vmms?.Dispose();
-            vm?.Dispose();
-        }
+            var missing = values
+                .Where(kvp => !existingValues.ContainsKey(kvp.Key) && kvp.Value is not null)
+                .ToList();
+
+            var changed = values
+                .Where(kvp => existingValues.ContainsKey(kvp.Key) && kvp.Value is not null)
+                .ToList();
+
+            var removed = values
+                .Where(kvp => existingValues.ContainsKey(kvp.Key) && kvp.Value is null)
+                .ToList();
+
+            ManagementObject? vmms = null;
+            ManagementBaseObject? vm = null;
+            try
+            {
+                vmms = GetVmms();
+                vm = GetVm(vmId);
+                if (vm is null)
+                    throw new Exception($"The virtual machine with ID '{vmId}' does not exist.");
+
+                // The WMI API of Hyper-V for the KVP exchange requires us to explicitly
+                // split create, update and delete operations into three separate method calls.
+                await InvokeMethod(vmms, "AddKvpItems", vm, missing);
+                await InvokeMethod(vmms, "ModifyKvpItems", vm, changed);
+                await InvokeMethod(vmms, "RemoveKvpItems", vm, removed);
+            }
+            finally
+            {
+                vmms?.Dispose();
+                vm?.Dispose();
+            }
+        });
     }
 
-    private async Task AddExternalData(
+    private async Task InvokeMethod(
         ManagementObject vmms,
+        string method,
         ManagementBaseObject vm,
-        IEnumerable<KeyValuePair<string, string>> values)
+        IList<KeyValuePair<string, string?>> values)
     {
-        using var parameters = vmms.GetMethodParameters("AddKvpItems");
-        parameters["TargetSystem"] = vm;
-        parameters["DataItems"] = CreateItems(vmms, values!);
-        var result = vmms.InvokeMethod("AddKvpItems", parameters, null);
-        var returnValue = (uint)result["ReturnValue"];
-        
-        if (returnValue == 0)
-            return;
-        
-        if (returnValue != 4096)
-            throw new Exception($"ModifyResourceSettings failed with result '{ConvertReturnValue(returnValue)}'");
-        
-        var jobPath = (string)result["Job"];
-        await WaitForJob(jobPath);
-    }
-
-    private async Task UpdateExternalData(
-        ManagementObject vmms,
-        ManagementBaseObject vm,
-        IEnumerable<KeyValuePair<string, string?>> values)
-    {
-        using var parameters = vmms.GetMethodParameters("ModifyKvpItems");
+        using var parameters = vmms.GetMethodParameters(method);
         parameters["TargetSystem"] = vm;
         parameters["DataItems"] = CreateItems(vmms, values);
-        var result = vmms.InvokeMethod("ModifyKvpItems", parameters, null);
+        var result = vmms.InvokeMethod(method, parameters, null);
         var returnValue = (uint)result["ReturnValue"];
 
         if (returnValue == 0)
             return;
 
         if (returnValue != 4096)
-            throw new Exception($"ModifyResourceSettings failed with result '{ConvertReturnValue(returnValue)}'");
-
-        var jobPath = (string)result["Job"];
-        await WaitForJob(jobPath);
-    }
-
-    private async Task RemoveExternalData(
-        ManagementObject vmms,
-        ManagementBaseObject vm,
-        IEnumerable<KeyValuePair<string, string?>> values)
-    {
-        using var parameters = vmms.GetMethodParameters("RemoveKvpItems");
-        parameters["TargetSystem"] = vm;
-        parameters["DataItems"] = CreateItems(vmms, values);
-        var result = vmms.InvokeMethod("RemoveKvpItems", parameters, null);
-        var returnValue = (uint)result["ReturnValue"];
-
-        if (returnValue == 0)
-            return;
-
-        if (returnValue != 4096)
-            throw new Exception($"ModifyResourceSettings failed with result '{ConvertReturnValue(returnValue)}'");
+            throw new Exception($"{method} failed with result '{ConvertReturnValue(returnValue)}'");
 
         var jobPath = (string)result["Job"];
         await WaitForJob(jobPath);
@@ -193,9 +157,13 @@ public class HostDataExchange : IHostDataExchange
             try
             {
                 kvpItem["Name"] = kvp.Key;
+                // The actual data cannot be null, but we allow the user to specify
+                // null to indicate that the key should be removed. Hyper-V knows based
+                // on the invoked method whether the key is updated or removed.
+                // Hence, we can just change null to an empty string here.
                 kvpItem["Data"] = kvp.Value ?? "";
                 kvpItem["Source"] = 0;
-                result.Add(kvpItem.GetText(TextFormat.CimDtd20));
+                result.Add(kvpItem.GetText(TextFormat.WmiDtd20));
             }
             finally
             {

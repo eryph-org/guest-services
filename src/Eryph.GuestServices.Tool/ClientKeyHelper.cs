@@ -15,7 +15,7 @@ public static class ClientKeyHelper
 
     private static string PrivateDirectory => Path.Combine(ConfigDirectory, "private");
 
-    private static string PrivateKeyPath => Path.Combine(PrivateDirectory, "id_egs");
+    public static string PrivateKeyPath => Path.Combine(PrivateDirectory, "id_egs");
 
     private static string PublicKeyPath => Path.Combine(PrivateDirectory, "id_egs.pub");
 

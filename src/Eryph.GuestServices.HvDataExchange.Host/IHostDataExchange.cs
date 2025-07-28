@@ -24,7 +24,8 @@ public interface IHostDataExchange
 
     /// <summary>
     /// Sets the external data of the virtual machine with the
-    /// given <paramref name="vmId"/>.
+    /// given <paramref name="vmId"/>. When the value is <see langword="null"/>,
+    /// the key is removed from the guest data.
     /// </summary>
     /// <remarks>
     /// This data is stored in <c>Virtual Machine\External</c> pool

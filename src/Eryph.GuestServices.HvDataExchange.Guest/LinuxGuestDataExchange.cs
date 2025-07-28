@@ -19,24 +19,29 @@ public class LinuxGuestDataExchange : IGuestDataExchange
     
     private const int MaxKvpSize = MaxKeySize + MaxValueSize;
 
-    private const string DxFilePath = "/var/lib/hyperv/.kvp_pool_1";
+    private const string ExternalPoolFilePath = "/var/lib/hyperv/.kvp_pool_0";
+    private const string GuestPoolFilePath = "/var/lib/hyperv/.kvp_pool_1";
 
-    public Task<IReadOnlyDictionary<string, string>> GetExternalData()
+    public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync()
     {
-        throw new NotImplementedException();
-    }
-
-    public async Task<IReadOnlyDictionary<string, string>> GetGuestData()
-    {
-        await using var fileStream = File.Open(DxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        await using var fileStream = File.Open(ExternalPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var values = await ReadValues(fileStream);
         return values;
     }
 
-    public async Task SetGuestValues(IReadOnlyDictionary<string, string?> values)
+    public async Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync()
     {
-        await using var fileStream = File.Open(DxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var values = await ReadValues(fileStream);
+        return values;
+    }
+
+    public async Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
+    {
+        await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var currentValues = await ReadValues(fileStream);
+
+        // TODO add validation
 
         foreach (var kvp in values)
         {

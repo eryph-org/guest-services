@@ -1,10 +1,7 @@
-﻿using Microsoft.DevTunnels.Ssh.Algorithms;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using Eryph.GuestServices.Core;
+﻿using Eryph.GuestServices.Core;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Microsoft.DevTunnels.Ssh;
+using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Service.Services;
@@ -23,7 +20,7 @@ public class ClientKeyProvider(
 
         logger.LogInformation("Client key not found. Trying to pull the key from the Hyper-V data exchange.");
         
-        var guestData = await dataExchange.GetGuestData();
+        var guestData = await dataExchange.GetExternalDataAsync();
         if (!guestData.TryGetValue(Constants.ClientAuthKey, out var clientKeyData))
             return null;
 

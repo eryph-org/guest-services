@@ -6,47 +6,62 @@ namespace Eryph.GuestServices.HvDataExchange.Guest;
 [SupportedOSPlatform("windows")]
 public class WindowsGuestDataExchange : IGuestDataExchange
 {
-    private const string DxRegistryKey = @"SOFTWARE\Microsoft\Virtual Machine\Guest";
+    private const string ExternalPoolRegistryKey = @"SOFTWARE\Microsoft\Virtual Machine\External";
+    private const string GuestPoolRegistryKey = @"SOFTWARE\Microsoft\Virtual Machine\Guest";
 
-    public Task<IReadOnlyDictionary<string, string>> GetExternalData()
+    public Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync()
     {
-        throw new NotImplementedException();
+        return GetData(ExternalPoolRegistryKey);
     }
 
-    public Task<IReadOnlyDictionary<string, string>> GetGuestData()
+    public Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync()
     {
-        var result = new Dictionary<string, string>();
-        var guestKey = Registry.LocalMachine.CreateSubKey(DxRegistryKey);
-        foreach (var valueName in guestKey.GetValueNames())
-        {
-            var value = guestKey.GetValue(valueName);
-            if (value is string s)
-            {
-                result[valueName] = s;
-            }
-        }
-
-        return Task.FromResult<IReadOnlyDictionary<string, string>> (result);
+        return GetData(GuestPoolRegistryKey);
     }
 
-    public Task SetGuestValues(IReadOnlyDictionary<string, string?> values)
+    private async Task<IReadOnlyDictionary<string, string>> GetData(string pool)
     {
-        // TODO validation
-
-        var guestKey = Registry.LocalMachine.CreateSubKey(DxRegistryKey);
-        foreach (var kvp in values)
+        return await Task.Run(() =>
         {
-            if (kvp.Value is null)
+            var result = new Dictionary<string, string>();
+            var guestKey = Registry.LocalMachine.CreateSubKey(pool);
+            
+            foreach (var valueName in guestKey.GetValueNames())
             {
-                guestKey.DeleteValue(kvp.Key, false);
-                
+                var value = guestKey.GetValue(valueName);
+                if (value is string s)
+                {
+                    result[valueName] = s;
+                }
             }
-            else
-            {
-                guestKey.SetValue(kvp.Key, kvp.Value);
-            }
-        }
 
-        return Task.CompletedTask;
+            return result;
+        });
+    }
+
+    public Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
+    {
+        return SetData(GuestPoolRegistryKey, values);
+    }
+
+    private async Task SetData(
+        string pool,
+        IReadOnlyDictionary<string, string?> values)
+    {
+        await Task.Run(() =>
+        {
+            var poolKey = Registry.LocalMachine.CreateSubKey(pool);
+            foreach (var kvp in values)
+            {
+                if (kvp.Value is null)
+                {
+                    poolKey.DeleteValue(kvp.Key, false);
+                }
+                else
+                {
+                    poolKey.SetValue(kvp.Key, kvp.Value);
+                }
+            }
+        });
     }
 }
