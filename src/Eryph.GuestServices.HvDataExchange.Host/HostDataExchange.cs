@@ -115,7 +115,7 @@ public class HostDataExchange : IHostDataExchange
                 vmms = GetVmms();
                 vm = GetVm(vmId);
                 if (vm is null)
-                    throw new Exception($"The virtual machine with ID '{vmId}' does not exist.");
+                    throw new DataExchangeException($"The virtual machine with ID '{vmId}' does not exist.");
 
                 // The WMI API of Hyper-V for the KVP exchange requires us to explicitly
                 // split create, update and delete operations into three separate method calls.
@@ -147,7 +147,8 @@ public class HostDataExchange : IHostDataExchange
             return;
 
         if (returnValue != 4096)
-            throw new Exception($"{method} failed with result '{ConvertReturnValue(returnValue)}'");
+            throw new DataExchangeException(
+                $"{method} failed with result '{ConvertReturnValue(returnValue)}'.");
 
         var jobPath = (string)result["Job"];
         await WaitForJob(jobPath);
@@ -234,9 +235,16 @@ public class HostDataExchange : IHostDataExchange
                 job.Get();
             }
 
+            if (IsJobRunning((ushort)job["JobState"]))
+                throw new DataExchangeException(
+                    "The job did not complete successfully within the allotted time. "
+                    + $"The last reported state was {ConvertJobState((ushort)job["JobState"])}.");
+
             if (!IsJobCompleted((ushort)job["JobState"]))
-                throw new Exception("The job did not complete successfully within the allotted time."
-                                 + $"The last reported state was {ConvertJobState((ushort)job["JobState"])}.");
+                throw new DataExchangeException(
+                    "The job did not complete successfully. "
+                    + $"The job reported the state '{ConvertJobState((ushort)job["JobState"])}' "
+                    + $"and the result '{ConvertReturnValue((ushort)job["ErrorCode"])}'.");
         }
         finally
         {
@@ -266,13 +274,18 @@ public class HostDataExchange : IHostDataExchange
         returnValue switch
         {
             0 => "Completed",
-            1 => "Not Supported",
-            2 => "Failed",
-            3 => "Timeout",
-            4 => "Invalid Parameter",
-            5 => "Invalid State",
-            6 => "Incompatible Parameters",
             4096 => "Job Started",
+            32768 => "Failed",
+            32769 => "Access Denied",
+            32770 => "Not Supported",
+            32771 => "Status is unknown",
+            32772 => "Timeout",
+            32773 => "Invalid parameter",
+            32774 => "System is in use",
+            32775 => "Invalid state for this operation",
+            32776 => "Incorrect data type",
+            32777 => "System is not available",
+            32778 => "Out of memory",
             _ => $"Other ({returnValue})",
         };
 
