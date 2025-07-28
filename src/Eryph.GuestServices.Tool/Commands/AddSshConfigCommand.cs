@@ -27,14 +27,14 @@ public class AddSshConfigCommand : AsyncCommand<AddSshConfigCommand.Settings>
 
         var publicKey = KeyPair.ExportPublicKey(keyPair, keyFormat: KeyFormat.Ssh);
         var hostDataExchange = new HostDataExchange();
-        await hostDataExchange.SetExternalDataAsync(
+        await hostDataExchange.SetExternalValuesAsync(
             settings.VmId,
             new Dictionary<string, string?>
             {
                 [Constants.ClientAuthKey] = publicKey,
             });
 
-        await SshConfigHelper.EnsureEryphSshConfigAsync();
+        await SshConfigHelper.EnsureSshConfigAsync();
         await SshConfigHelper.EnsureVmConfigAsync(settings.VmId, settings.Alias, ClientKeyHelper.PrivateKeyPath);
 
         AnsiConsole.MarkupLineInterpolated($"SSH config added for VM {settings.VmId}. You can connect with:");

@@ -46,7 +46,7 @@ public class ClientKeyProvider(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "The provided key could not be parsed");
+            logger.LogInformation(ex, "The provided key could not be parsed.");
             return null;
         }
     }

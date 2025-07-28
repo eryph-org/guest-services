@@ -71,7 +71,6 @@ internal sealed class SshServerService(
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {
-        
         logger.LogWarning("Authentication type: {AuthType}", e.AuthenticationType);
         if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey
             or SshAuthenticationType.ClientPublicKeyQuery))

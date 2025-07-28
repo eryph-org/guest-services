@@ -31,5 +31,5 @@ public interface IHostDataExchange
     /// This data is stored in <c>Virtual Machine\External</c> pool
     /// of the Hyper-V data exchange.
     /// </remarks>
-    Task SetExternalDataAsync(Guid vmId, IReadOnlyDictionary<string, string?> values);
+    Task SetExternalValuesAsync(Guid vmId, IReadOnlyDictionary<string, string?> values);
 }

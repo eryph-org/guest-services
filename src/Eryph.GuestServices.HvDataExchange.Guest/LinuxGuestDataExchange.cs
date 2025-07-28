@@ -26,21 +26,21 @@ public class LinuxGuestDataExchange : IGuestDataExchange
     public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync()
     {
         await using var fileStream = File.Open(ExternalPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var values = await ReadValues(fileStream);
+        var values = await ReadValues(fileStream).ConfigureAwait(false);
         return values;
     }
 
     public async Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync()
     {
         await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var values = await ReadValues(fileStream);
+        var values = await ReadValues(fileStream).ConfigureAwait(false);
         return values;
     }
 
     public async Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
     {
         await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var currentValues = await ReadValues(fileStream);
+        var currentValues = await ReadValues(fileStream).ConfigureAwait(false);
 
         foreach (var kvp in values)
         {
@@ -63,7 +63,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
             }
         }
 
-        await WriteValues(fileStream, currentValues);
+        await WriteValues(fileStream, currentValues).ConfigureAwait(false);
     }
 
     private async Task<Dictionary<string, string>> ReadValues(FileStream fileStream)
@@ -75,7 +75,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
         
         while (fileStream.Position < fileStream.Length)
         {
-            await fileStream.ReadExactlyAsync(buffer);
+            await fileStream.ReadExactlyAsync(buffer).ConfigureAwait(false);
             var keySpan = buffer.Span[..MaxKeySize];
             var valueSpan = buffer.Span[MaxKeySize..];
 
@@ -102,7 +102,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
             buffer.Span.Clear();
             Encoding.UTF8.GetBytes(kvp.Key, buffer.Span[..MaxKeySize]);
             Encoding.UTF8.GetBytes(kvp.Value, buffer.Span[MaxKeySize..]);
-            await fileStream.WriteAsync(buffer);
+            await fileStream.WriteAsync(buffer).ConfigureAwait(false);
         }
     }
 }

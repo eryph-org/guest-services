@@ -21,7 +21,7 @@ public static class DataValidator
     private const int MaxValueLength = 1023;
 
     /// <summary>
-    /// The maximum size of a key excluding the null terminator.
+    /// The maximum size of a value excluding the null terminator.
     /// Defined by <c>HV_KVP_EXCHANGE_MAX_VALUE_SIZE</c>.
     /// </summary>
     private const int MaxValueSize = 2047;

@@ -36,7 +36,7 @@ public class HostDataExchange : IHostDataExchange
             {
                 DisposeAll(managementObjects);
             }
-        });
+        }).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync(Guid vmId)
@@ -63,7 +63,7 @@ public class HostDataExchange : IHostDataExchange
             {
                 DisposeAll(managementObjects);
             }
-        });
+        }).ConfigureAwait(false);
     }
     
     private IReadOnlyDictionary<string, string> ParseItems(string[] items)
@@ -73,7 +73,10 @@ public class HostDataExchange : IHostDataExchange
             // The item itself is returned as XML. Hence, we use XPath to extract the
             // actual key and value.
             var xml = XDocument.Parse(item);
-            var name = xml.XPathSelectElement("/INSTANCE/PROPERTY[@NAME='Name']/VALUE")!.Value;
+            var name = xml.XPathSelectElement("/INSTANCE/PROPERTY[@NAME='Name']/VALUE")?.Value;
+            if(string.IsNullOrEmpty(name))
+                throw new DataExchangeException("The key is missing in the KVP item.");
+
             var data = xml.XPathSelectElement("/INSTANCE/PROPERTY[@NAME='Data']/VALUE")?.Value;
             return new KeyValuePair<string, string>(name, data ?? "");
         });
@@ -81,7 +84,7 @@ public class HostDataExchange : IHostDataExchange
         return new Dictionary<string, string>(parsed);
     }
 
-    public async Task SetExternalDataAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
+    public async Task SetExternalValuesAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
     {
         await Task.Run(async () =>
         {
@@ -119,16 +122,16 @@ public class HostDataExchange : IHostDataExchange
 
                 // The WMI API of Hyper-V for the KVP exchange requires us to explicitly
                 // split create, update and delete operations into three separate method calls.
-                await InvokeMethod(vmms, "AddKvpItems", vm, missing);
-                await InvokeMethod(vmms, "ModifyKvpItems", vm, changed);
-                await InvokeMethod(vmms, "RemoveKvpItems", vm, removed);
+                await InvokeMethod(vmms, "AddKvpItems", vm, missing).ConfigureAwait(false);
+                await InvokeMethod(vmms, "ModifyKvpItems", vm, changed).ConfigureAwait(false);
+                await InvokeMethod(vmms, "RemoveKvpItems", vm, removed).ConfigureAwait(false);
             }
             finally
             {
                 vmms?.Dispose();
                 vm?.Dispose();
             }
-        });
+        }).ConfigureAwait(false);
     }
 
     private async Task InvokeMethod(
@@ -151,7 +154,7 @@ public class HostDataExchange : IHostDataExchange
                 $"{method} failed with result '{ConvertReturnValue(returnValue)}'.");
 
         var jobPath = (string)result["Job"];
-        await WaitForJob(jobPath);
+        await WaitForJob(jobPath).ConfigureAwait(false);
     }
 
     private string[] CreateItems(

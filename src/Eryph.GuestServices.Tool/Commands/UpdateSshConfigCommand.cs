@@ -30,7 +30,8 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
             catlets.Add(catlet);
         }
 
-        await SshConfigHelper.CleanupCatletConfigs(catlets.Select(c => c.Id).ToList());
+        await SshConfigHelper.EnsureSshConfigAsync();
+        await SshConfigHelper.CleanupCatletConfigsAsync(catlets.Select(c => c.Id).ToList());
 
         foreach (var catlet in catlets)
         {

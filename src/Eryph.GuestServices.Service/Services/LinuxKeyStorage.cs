@@ -29,7 +29,7 @@ public class LinuxKeyStorage : IKeyStorage
 
     public async Task SetClientKeyAsync(IKeyPair keyPair)
     {
-        EnsureConfigDirectory();
+        Directory.CreateDirectory(ConfigDirectoryPath);
 
         if (Path.Exists(ClientKeyPath))
             throw new InvalidOperationException("Cannot update the client key. It already exists.");
@@ -68,17 +68,9 @@ public class LinuxKeyStorage : IKeyStorage
         await File.WriteAllBytesAsync(HostKeyPath, keyBytes);
     }
 
-    private static void EnsureConfigDirectory()
-    {
-        if (Directory.Exists(ConfigDirectoryPath))
-            return;
-        
-        Directory.CreateDirectory(ConfigDirectoryPath);
-    }
-
     private static void EnsurePrivateDirectory()
     {
-        EnsureConfigDirectory();
+        Directory.CreateDirectory(ConfigDirectoryPath);
 
         if (!Directory.Exists(PrivateDirectoryPath))
         {

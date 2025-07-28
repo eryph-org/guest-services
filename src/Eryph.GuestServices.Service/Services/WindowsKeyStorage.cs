@@ -30,6 +30,8 @@ public class WindowsKeyStorage : IKeyStorage
 
     public async Task SetClientKeyAsync(IKeyPair keyPair)
     {
+        Directory.CreateDirectory(ConfigDirectoryPath);
+
         if (File.Exists(ClientKeyPath))
             throw new InvalidOperationException("Cannot update the client key. It already exists.");
 
@@ -68,17 +70,9 @@ public class WindowsKeyStorage : IKeyStorage
         await File.WriteAllBytesAsync(HostKeyPath, keyBytes);
     }
 
-    private static void EnsureConfigDirectory()
-    {
-        if (Directory.Exists(ConfigDirectoryPath))
-            return;
-        
-        Directory.CreateDirectory(ConfigDirectoryPath);
-    }
-
     private static void EnsurePrivateDirectory()
     {
-        EnsureConfigDirectory();
+        Directory.CreateDirectory(ConfigDirectoryPath);
 
         var directoryInfo = new DirectoryInfo(PrivateDirectoryPath);
         var security = GetDirectorySecurity();

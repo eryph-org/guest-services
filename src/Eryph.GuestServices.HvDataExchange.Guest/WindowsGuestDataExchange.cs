@@ -37,7 +37,7 @@ public class WindowsGuestDataExchange : IGuestDataExchange
             }
 
             return result;
-        });
+        }).ConfigureAwait(false);
     }
 
     public Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
@@ -72,6 +72,6 @@ public class WindowsGuestDataExchange : IGuestDataExchange
                     poolKey.SetValue(kvp.Key, kvp.Value);
                 }
             }
-        });
+        }).ConfigureAwait(false);
     }
 }
