@@ -1,0 +1,12 @@
+[Unit]
+Description=eryph guest services
+
+[Service]
+Type=notify
+ExecStart=/opt/eryph/guest-services/bin/egs-service
+Environment="HOME=/root"
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
