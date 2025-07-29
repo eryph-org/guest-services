@@ -21,6 +21,9 @@ public class ClientKeyProvider(
         logger.LogInformation("Client key not found. Trying to pull the key from the Hyper-V data exchange.");
         
         var guestData = await dataExchange.GetExternalDataAsync();
+        logger.LogInformation("Retrieved data:\n{Data}",
+            string.Join(Environment.NewLine, guestData.ToList().Select(kvp => $"{kvp.Key}={kvp.Value}")));
+
         if (!guestData.TryGetValue(Constants.ClientAuthKey, out var clientKeyData))
             return null;
 
