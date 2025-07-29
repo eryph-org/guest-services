@@ -69,9 +69,8 @@ public class LinuxGuestDataExchange : IGuestDataExchange
     private async Task<Dictionary<string, string>> ReadValues(FileStream fileStream)
     {
         var values = new Dictionary<string, string>();
-        const int maxSize = MaxKeySize + MaxValueSize;
-        using var bufferOwner = MemoryPool<byte>.Shared.Rent(maxSize);
-        var buffer = bufferOwner.Memory;
+        using var bufferOwner = MemoryPool<byte>.Shared.Rent(MaxKvpSize);
+        var buffer = bufferOwner.Memory[..MaxKvpSize];
         
         while (fileStream.Position < fileStream.Length)
         {
