@@ -10,4 +10,8 @@
     <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.HvDataExchange.Common\Eryph.GuestServices.HvDataExchange.Common.csproj" />
+  </ItemGroup>
+
 </Project>

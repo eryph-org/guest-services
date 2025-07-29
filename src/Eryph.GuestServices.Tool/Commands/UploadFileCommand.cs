@@ -26,7 +26,7 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var keyPair = ClientKeyHelper.GetPrivateKey();
+        var keyPair = await ClientKeyHelper.GetKeyPairAsync();
         if (keyPair is null)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/]");

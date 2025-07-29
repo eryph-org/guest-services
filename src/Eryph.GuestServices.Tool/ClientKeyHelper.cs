@@ -8,39 +8,47 @@ namespace Eryph.GuestServices.Tool;
 
 public static class ClientKeyHelper
 {
-    public static IKeyPair? GetPrivateKey()
-    {
-        var keyFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "eryph",
-            "guest-services",
-            "private",
-            "id_egs");
+    private static string ConfigDirectory =>  Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "eryph",
+        "guest-services");
 
-        return !Path.Exists(keyFilePath) ? null : KeyPair.ImportKeyFile(keyFilePath);
+    private static string PrivateDirectory => Path.Combine(ConfigDirectory, "private");
+
+    public static string PrivateKeyPath => Path.Combine(PrivateDirectory, "id_egs");
+
+    private static string PublicKeyPath => Path.Combine(PrivateDirectory, "id_egs.pub");
+
+    public static async Task<IKeyPair?> GetKeyPairAsync()
+    {
+        EnsurePrivateDirectory();
+        if (!Path.Exists(PrivateKeyPath))
+            return null;
+
+        var bytes = await File.ReadAllBytesAsync(PrivateKeyPath);
+        return KeyPair.ImportKeyBytes(bytes);
     }
 
-    public static IKeyPair CreatePrivateKey()
+    public static async Task<IKeyPair> CreateKeyPairAsync()
     {
-        var configPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "eryph",
-            "guest-services");
-        Directory.CreateDirectory(configPath);
+        EnsurePrivateDirectory();
 
-        var privateConfigPath = Path.Combine(configPath, "private");
-        EnsureDirectory(privateConfigPath);
-
-        var keyFilePath = Path.Combine(privateConfigPath, "id_egs");
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        KeyPair.ExportPrivateKeyFile(keyPair, keyFilePath, keyFormat: KeyFormat.OpenSsh);
+        var privateKeyBytes = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
+        await File.WriteAllBytesAsync(PrivateKeyPath, privateKeyBytes);
+
+        // Also export the public key as OpenSSH requires it
+        var publicKeyBytes = KeyPair.ExportPublicKeyBytes(keyPair, keyFormat: KeyFormat.Ssh);
+        await File.WriteAllBytesAsync(PublicKeyPath, publicKeyBytes);
         
         return keyPair;
     }
 
-    private static void EnsureDirectory(string directoryPath)
+    private static void EnsurePrivateDirectory()
     {
-        var directoryInfo = new DirectoryInfo(directoryPath);
+        Directory.CreateDirectory(ConfigDirectory);
+
+        var directoryInfo = new DirectoryInfo(PrivateDirectory);
         var security = GetDirectorySecurity();
         if (!directoryInfo.Exists)
         {

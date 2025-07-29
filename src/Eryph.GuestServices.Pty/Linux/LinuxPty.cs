@@ -13,9 +13,6 @@ public sealed partial class LinuxPty : IPty
     private SafeFileHandle? _masterFd;
     private SafeProcessHandle? _processHandle;
 
-    private FileStream? _masterFdReadStream;
-    private FileStream? _masterFdWriteStream;
-
     public Stream? Input { get; private set; }
 
     public Stream? Output { get; private set; }
@@ -131,8 +128,8 @@ public sealed partial class LinuxPty : IPty
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
-        _masterFdReadStream?.Dispose();
-        _masterFdWriteStream?.Dispose();
+        Input?.Dispose();
+        Output?.Dispose();
         _masterFd?.Dispose();
 
         KillProcess();

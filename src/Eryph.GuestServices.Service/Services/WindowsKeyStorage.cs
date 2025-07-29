@@ -7,56 +7,74 @@ using Microsoft.DevTunnels.Ssh.Algorithms;
 namespace Eryph.GuestServices.Service.Services;
 
 [SupportedOSPlatform("windows")]
-public class WindowsKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
+public class WindowsKeyStorage : IKeyStorage
 {
-    public IKeyPair? GetClientKey()
-    {
-        var keyFilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "eryph",
-            "guest-services",
-            "id_egs.pub");
+    private static string ConfigDirectoryPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "eryph", "guest-services");
 
-        if (!File.Exists(keyFilePath))
+    private static string ClientKeyPath => Path.Combine(ConfigDirectoryPath, "id_egs.pub");
+
+    private static string PrivateDirectoryPath => Path.Combine(ConfigDirectoryPath, "private");
+
+    private static string HostKeyPath => Path.Combine(PrivateDirectoryPath, "egs_host_key");
+
+    public async Task<IKeyPair?> GetClientKeyAsync()
+    {
+        if (!File.Exists(ClientKeyPath))
             return null;
-        
-        return KeyPair.ImportKeyFile(keyFilePath);   
+
+        var keyBytes = await File.ReadAllBytesAsync(ClientKeyPath);
+        return KeyPair.ImportKeyBytes(keyBytes);
     }
 
-    public IKeyPair GetHostKey()
+    public async Task SetClientKeyAsync(IKeyPair keyPair)
     {
-        var directoryPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "eryph",
-            "guest-services",
-            "private");
+        Directory.CreateDirectory(ConfigDirectoryPath);
 
-        EnsureDirectory(directoryPath);
+        if (File.Exists(ClientKeyPath))
+            throw new InvalidOperationException("Cannot update the client key. It already exists.");
 
-        // TODO fix file name
-        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
-        if (File.Exists(keyFilePath))
+        var keyBytes = KeyPair.ExportPublicKeyBytes(keyPair);
+        await File.WriteAllBytesAsync(ClientKeyPath, keyBytes);
+    }
+
+    public async Task<IKeyPair?> GetHostKeyAsync()
+    {
+        EnsurePrivateDirectory();
+
+        if (!File.Exists(HostKeyPath))
+            return null;
+
+        var keyBytes = await File.ReadAllBytesAsync(HostKeyPath);
+
+        try
         {
-            try
-            {
-                return KeyPair.ImportKeyFile(keyFilePath);
-            }
-            catch (Exception ex)
-            {
-                File.Delete(keyFilePath);
-                throw new InvalidOperationException(
-                    $"Could not delete existing host key file at {keyFilePath}.", ex);
-            }
+            return KeyPair.ImportKeyBytes(keyBytes);
         }
-
-        var keyPair = hostKeyGenerator.GenerateHostKey();
-        KeyPair.ExportPrivateKeyFile(keyPair, keyFilePath);
-        return keyPair;
+        catch
+        {
+            File.Delete(HostKeyPath);
+            return null;
+        }
     }
 
-    private static void EnsureDirectory(string directoryPath)
+    public async Task SetHostKeyAsync(IKeyPair keyPair)
     {
-        var directoryInfo = new DirectoryInfo(directoryPath);
+        EnsurePrivateDirectory();
+
+        if (File.Exists(HostKeyPath))
+            throw new InvalidOperationException("Cannot update the host key. It already exists.");
+        
+        var keyBytes = KeyPair.ExportPrivateKeyBytes(keyPair);
+        await File.WriteAllBytesAsync(HostKeyPath, keyBytes);
+    }
+
+    private static void EnsurePrivateDirectory()
+    {
+        Directory.CreateDirectory(ConfigDirectoryPath);
+
+        var directoryInfo = new DirectoryInfo(PrivateDirectoryPath);
         var security = GetDirectorySecurity();
         if (!directoryInfo.Exists)
         {
@@ -68,7 +86,7 @@ public class WindowsKeyStorage(IHostKeyGenerator hostKeyGenerator) : IKeyStorage
             return;
 
         directoryInfo.SetAccessControl(security);
-        var keyFilePath = Path.Combine(directoryPath, "egs_host_key");
+        var keyFilePath = Path.Combine(HostKeyPath, "egs_host_key");
         if (File.Exists(keyFilePath))
         {
             // The key might be compromised -> delete it

@@ -5,15 +5,15 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
-public class GetSshKeyCommand : Command<GetSshKeyCommand.Settings>
+public class GetSshKeyCommand : AsyncCommand<GetSshKeyCommand.Settings>
 {
     public class Settings : CommandSettings
     {
     }
 
-    public override int Execute(CommandContext context, Settings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var keyPair = ClientKeyHelper.GetPrivateKey();
+        var keyPair = await ClientKeyHelper.GetKeyPairAsync();
         if (keyPair is null)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/]");

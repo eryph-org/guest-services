@@ -5,17 +5,17 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
-public class GetStatusCommand : Command<GetStatusCommand.Settings>
+public class GetStatusCommand : AsyncCommand<GetStatusCommand.Settings>
 {
     public class Settings : CommandSettings
     {
         [CommandArgument(0, "<VmId>")] public Guid VmId { get; set; }
     }
 
-    public override int Execute(CommandContext context, Settings settings)
+    public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         var hostDataExchange = new HostDataExchange();
-        var guestData = hostDataExchange.GetGuestData(settings.VmId);
+        var guestData = await hostDataExchange.GetGuestDataAsync(settings.VmId);
         guestData.TryGetValue(Constants.StatusKey, out var status);
         AnsiConsole.WriteLine(string.IsNullOrEmpty(status) ? "unknown" : status);
         

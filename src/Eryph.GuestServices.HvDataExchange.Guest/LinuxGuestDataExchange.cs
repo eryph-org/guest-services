@@ -1,6 +1,7 @@
 ﻿using System.Buffers;
 using System.Runtime.Versioning;
 using System.Text;
+using Eryph.GuestServices.HvDataExchange.Common;
 
 namespace Eryph.GuestServices.HvDataExchange.Guest;
 
@@ -19,19 +20,36 @@ public class LinuxGuestDataExchange : IGuestDataExchange
     
     private const int MaxKvpSize = MaxKeySize + MaxValueSize;
 
-    private const string DxFilePath = "/var/lib/hyperv/.kvp_pool_1";
+    private const string ExternalPoolFilePath = "/var/lib/hyperv/.kvp_pool_0";
+    private const string GuestPoolFilePath = "/var/lib/hyperv/.kvp_pool_1";
 
-    public async Task<IReadOnlyDictionary<string, string>> GetGuestData()
+    public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync()
     {
-        await using var fileStream = File.Open(DxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var values = await ReadValues(fileStream);
+        await using var fileStream = File.Open(ExternalPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var values = await ReadValues(fileStream).ConfigureAwait(false);
         return values;
     }
 
-    public async Task SetGuestValues(IReadOnlyDictionary<string, string?> values)
+    public async Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync()
     {
-        await using var fileStream = File.Open(DxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var currentValues = await ReadValues(fileStream);
+        await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var values = await ReadValues(fileStream).ConfigureAwait(false);
+        return values;
+    }
+
+    public async Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
+    {
+        await using var fileStream = File.Open(GuestPoolFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var currentValues = await ReadValues(fileStream).ConfigureAwait(false);
+
+        foreach (var kvp in values)
+        {
+            if (!DataValidator.IsKeyValid(kvp.Key, out var keyError))
+                throw new DataExchangeException($"The key '{kvp.Key}' is invalid. {keyError}");
+
+            if (!DataValidator.IsValueValid(kvp.Value, out var valueError))
+                throw new DataExchangeException($"The value for key '{kvp.Key}' is invalid. {valueError}");
+        }
 
         foreach (var kvp in values)
         {
@@ -45,7 +63,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
             }
         }
 
-        await WriteValues(fileStream, currentValues);
+        await WriteValues(fileStream, currentValues).ConfigureAwait(false);
     }
 
     private async Task<Dictionary<string, string>> ReadValues(FileStream fileStream)
@@ -57,7 +75,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
         
         while (fileStream.Position < fileStream.Length)
         {
-            await fileStream.ReadExactlyAsync(buffer);
+            await fileStream.ReadExactlyAsync(buffer).ConfigureAwait(false);
             var keySpan = buffer.Span[..MaxKeySize];
             var valueSpan = buffer.Span[MaxKeySize..];
 
@@ -84,7 +102,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
             buffer.Span.Clear();
             Encoding.UTF8.GetBytes(kvp.Key, buffer.Span[..MaxKeySize]);
             Encoding.UTF8.GetBytes(kvp.Value, buffer.Span[MaxKeySize..]);
-            await fileStream.WriteAsync(buffer);
+            await fileStream.WriteAsync(buffer).ConfigureAwait(false);
         }
     }
 }

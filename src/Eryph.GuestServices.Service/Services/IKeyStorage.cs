@@ -4,7 +4,11 @@ namespace Eryph.GuestServices.Service.Services;
 
 public interface IKeyStorage
 {
-    public IKeyPair GetHostKey();
+    public Task<IKeyPair?> GetClientKeyAsync();
 
-    public IKeyPair? GetClientKey();
+    public Task SetClientKeyAsync(IKeyPair keyPair);
+
+    public Task<IKeyPair?> GetHostKeyAsync();
+
+    public Task SetHostKeyAsync(IKeyPair keyPair);
 }
