@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Net.Sockets;
 using System.Security.Claims;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
@@ -13,17 +14,18 @@ using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Service.Services;
 
-// TODO migrate to IHostedService
 internal sealed class SshServerService(
     IKeyStorage keyStorage,
     IHostKeyGenerator hostKeyGenerator,
     IGuestDataExchange guestDataExchange,
     IClientKeyProvider clientKeyProvider,
-    ILogger<SshServerService> logger) : BackgroundService
+    ILogger<SshServerService> logger) : IHostedService, IAsyncDisposable
 {
+    private Socket? _socket;
     private SocketSshServer? _server;
+    private Task? _listenTask;
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         await Task.Yield();
 
@@ -36,32 +38,32 @@ internal sealed class SshServerService(
         }
 
         var config = new SshSessionConfiguration(useSecurity: true);
-        
+
         config.Services.Add(typeof(SubsystemService), null);
         config.Services.Add(typeof(CommandService), null);
         config.Services.Add(typeof(ShellService), null);
         config.Services.Add(typeof(UploadFileService), null);
-        
+
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
         _server.ExceptionRaised += ExceptionRaised;
 
-        await using var _ = stoppingToken.Register(_server.Dispose);
-        using var socket = await SocketFactory.CreateServerSocket(ListenMode.Parent, Constants.ServiceId, 1);
-        await Task.WhenAll(
-            _server.AcceptSessionsAsync(socket),
-            SetStatusAsync());
+        _socket = await SocketFactory.CreateServerSocket(ListenMode.Parent, Constants.ServiceId, 1);
+        _listenTask = _server.AcceptSessionsAsync(_socket);
+
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        await SetStatusAsync("available");
     }
 
-    private async Task SetStatusAsync()
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        await Task.Delay(TimeSpan.FromSeconds(1));
-        var values = new Dictionary<string, string?>
-        {
-            [Constants.StatusKey] = "available"
-        };
-        await guestDataExchange.SetGuestValuesAsync(values);
+        await SetStatusAsync(null);
+        _server?.Dispose();
+        if (_listenTask is not null)
+            await _listenTask.WaitAsync(cancellationToken);
+        
+        _socket?.Dispose();
     }
 
     private void ExceptionRaised(object? sender, Exception e)
@@ -110,14 +112,19 @@ internal sealed class SshServerService(
         return new ClaimsPrincipal();
     }
 
-    public override void Dispose()
+    public async ValueTask DisposeAsync()
+    {
+        await SetStatusAsync(null);
+        _server?.Dispose();
+        _socket?.Dispose();
+    }
+
+    private async Task SetStatusAsync(string? status)
     {
         var values = new Dictionary<string, string?>
         {
-            [Constants.StatusKey] = null,
+            [Constants.StatusKey] = status,
         };
-        guestDataExchange.SetGuestValuesAsync(values).GetAwaiter().GetResult();
-        base.Dispose();
-        _server?.Dispose();
+        await guestDataExchange.SetGuestValuesAsync(values);
     }
 }
