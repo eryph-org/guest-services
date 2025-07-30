@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Eryph.GuestServices.Pty;
 using Microsoft.DevTunnels.Ssh;
@@ -13,7 +14,7 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 [ServiceActivation(ChannelRequest = "window-change")]
 public class ShellService(SshSession session) : SshService(session)
 {
-    private readonly ConcurrentDictionary<uint, PtyInstance> _instances = new();
+    private readonly ConcurrentDictionary<uint, PtyForwarder> _instances = new();
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
@@ -81,7 +82,7 @@ public class ShellService(SshSession session) : SshService(session)
         TerminalRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        var pty = new PtyInstance();
+        var pty = new PtyForwarder();
         if (!_instances.TryAdd(channel.ChannelId, pty))
         {
             pty.Dispose();

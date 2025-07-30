@@ -1,4 +1,5 @@
-﻿using System.Buffers;
+﻿using System.Collections.Concurrent;
+using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
@@ -10,60 +11,56 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 [ServiceActivation(ChannelRequest = CustomChannelRequestTypes.UploadFile)]
 public class UploadFileService(SshSession session) : SshService(session)
 {
+    private readonly ConcurrentDictionary<uint, UploadFileForwarder> _forwarders = new();
+
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
         SshRequestEventArgs<ChannelRequestMessage> request,
         CancellationToken cancellation)
     {
-        var fileTransferRequest = request.Request.ConvertTo<UploadFileRequestMessage>();
+        if (request.RequestType != CustomChannelRequestTypes.UploadFile)
+        {
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
 
+        var fileTransferRequest = request.Request.ConvertTo<UploadFileRequestMessage>();
+        var forwarder = new UploadFileForwarder(
+            fileTransferRequest.Path,
+            fileTransferRequest.FileName,
+            fileTransferRequest.Length,
+            fileTransferRequest.Overwrite);
+        
+        if (!_forwarders.TryAdd(channel.ChannelId, forwarder))
+        {
+            forwarder.Dispose();
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
+
+        channel.Closed += (_, _) =>
+        {
+            _forwarders.TryRemove(channel.ChannelId, out _);
+            forwarder.Dispose();
+        };
+        
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
         request.ResponseContinuation = async _ =>
         {
-            try
-            {
-                var expectedLength = (long)fileTransferRequest.Length;
-                var stream = new SshStream(channel);
-                using var memoryOwner = MemoryPool<byte>.Shared.Rent((int)(2 * SshChannel.DefaultMaxPacketSize));
-                var buffer = memoryOwner.Memory;
-
-                if (!fileTransferRequest.Overwrite && File.Exists(fileTransferRequest.Path))
-                {
-                    await channel.CloseAsync(unchecked((uint)ErrorCodes.FileExists), request.Cancellation);
-                    return;
-                }
-
-                var directory = Path.GetDirectoryName(fileTransferRequest.Path);
-                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                await using var fileStream = new FileStream(fileTransferRequest.Path, FileMode.OpenOrCreate, FileAccess.Write);
-                // Reset the file in case we are overwriting it
-                fileStream.SetLength(0);
-                while (fileStream.Length < expectedLength)
-                {
-                    var bytesRead = await stream.ReadAsync(buffer, request.Cancellation);
-                    if (bytesRead == 0)
-                    {
-                        break; // End of stream
-                    }
-
-                    await fileStream.WriteAsync(buffer[..bytesRead], request.Cancellation);
-                }
-
-                await fileStream.FlushAsync(request.Cancellation);
-            }
-            catch (Exception ex)
-            {
-                await channel.CloseAsync("exception@eryph.io", ex.Message, request.Cancellation);
-                return;
-            }
-
-            await channel.CloseAsync(0, request.Cancellation);
+            var stream = new SshStream(channel);
+            await forwarder.StartAsync(stream, request.Cancellation);
         };
 
         return Task.CompletedTask;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        foreach (var forwarder in _forwarders.Values.ToArray())
+        {
+            forwarder.Dispose();
+        }
+
+        base.Dispose(disposing);
     }
 }

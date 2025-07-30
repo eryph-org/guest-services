@@ -154,7 +154,7 @@ public static class SshConfigHelper
         foreach (var file in files)
         {
             var fileName = Path.GetFileNameWithoutExtension(file);
-            if (!catletIds.Contains(fileName))
+            if (catletIds.Contains(fileName))
                 continue;
 
             try

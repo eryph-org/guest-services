@@ -18,6 +18,8 @@ public class UploadFileRequestMessage : ChannelRequestMessage
     
     public string Path { get; set; } = "";
 
+    public string FileName { get; set; } = "";
+
     public ulong Length { get; set; }
 
     public bool Overwrite { get; set; }
@@ -26,6 +28,7 @@ public class UploadFileRequestMessage : ChannelRequestMessage
     {
         base.OnRead(ref reader);
         Path = reader.ReadString(Encoding.UTF8);
+        FileName = reader.ReadString(Encoding.UTF8);
         Length = reader.ReadUInt64();
         Overwrite = reader.ReadBoolean();
     }
@@ -34,6 +37,7 @@ public class UploadFileRequestMessage : ChannelRequestMessage
     {
         base.OnWrite(ref writer);
         writer.Write(Path, Encoding.UTF8);
+        writer.Write(FileName, Encoding.UTF8);
         writer.Write(Length);
         writer.Write(Overwrite);
     }

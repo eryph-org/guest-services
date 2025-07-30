@@ -1,9 +1,9 @@
 ﻿using Eryph.GuestServices.Pty;
 using Microsoft.DevTunnels.Ssh;
 
-namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
+namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
-public sealed class PtyInstance : IDisposable
+public sealed class PtyForwarder : IDisposable
 {
     private IPty? _pty;
     private readonly CancellationTokenSource _cts = new();

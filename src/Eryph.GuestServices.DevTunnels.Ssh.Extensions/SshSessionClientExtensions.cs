@@ -6,16 +6,16 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 public static class SshSessionClientExtensions
 {
-    public static async Task<uint> TransferFileAsync(
+    public static async Task<int> TransferFileAsync(
         this SshSession session,
         string path,
+        string fileName,
         Stream content,
         bool overwrite,
         CancellationToken cancellation)
     {
         var channel = await session.OpenChannelAsync(cancellation);
         var tcs = new TaskCompletionSource<SshChannelClosedEventArgs>();
-        // TODO error handling for channel close
         channel.Closed += (_, e) => tcs.SetResult(e);
 
         try
@@ -24,6 +24,7 @@ public static class SshSessionClientExtensions
                 new UploadFileRequestMessage()
                 {
                     Path = path,
+                    FileName = fileName,
                     Length = (ulong)content.Length,
                     Overwrite = overwrite,
                 },
@@ -53,6 +54,6 @@ public static class SshSessionClientExtensions
             throw new UploadFileServerException(message);
         }
 
-        return tcs.Task.Result.ExitStatus.GetValueOrDefault(0);
+        return unchecked((int)tcs.Task.Result.ExitStatus.GetValueOrDefault(0));
     }
 }
