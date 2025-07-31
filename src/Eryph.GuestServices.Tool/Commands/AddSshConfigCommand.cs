@@ -40,7 +40,7 @@ public class AddSshConfigCommand : AsyncCommand<AddSshConfigCommand.Settings>
         AnsiConsole.Write(new Rows(
             new Text("An SSH configuration for the virtual machine has been generated here:"),
             new Text(SshConfigHelper.VmSshConfigPath),
-            new Text("The configuration has been included to your sshconfig."),
+            new Text("The configuration has been included in your sshconfig."),
             new Text(""),
             new Text("You can connect to the virtual machine as follows:"),
             new Padder(new Rows(aliases.Select(a => new Text($"ssh {a}"))), new Padding(4, 0, 0, 0))));

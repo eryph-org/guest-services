@@ -55,8 +55,8 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
 
         AnsiConsole.Write(new Rows(
             new Text("SSH configurations for your catlets have been generated here:"),
-            new Text(SshConfigHelper.VmSshConfigPath),
-            new Text("The configurations have been included to your sshconfig."),
+            new Text(SshConfigHelper.CatletSshConfigPath),
+            new Text("The configurations have been included in your sshconfig."),
             new Text(""),
             new Text("You can connect to the catlets as follows:"),
             table));
