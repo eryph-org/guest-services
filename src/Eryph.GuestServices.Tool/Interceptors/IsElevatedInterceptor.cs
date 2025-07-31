@@ -1,10 +1,5 @@
-﻿using Spectre.Console.Cli;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Security.Principal;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Security.Principal;
+using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Interceptors;
 
@@ -12,8 +7,13 @@ public class IsElevatedInterceptor : ICommandInterceptor
 {
     public void Intercept(CommandContext context, CommandSettings settings)
     {
-        var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
-        if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
+        if (!IsElevated())
             throw new NotElevatedException();
+    }
+
+    public static bool IsElevated()
+    {
+        var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 }
