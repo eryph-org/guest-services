@@ -5,7 +5,7 @@ namespace Eryph.GuestServices.Sockets;
 
 public class VSockEndpoint : EndPoint
 {
-    private const AddressFamily VsockAddressFamily = (AddressFamily)40;
+    private const AddressFamily VSockAddressFamily = (AddressFamily)40;
     private const int AddressLength = 16;
 
     public VSockEndpoint(uint cid, uint portNumber)
@@ -18,12 +18,12 @@ public class VSockEndpoint : EndPoint
 
     public uint Port { get; }
 
-    public override AddressFamily AddressFamily => VsockAddressFamily;
+    public override AddressFamily AddressFamily => VSockAddressFamily;
 
     public override EndPoint Create(SocketAddress socketAddress)
     {
-        // TODO Investigate better validation
-        // socketAddress.Family == VsockAddressFamily will fail
+        // We cannot really validate anything here:
+        // socketAddress.Family == VsockAddressFamily will fail.
         if (socketAddress.Size != AddressLength)
             throw new ArgumentException("Invalid VSock socket address.");
 
@@ -49,7 +49,7 @@ public class VSockEndpoint : EndPoint
         public VSockSocketAddress(uint cid, uint port) : base(AddressFamily.Packet, AddressLength)
         {
             var span = Buffer.Span;
-            BitConverter.TryWriteBytes(span[..2], (ushort)VsockAddressFamily);
+            BitConverter.TryWriteBytes(span[..2], (ushort)VSockAddressFamily);
             BitConverter.TryWriteBytes(span[4..8], port);
             BitConverter.TryWriteBytes(span[8..12], cid);
         }

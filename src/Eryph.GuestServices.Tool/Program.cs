@@ -1,7 +1,9 @@
-﻿using Eryph.GuestServices.Tool.Commands;
+﻿using Eryph.GuestServices.Sockets;
+using Eryph.GuestServices.Tool.Commands;
 using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using System.Net.Sockets;
 
 var app = new CommandApp();
 app.Configure(config =>
@@ -32,10 +34,6 @@ app.Configure(config =>
         .WithDescription(
             "Updates the SSH config to allow connecting to the catlets.");
 
-    config.AddCommand<ProxyCommand>("proxy")
-        .WithDescription(
-            "Provides a proxy command for connecting to the eryph guest services with a standard SSH client.");
-
     config.AddCommand<InitializeCommand>("initialize")
         .WithDescription(
             "Initializes the eryph guest services on the Hyper-V host.");
@@ -45,15 +43,47 @@ app.Configure(config =>
             "Unregisters the eryph guest services from Hyper-V.");
 });
 
-if (args.Length != 1 || args[0] != "repl")
-    return await app.RunAsync(args);
 
-while (true)
+// The proxy command is intentionally not implemented with Spectre.Console.Cli.
+// Its purpose is to forward stdin and stdout. Spectre.Console.Cli seems to interfere
+// with stdin or stdout which causes the proxy to not work correctly.
+// We also do not document this command as it cannot be used directly by users and
+// would fail when invoked without redirecting stdin and stdout.
+if (args is ["proxy", var vmId])
 {
-    Console.Write("egs-tool> ");
-    var command = Console.ReadLine();
-    if (string.IsNullOrEmpty(command))
-        return 0;
+    if (!IsElevatedInterceptor.IsElevated())
+        return unchecked((int)0x80070005);
 
-    await app.RunAsync(command.Split(' '));
+    if (!Guid.TryParse(vmId, out var vmGuid))
+        // Generic HResult for invalid argument
+        return unchecked((int)0x80070057);
+
+    var stdin = Console.OpenStandardInput();
+    var stdout = Console.OpenStandardOutput();
+
+    var socket = await SocketFactory.CreateClientSocket(vmGuid, Eryph.GuestServices.Core.Constants.ServiceId);
+    await using var socketStream = new NetworkStream(socket, ownsSocket: true);
+
+    await Task.WhenAll(
+        stdin.CopyToAsync(socketStream),
+        socketStream.CopyToAsync(stdout));
+
+    return 0;
 }
+
+#if DEBUG
+if (args is ["repl"])
+{
+    while (true)
+    {
+        Console.Write("egs-tool> ");
+        var command = Console.ReadLine();
+        if (string.IsNullOrEmpty(command))
+            return 0;
+
+        await app.RunAsync(command.Split(' '));
+    }
+}
+#endif
+
+return await app.RunAsync(args);

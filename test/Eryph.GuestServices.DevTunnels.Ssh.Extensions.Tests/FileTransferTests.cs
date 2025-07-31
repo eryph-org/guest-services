@@ -54,7 +54,7 @@ public sealed class FileTransferTests : IDisposable
 
         await using (var srcStream = new FileStream(srcPath, FileMode.Open, FileAccess.Read))
         {
-            await clientSession.TransferFileAsync(targetPath, srcStream, false, CancellationToken.None);
+            await clientSession.TransferFileAsync(targetPath, "", srcStream, false, CancellationToken.None);
         }
 
         var targetContent = await File.ReadAllTextAsync(targetPath);

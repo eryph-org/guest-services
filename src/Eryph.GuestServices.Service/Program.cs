@@ -8,7 +8,6 @@ Trace.Listeners.Add(new ConsoleTraceListener());
 
 var builder = Host.CreateApplicationBuilder();
 
-// TODO setup file system logging
 builder.Services.AddLogging();
 builder.Services.AddHostedService<SshServerService>();
 builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();

@@ -33,8 +33,11 @@ public static partial class SocketFactory
             {
                 ListenMode.Any => unchecked((uint)-1),
                 ListenMode.Loopback => 1,
-                // TODO fix me
-                ListenMode.Parent => 1,
+                // The Hyper-V transport in Linux does not allow to limit who can connect to the socket.
+                // According to the documentation, we must use VMADDR_CID_ANY = -1 to allow
+                // connections from the host.
+                // See https://github.com/torvalds/linux/blob/4b290aae788e06561754b28c6842e4080957d3f7/net/vmw_vsock/hyperv_transport.c#L113-L117.
+                ListenMode.Parent => unchecked((uint)-1),
                 _ => throw new ArgumentOutOfRangeException(nameof(listenMode), listenMode, "The listen mode is not supported")
             };
             var port = PortNumberConverter.ToPortNumber(serviceId); 

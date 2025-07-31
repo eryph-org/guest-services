@@ -47,15 +47,53 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
             }
         };
         await clientSession.ConnectAsync(clientStream);
-        await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
-        // TODO session error handling
+        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
+        if (!isAuthenticated)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Could not connect. The authentication failed.[/]");
+            return -1;
+        }
+
+        return Directory.Exists(settings.SourcePath)
+            ? await TransferDirectoryAsync(clientSession, settings)
+            : await TransferFileAsync(clientSession, settings);
+    }
+
+    private async Task<int> TransferDirectoryAsync(SshSession session, Settings settings)
+    {
+        var files = Directory.EnumerateFiles(settings.SourcePath, "*", SearchOption.AllDirectories).ToList();
+        foreach (var file in files)
+        {
+            var relativePath = Path.GetRelativePath(settings.SourcePath, file)
+                .Replace(Path.DirectorySeparatorChar, '/');
+
+            await using var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
+            var result = await session.TransferFileAsync(settings.TargetPath, relativePath, fileStream, settings.Overwrite, CancellationToken.None);
+            if (result != 0 && result != ErrorCodes.FileExists)
+                return result;
+
+            if (result == ErrorCodes.FileExists)
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[yellow]The file '{settings.TargetPath}' already exists at the destination and will not be overwritten.[/]");
+        }
+        return 0;
+    }
+
+    private async Task<int> TransferFileAsync(SshSession session, Settings settings)
+    {
+        if (!File.Exists(settings.SourcePath))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.SourcePath}' does not exist.[/]");
+            return -1;
+        }
 
         await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
-        var result = await clientSession.TransferFileAsync(settings.TargetPath, fileStream, settings.Overwrite, CancellationToken.None);
-        
-        if (unchecked((int)result) == ErrorCodes.FileExists)
+        var result = await session.TransferFileAsync(settings.TargetPath, "", fileStream, settings.Overwrite, CancellationToken.None);
+        if (result == ErrorCodes.FileExists)
+        {
             AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
+        }
 
-        return unchecked((int)result);
+        return result;
     }
 }
