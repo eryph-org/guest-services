@@ -33,15 +33,33 @@ public class UpdateSshConfigCommand : AsyncCommand<UpdateSshConfigCommand.Settin
         await SshConfigHelper.EnsureSshConfigAsync();
         await SshConfigHelper.CleanupCatletConfigsAsync(catlets.Select(c => c.Id).ToList());
 
+        var table = new Table();
+        table.AddColumn("Project");
+        table.AddColumn("Catlet");
+        table.AddColumn("SSH command");
+
         foreach (var catlet in catlets)
         {
-            await SshConfigHelper.EnsureCatletConfigAsync(
+            var aliases = await SshConfigHelper.EnsureCatletConfigAsync(
                 catlet.Id,
                 catlet.Name,
                 catlet.Project.Name,
                 Guid.Parse(catlet.VmId),
                 ClientKeyHelper.PrivateKeyPath);
+
+            table.AddRow(
+                new Text(catlet.Project.Name),
+                new Text(catlet.Name),
+                new Rows(aliases.Select(a => new Text($"ssh {a}"))));
         }
+
+        AnsiConsole.Write(new Rows(
+            new Text("SSH configurations for your catlets have been generated here:"),
+            new Text(SshConfigHelper.VmSshConfigPath),
+            new Text("The configurations have been included to your sshconfig."),
+            new Text(""),
+            new Text("You can connect to the catlets as follows:"),
+            table));
 
         return 0;
     }

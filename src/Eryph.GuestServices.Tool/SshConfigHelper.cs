@@ -16,9 +16,9 @@ public static class SshConfigHelper
         "guest-services",
         "ssh");
 
-    private static string CatletSshConfigPath => Path.Combine(EryphSshConfigPath, "catlet.d");
+    public static string CatletSshConfigPath => Path.Combine(EryphSshConfigPath, "catlet.d");
 
-    private static string VmSshConfigPath => Path.Combine(EryphSshConfigPath, "vm.d");
+    public static string VmSshConfigPath => Path.Combine(EryphSshConfigPath, "vm.d");
 
     public static async Task EnsureSshConfigAsync()
     {
@@ -69,16 +69,16 @@ public static class SshConfigHelper
             sshConfig[..configStart] + config + sshConfig[(configEnd + Border.Length)..]);
     }
 
-    public static async Task EnsureCatletConfigAsync(
+    public static async Task<IReadOnlyList<string>> EnsureCatletConfigAsync(
         string catletId,
         string catletName,
         string projectName,
         Guid vmId,
         string keyFilePath)
     {
-        IList<string> aliases = [$"{catletId}.eryph.alt", $"{catletName}.{projectName}.eryph.alt"];
+        IReadOnlyList<string> aliases = [$"{catletId}.eryph.alt", $"{catletName}.{projectName}.eryph.alt"];
         if (projectName == "default")
-            aliases.Add($"{catletName}.eryph.alt");
+            aliases = [..aliases, $"{catletName}.eryph.alt"];
 
         Directory.CreateDirectory(CatletSshConfigPath);
         await WriteConfig(
@@ -86,16 +86,18 @@ public static class SshConfigHelper
             aliases,
             vmId,
             keyFilePath);
+
+        return aliases;
     }
 
-    public static async Task EnsureVmConfigAsync(
+    public static async Task<IReadOnlyList<string>> EnsureVmConfigAsync(
         Guid vmId,
         string? alias,
         string keyFilePath)
     {
-        IList<string> aliases = [$"{vmId}.hyper-v.alt"];
+        IReadOnlyList<string> aliases = [$"{vmId}.hyper-v.alt"];
         if (!string.IsNullOrEmpty(alias))
-           aliases.Add(alias);
+           aliases = [alias, ..aliases];
 
         Directory.CreateDirectory(VmSshConfigPath);
         await WriteConfig(
@@ -103,11 +105,13 @@ public static class SshConfigHelper
             aliases,
             vmId,
             keyFilePath);
+
+        return aliases;
     }
 
     private static async Task WriteConfig(
         string path,
-        IList<string> aliases,
+        IReadOnlyList<string> aliases,
         Guid vmId,
         string keyFilePath)
     {

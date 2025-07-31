@@ -35,12 +35,15 @@ public class AddSshConfigCommand : AsyncCommand<AddSshConfigCommand.Settings>
             });
 
         await SshConfigHelper.EnsureSshConfigAsync();
-        await SshConfigHelper.EnsureVmConfigAsync(settings.VmId, settings.Alias, ClientKeyHelper.PrivateKeyPath);
+        var aliases = await SshConfigHelper.EnsureVmConfigAsync(settings.VmId, settings.Alias, ClientKeyHelper.PrivateKeyPath);
 
-        AnsiConsole.MarkupLineInterpolated($"SSH config added for VM {settings.VmId}. You can connect with:");
-        AnsiConsole.MarkupLineInterpolated($"\tssh {settings.VmId}.hyper-v.alt");
-        if(!string.IsNullOrEmpty(settings.Alias))
-            AnsiConsole.MarkupLineInterpolated($"\tssh {settings.Alias}");
+        AnsiConsole.Write(new Rows(
+            new Text("An SSH configuration for the virtual machine has been generated here:"),
+            new Text(SshConfigHelper.VmSshConfigPath),
+            new Text("The configuration has been included to your sshconfig."),
+            new Text(""),
+            new Text("You can connect to the virtual machine as follows:"),
+            new Padder(new Rows(aliases.Select(a => new Text($"ssh {a}"))), new Padding(4, 0, 0, 0))));
 
         return 0;
     }
