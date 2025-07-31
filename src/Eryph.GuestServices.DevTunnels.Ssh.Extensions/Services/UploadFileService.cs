@@ -8,7 +8,7 @@ using Microsoft.DevTunnels.Ssh.Services;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
-[ServiceActivation(ChannelRequest = CustomChannelRequestTypes.UploadFile)]
+[ServiceActivation(ChannelRequest = EryphChannelRequestTypes.UploadFile)]
 public class UploadFileService(SshSession session) : SshService(session)
 {
     private readonly ConcurrentDictionary<uint, UploadFileForwarder> _forwarders = new();
@@ -18,7 +18,7 @@ public class UploadFileService(SshSession session) : SshService(session)
         SshRequestEventArgs<ChannelRequestMessage> request,
         CancellationToken cancellation)
     {
-        if (request.RequestType != CustomChannelRequestTypes.UploadFile)
+        if (request.RequestType != EryphChannelRequestTypes.UploadFile)
         {
             request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
             return Task.CompletedTask;

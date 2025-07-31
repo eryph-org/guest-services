@@ -3,7 +3,7 @@ using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
-public sealed class CommandForwarder(string command) : IDisposable
+public sealed class PowershellForwarder : IDisposable
 {
     private readonly CancellationTokenSource _cts = new();
     private Process? _process;
@@ -14,22 +14,18 @@ public sealed class CommandForwarder(string command) : IDisposable
     {
         if (Interlocked.Exchange(ref _isRunning, 1) == 1)
             throw new InvalidOperationException("Forwarder is already running.");
-
         try
         {
-            var splitted = command.Split(' ', 2);
-            var fileName = splitted[0];
-            var arguments = splitted.Length > 1 ? splitted[1] : "";
             _process = new Process();
             _process.StartInfo = new ProcessStartInfo
             {
-                FileName = fileName,
-                Arguments = arguments,
+                FileName = OperatingSystem.IsWindows() ? "pwsh.exe" : "/usr/bin/pwsh",
+                Arguments = "-sshs -NoLogo",
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = false,
                 UseShellExecute = false,
-                CreateNoWindow = false,
+                CreateNoWindow = true,
             };
 
             _ = RunAsync(stream);
@@ -48,7 +44,7 @@ public sealed class CommandForwarder(string command) : IDisposable
 
             var outputTask = _process.StandardOutput.BaseStream.CopyToAsync(sshStream, _cts.Token);
             _ = sshStream.CopyToAsync(_process.StandardInput.BaseStream, _cts.Token);
-           
+
             await _process.WaitForExitAsync(_cts.Token);
             await outputTask;
             await sshStream.Channel.CloseAsync(unchecked((uint)_process.ExitCode), _cts.Token);

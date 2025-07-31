@@ -13,7 +13,7 @@ public class UploadFileRequestMessage : ChannelRequestMessage
 {
     public UploadFileRequestMessage()
     {
-        RequestType = CustomChannelRequestTypes.UploadFile;
+        RequestType = EryphChannelRequestTypes.UploadFile;
     }
     
     public string Path { get; set; } = "";

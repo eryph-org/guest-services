@@ -36,7 +36,7 @@ public sealed class UploadFileForwarder(string path, string fileName, ulong leng
         }
         catch (Exception ex)
         {
-            await stream.Channel.CloseAsync("exception@eryph.io", ex.Message, cancellation);
+            await stream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, cancellation);
         }
     }
 
@@ -65,7 +65,7 @@ public sealed class UploadFileForwarder(string path, string fileName, ulong leng
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await sshStream.Channel.CloseAsync("exception@eryph.io", ex.Message, _cts.Token);
+            await sshStream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, _cts.Token);
         }
     }
 

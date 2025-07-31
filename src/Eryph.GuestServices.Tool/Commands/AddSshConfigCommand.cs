@@ -38,7 +38,7 @@ public class AddSshConfigCommand : AsyncCommand<AddSshConfigCommand.Settings>
         await SshConfigHelper.EnsureVmConfigAsync(settings.VmId, settings.Alias, ClientKeyHelper.PrivateKeyPath);
 
         AnsiConsole.MarkupLineInterpolated($"SSH config added for VM {settings.VmId}. You can connect with:");
-        AnsiConsole.MarkupLineInterpolated($"\tssh hyperv/{settings.VmId}");
+        AnsiConsole.MarkupLineInterpolated($"\tssh {settings.VmId}.hyper-v.alt");
         if(!string.IsNullOrEmpty(settings.Alias))
             AnsiConsole.MarkupLineInterpolated($"\tssh {settings.Alias}");
 
