@@ -65,7 +65,7 @@ jobs:
     displayName: upload (service)
     inputs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(serviceArtifactName)'
-      artifactName: '$(serviceArtifactName)'
+      artifactName: guest-windows
 
   - task: DotNetCoreCLI@2
     displayName: dotnet publish (tool)
@@ -89,7 +89,7 @@ jobs:
     displayName: upload (tool)
     inputs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(toolArtifactName)'
-      artifactName: '$(toolArtifactName)'
+      artifactName: tool
 
 - job: linux
   pool:
@@ -148,7 +148,7 @@ jobs:
     displayName: upload (service)
     inputs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(serviceArtifactName)'
-      artifactName: '$(serviceArtifactName)'
+      artifactName: guest-linux
 
 - job: iso
   dependsOn:
@@ -168,13 +168,13 @@ jobs:
   - task: DownloadPipelineArtifact@2
     displayName: Download Linux service artifact
     inputs:
-      artifactName: 'egs_$(Build.BuildNumber)_linux_amd64.tar.gz'
+      artifactName: guest-linux
       targetPath: 'packaging/iso'
 
   - task: DownloadPipelineArtifact@2
     displayName: Download Windows service artifact
     inputs:
-      artifactName: 'egs_$(Build.BuildNumber)_windows_amd64.zip'
+      artifactName: guest-windows
       targetPath: 'packaging/iso'
 
   - script: |
@@ -186,4 +186,4 @@ jobs:
     displayName: Upload ISO
     inputs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(serviceArtifactName)'
-      artifactName: '$(serviceArtifactName)'
+      artifactName: guest-iso
