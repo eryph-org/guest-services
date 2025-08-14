@@ -28,6 +28,8 @@ internal sealed class SshServerService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await Task.Yield();
+        logger.LogInformation("Starting eryph guest services {Version}...",
+            GitVersionInformation.InformationalVersion);
 
         var hostKey = await keyStorage.GetHostKeyAsync();
         if (hostKey is null)
@@ -73,20 +75,19 @@ internal sealed class SshServerService(
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {
-        logger.LogWarning("Authentication type: {AuthType}", e.AuthenticationType);
-        if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey
-            or SshAuthenticationType.ClientPublicKeyQuery))
+        logger.LogInformation("Authenticating session: {AuthType}", e.AuthenticationType);
+        if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey or SshAuthenticationType.ClientPublicKeyQuery))
             return;
 
         if (e.Username != "egs")
         {
-            logger.LogWarning("Incorrect user name {Username}", e.Password);
+            logger.LogInformation("Incorrect user name {Username}", e.Username);
             return;
         }
 
         if (e.PublicKey is null)
         {
-            logger.LogWarning("Public key is null for user {Username}", e.Username);
+            logger.LogInformation("Public key is null for user {Username}", e.Username);
             return;
         }
 
