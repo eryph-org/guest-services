@@ -21,10 +21,16 @@ public class LinuxKeyStorage : IKeyStorage
         if (!File.Exists(ClientKeyPath))
             return null;
 
-        var keyBytes = await File.ReadAllBytesAsync(ClientKeyPath);
-        var key = KeyPair.ImportKeyBytes(keyBytes);
+        var content = await File.ReadAllTextAsync(ClientKeyPath);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            // Ignore key files without useful content. cloud-init/eryph might create
+            // an empty file when the SSH key is not set.
+            File.Delete(ClientKeyPath);
+            return null;
+        }
         
-        return key;
+        return KeyPair.ImportKey(content);
     }
 
     public async Task SetClientKeyAsync(IKeyPair keyPair)
