@@ -15,6 +15,9 @@ app.Configure(config =>
         return ex.HResult;
     });
 
+    config.SetApplicationName("egs-tool");
+    config.SetApplicationVersion(GitVersionInformation.InformationalVersion);
+
     config.AddCommand<UploadFileCommand>("upload-file")
         .WithDescription("Uploads a file from the host to the VM.");
 
