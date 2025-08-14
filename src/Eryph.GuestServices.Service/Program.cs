@@ -7,8 +7,10 @@ using Microsoft.Extensions.Logging;
 
 Trace.Listeners.Add(new ConsoleTraceListener());
 
-var builder = Host.CreateApplicationBuilder();
-
+var builder = Host.CreateApplicationBuilder( new HostApplicationBuilderSettings()
+{
+    ContentRootPath = AppContext.BaseDirectory
+});
 builder.Services.AddLogging();
 builder.Services.AddHostedService<SshServerService>();
 builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
