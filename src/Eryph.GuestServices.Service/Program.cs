@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 Trace.Listeners.Add(new ConsoleTraceListener());
 
-var builder = Host.CreateApplicationBuilder( new HostApplicationBuilderSettings()
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings()
 {
     ContentRootPath = AppContext.BaseDirectory
 });
