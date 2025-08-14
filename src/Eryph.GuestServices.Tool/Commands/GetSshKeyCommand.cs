@@ -21,7 +21,9 @@ public class GetSshKeyCommand : AsyncCommand<GetSshKeyCommand.Settings>
         }
 
         var publicKey = KeyPair.ExportPublicKey(keyPair, keyFormat: KeyFormat.Ssh);
-        AnsiConsole.WriteLine(publicKey);
+
+        // Do not use AnsiConsole here as it would introduce line breaks into the output
+        Console.Write(publicKey);
 
         return 0;
     }
