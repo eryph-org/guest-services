@@ -94,7 +94,7 @@ public class LinuxGuestDataExchange : IGuestDataExchange
         fileStream.SetLength(values.Count * MaxKvpSize);
 
         using var bufferOwner = MemoryPool<byte>.Shared.Rent(MaxKvpSize);
-        var buffer = bufferOwner.Memory;
+        var buffer = bufferOwner.Memory[..MaxKvpSize];
 
         foreach (var kvp in values)
         {

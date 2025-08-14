@@ -46,8 +46,9 @@ public sealed class UploadFileForwarder(string path, string fileName, ulong leng
         {
             // Reset the file in case we are overwriting it
             _fileStream!.SetLength(0);
-            using var memoryOwner = MemoryPool<byte>.Shared.Rent((int)(2 * SshChannel.DefaultMaxPacketSize));
-            var buffer = memoryOwner.Memory;
+            const int bufferSize = (int)(2 * SshChannel.DefaultMaxPacketSize);
+            using var memoryOwner = MemoryPool<byte>.Shared.Rent(bufferSize);
+            var buffer = memoryOwner.Memory[..bufferSize];
             while (_fileStream.Length < expectedLength)
             {
                 var bytesRead = await sshStream.ReadAsync(buffer, _cts.Token);
