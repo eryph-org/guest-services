@@ -28,8 +28,6 @@ internal sealed class SshServerService(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await Task.Yield();
-        logger.LogInformation("Starting eryph guest services {Version}...",
-            GitVersionInformation.InformationalVersion);
 
         var hostKey = await keyStorage.GetHostKeyAsync();
         if (hostKey is null)
