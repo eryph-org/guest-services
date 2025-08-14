@@ -5,6 +5,7 @@ Description=eryph guest services
 Type=notify
 ExecStart=/opt/eryph/guest-services/bin/egs-service
 Environment="HOME=/root"
+Environment="TERM=xterm"
 Restart=on-failure
 RestartSec=10
 

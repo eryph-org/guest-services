@@ -3,11 +3,14 @@ using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 Trace.Listeners.Add(new ConsoleTraceListener());
 
-var builder = Host.CreateApplicationBuilder();
-
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings()
+{
+    ContentRootPath = AppContext.BaseDirectory
+});
 builder.Services.AddLogging();
 builder.Services.AddHostedService<SshServerService>();
 builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
@@ -31,4 +34,8 @@ else if (OperatingSystem.IsLinux())
 
 var host = builder.Build();
 
-host.Run();
+host.Services.GetRequiredService<ILogger<Program>>().LogInformation(
+    "Starting eryph guest services {Version}...",
+    GitVersionInformation.InformationalVersion);
+
+await host.RunAsync();

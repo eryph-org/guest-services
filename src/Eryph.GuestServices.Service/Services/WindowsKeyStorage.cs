@@ -24,8 +24,16 @@ public class WindowsKeyStorage : IKeyStorage
         if (!File.Exists(ClientKeyPath))
             return null;
 
-        var keyBytes = await File.ReadAllBytesAsync(ClientKeyPath);
-        return KeyPair.ImportKeyBytes(keyBytes);
+        var content = await File.ReadAllTextAsync(ClientKeyPath);
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            // Ignore key files without useful content. cloud-init/eryph might create
+            // an empty file when the SSH key is not set.
+            File.Delete(ClientKeyPath);
+            return null;
+        }
+
+        return KeyPair.ImportKey(content);
     }
 
     public async Task SetClientKeyAsync(IKeyPair keyPair)
