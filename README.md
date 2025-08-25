@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/github/license/eryph-org/guest-services.svg)](LICENSE)
 
 
-Eryph Guest Services (EGS) provides secure SSH connectivity to Hyper-V virtual machines through Hyper-V sockets, eliminating the need for network configuration. The service can be used both as part of the eryph platform and standalone with plain Hyper-V.
+Eryph Guest Services (EGS) provides secure SSH connectivity to Hyper-V virtual machines through Hyper-V sockets, eliminating the need for network configuration. The service can be used both as part of the [eryph platform](https://www.eryph.io) and standalone with plain Hyper-V.
 
 ## Why EGS?
 
