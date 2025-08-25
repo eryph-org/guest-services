@@ -4,7 +4,13 @@
 [![License](https://img.shields.io/github/license/eryph-org/guest-services.svg)](LICENSE)
 
 
-Eryph Guest Services provides secure SSH connectivity to Hyper-V virtual machines through Hyper-V sockets, eliminating the need for network configuration. The service can be used both as part of the eryph platform and standalone with plain Hyper-V.
+Eryph Guest Services (EGS) provides secure SSH connectivity to Hyper-V virtual machines through Hyper-V sockets, eliminating the need for network configuration. The service can be used both as part of the eryph platform and standalone with plain Hyper-V.
+
+## Why EGS?
+
+EGS provides a unified, cross-platform solution that works consistently on both Windows and Linux VMs without network dependencies.  
+While Windows Server 2025 ships with OpenSSH by default, native Hyper-V socket support remains missing ([Win32-OpenSSH issue #2200](https://github.com/PowerShell/Win32-OpenSSH/issues/2200)). [PowerShell Direct](https://learn.microsoft.com/en-us/powershell/scripting/learn/remoting/ps-direct) is Windows-only with poor file transfer performance, and Linux vsock SSH support varies by distribution.  
+
 
 ## Features
 
@@ -16,14 +22,24 @@ Eryph Guest Services provides secure SSH connectivity to Hyper-V virtual machine
 - **Public key authentication**: Secure key-based authentication
 - **Easy installation**: Simple installer scripts for both platforms
 
+## Limitations
+- **No FTP subsystem** - use `unison` for file synchronization instead of `scp`
+
 ## How It Works
 
-The guest services consist of two main components:
+EGS doesn't reinvent the wheel. Like the `hvc ssh` command, EGS builds a Hyper-V socket connection using SSH ProxyCommand:
 
+```
+ProxyCommand hvc nc -t vsock <vmid> 5002
+```
+
+The `egs-tool` writes SSH configuration to `%LOCALAPPDATA%\.eryph\ssh\config`, mapping hostnames to VM IDs and proxy commands. During configuration, SSH keys are exchanged between host and guest, enabling passwordless authentication to the EGS service account (Windows) or root (Linux).
+
+The guest implements a custom SSH server independent of any existing OpenSSH installation, avoiding configuration conflicts.
+
+**Components:**
 1. **Guest Service** (`egs-service`): Runs inside VMs as a system service, providing SSH server functionality over Hyper-V sockets
 2. **Host Tool** (`egs-tool`): Command-line tool running on the Hyper-V host for managing connections and file uploads
-
-Communication happens through Hyper-V integration services using a registered service ID, enabling direct host-to-guest connectivity without network dependencies.
 
 ## System Requirements
 
