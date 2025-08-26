@@ -251,8 +251,6 @@ public sealed class FileDownloadTests : IDisposable
             }
         }
     }
-
-
     public void Dispose()
     {
         Directory.Delete(_path, true);
