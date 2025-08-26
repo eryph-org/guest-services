@@ -26,34 +26,11 @@ public sealed class FileDownloadTests : IDisposable
         await File.WriteAllTextAsync(srcPath, "Hello Download World!");
         var targetPath = Path.Combine(_path, "target.bin");
 
-        // The loopback connection works without actually registering the Hyper-V integration.
-        var serviceId = PortNumberConverter.ToIntegrationId(42425); // Different port from upload tests
-
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(DownloadFileService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
+        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService));
 
         await using (var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
         {
-            await clientSession.DownloadFileAsync(srcPath, "", targetStream, CancellationToken.None);
+            await helper.ClientSession.DownloadFileAsync(srcPath, "", targetStream, CancellationToken.None);
         }
 
         var targetContent = await File.ReadAllTextAsync(targetPath);
@@ -66,34 +43,11 @@ public sealed class FileDownloadTests : IDisposable
         var nonExistentPath = Path.Combine(_path, "nonexistent.bin");
         var targetPath = Path.Combine(_path, "target.bin");
 
-        // The loopback connection works without actually registering the Hyper-V integration.
-        var serviceId = PortNumberConverter.ToIntegrationId(42426); // Different port
-
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(DownloadFileService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
-
+        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService));
+        
         await using var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write);
         
-        var result = await clientSession.DownloadFileAsync(nonExistentPath, "", targetStream, CancellationToken.None);
+        var result = await helper.ClientSession.DownloadFileAsync(nonExistentPath, "", targetStream, CancellationToken.None);
         result.Should().Be(ErrorCodes.FileNotFound);
     }
 
@@ -113,30 +67,9 @@ public sealed class FileDownloadTests : IDisposable
         Directory.CreateDirectory(subDir);
         await File.WriteAllTextAsync(Path.Combine(subDir, "file3.txt"), "Content 3");
 
-        var serviceId = PortNumberConverter.ToIntegrationId(42427);
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
+        using var helper = await new SshTestHelper().SetupAsync(typeof(ListDirectoryService));
 
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(ListDirectoryService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
-
-        var (result, files) = await clientSession.ListDirectoryAsync(testDir, CancellationToken.None);
+        var (result, files) = await helper.ClientSession.ListDirectoryAsync(testDir, CancellationToken.None);
         
         result.Should().Be(0);
         files.Should().HaveCount(3); // file1.txt, file2.txt, subdir
@@ -159,37 +92,16 @@ public sealed class FileDownloadTests : IDisposable
     {
         var nonExistentDir = Path.Combine(_path, "nonexistent");
 
-        var serviceId = PortNumberConverter.ToIntegrationId(42428);
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
+        using var helper = await new SshTestHelper().SetupAsync(typeof(ListDirectoryService));
 
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(ListDirectoryService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
-
-        var (result, files) = await clientSession.ListDirectoryAsync(nonExistentDir, CancellationToken.None);
+        var (result, files) = await helper.ClientSession.ListDirectoryAsync(nonExistentDir, CancellationToken.None);
         
         result.Should().Be(ErrorCodes.FileNotFound);
         files.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task DownloadDirectory_NonRecursive_ShouldDownloadOnlyRootFiles()
+    public async Task DownloadDirectoryCommand_NonRecursive_ShouldDownloadOnlyRootFiles()
     {
         // Create test directory structure on source
         var sourceDir = Path.Combine(_path, "sourcedir");
@@ -207,44 +119,22 @@ public sealed class FileDownloadTests : IDisposable
         // Target directory
         var targetDir = Path.Combine(_path, "targetdir");
 
-        var serviceId = PortNumberConverter.ToIntegrationId(42429);
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(DownloadFileService), null);
-        config.Services.Add(typeof(ListDirectoryService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
+        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
 
         // List the directory to get the files
-        var (listResult, files) = await clientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);
+        var (listResult, files) = await helper.ClientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);
         listResult.Should().Be(0);
         files.Should().HaveCount(3); // file1.txt, file2.txt, subdir
 
         // Create target directory
         Directory.CreateDirectory(targetDir);
 
-        // NON-RECURSIVE: Download only files, ignore directories
+        // NON-RECURSIVE: Download only files, ignore directories (DownloadDirectoryCommand without --recursive)
         foreach (var file in files.Where(f => !f.IsDirectory))
         {
             var targetFilePath = Path.Combine(targetDir, file.Name);
             await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-            var downloadResult = await clientSession.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
+            var downloadResult = await helper.ClientSession.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
             downloadResult.Should().Be(0);
         }
 
@@ -269,7 +159,7 @@ public sealed class FileDownloadTests : IDisposable
     }
 
     [Fact]
-    public async Task DownloadDirectory_Recursive_ShouldDownloadAllFilesIncludingSubdirectories()
+    public async Task DownloadDirectoryCommand_Recursive_ShouldDownloadAllFilesIncludingSubdirectories()
     {
         // Create complex test directory structure on source
         var sourceDir = Path.Combine(_path, "sourcedir");
@@ -293,32 +183,10 @@ public sealed class FileDownloadTests : IDisposable
         // Target directory
         var targetDir = Path.Combine(_path, "targetdir");
 
-        var serviceId = PortNumberConverter.ToIntegrationId(42430);
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
+        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
 
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(DownloadFileService), null);
-        config.Services.Add(typeof(ListDirectoryService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
-
-        // RECURSIVE: Download directory with all subdirectories
-        await DownloadDirectoryRecursivelyAsync(clientSession, sourceDir, targetDir);
+        // RECURSIVE: Download directory with all subdirectories (DownloadDirectoryCommand with --recursive)
+        await DownloadDirectoryRecursivelyAsync(helper.ClientSession, sourceDir, targetDir);
 
         // Verify root files were downloaded
         File.Exists(Path.Combine(targetDir, "root1.txt")).Should().BeTrue();
@@ -382,115 +250,6 @@ public sealed class FileDownloadTests : IDisposable
         }
     }
 
-    [Fact] 
-    public async Task DownloadFileCommand_Recursive_ShouldDownloadDirectoriesRecursively()
-    {
-        // This test uses the actual DownloadFileCommand implementation
-        // to verify the real directory download behavior
-        
-        // Create complex test directory structure on source
-        var sourceDir = Path.Combine(_path, "sourcedir");
-        Directory.CreateDirectory(sourceDir);
-        
-        // Root files
-        await File.WriteAllTextAsync(Path.Combine(sourceDir, "root.txt"), "Root Content");
-        
-        // Level 1 subdirectory with files
-        var level1Dir = Path.Combine(sourceDir, "level1");
-        Directory.CreateDirectory(level1Dir);
-        await File.WriteAllTextAsync(Path.Combine(level1Dir, "level1.txt"), "Level1 Content");
-        
-        // Level 2 nested subdirectory with files
-        var level2Dir = Path.Combine(level1Dir, "level2");
-        Directory.CreateDirectory(level2Dir);
-        await File.WriteAllTextAsync(Path.Combine(level2Dir, "level2.txt"), "Level2 Content");
-
-        // Target directory
-        var targetDir = Path.Combine(_path, "targetdir");
-
-        var serviceId = PortNumberConverter.ToIntegrationId(42431);
-        var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-
-        var config = new SshSessionConfiguration();
-        config.Services.Add(typeof(DownloadFileService), null);
-        config.Services.Add(typeof(ListDirectoryService), null);
-
-        using var server = new SocketSshServer(config, new TraceSource("Server"));
-        server.Credentials = new SshServerCredentials(serverKeyPair);
-        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-        server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
-        _ = server.AcceptSessionsAsync(serverSocket);
-
-        using var clientSocket = await SocketFactory.CreateClientSocket(HyperVAddresses.Loopback, serviceId);
-        await using var clientStream = new NetworkStream(clientSocket, true);
-        using var clientSession = new SshClientSession(config, new TraceSource("Client"));
-        clientSession.Authenticating += (s, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
-
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
-        isAuthenticated.Should().BeTrue();
-
-        // Use the actual DownloadFileCommand logic to test recursive directory download
-        var (listResult, files) = await clientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);
-        listResult.Should().Be(0);
-
-        // Create target directory
-        if (!Directory.Exists(targetDir))
-        {
-            Directory.CreateDirectory(targetDir);
-        }
-
-        var downloadedFiles = 0;
-        var totalFiles = files.Count(f => !f.IsDirectory);
-        var failedFiles = new List<string>();
-
-        // RECURSIVE: Download all files AND directories (like the command should do with --recursive)
-        foreach (var file in files)
-        {
-            if (file.IsDirectory)
-            {
-                // Recursively download subdirectories (this tests the actual command logic)
-                var subDirTargetPath = Path.Combine(targetDir, file.Name);
-                await DownloadDirectoryRecursivelyAsync(clientSession, file.FullPath, subDirTargetPath);
-            }
-            else
-            {
-                // Download individual file
-                var targetFilePath = Path.Combine(targetDir, file.Name);
-                await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                var result = await clientSession.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
-                
-                if (result == 0)
-                {
-                    downloadedFiles++;
-                }
-                else
-                {
-                    failedFiles.Add(file.FullPath);
-                }
-            }
-        }
-
-        // Verify the recursive directory structure was downloaded correctly
-        File.Exists(Path.Combine(targetDir, "root.txt")).Should().BeTrue();
-        Directory.Exists(Path.Combine(targetDir, "level1")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "level1", "level1.txt")).Should().BeTrue();
-        Directory.Exists(Path.Combine(targetDir, "level1", "level2")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "level1", "level2", "level2.txt")).Should().BeTrue();
-
-        // Verify content
-        var rootContent = await File.ReadAllTextAsync(Path.Combine(targetDir, "root.txt"));
-        var level1Content = await File.ReadAllTextAsync(Path.Combine(targetDir, "level1", "level1.txt"));
-        var level2Content = await File.ReadAllTextAsync(Path.Combine(targetDir, "level1", "level2", "level2.txt"));
-        
-        rootContent.Should().Be("Root Content");
-        level1Content.Should().Be("Level1 Content");
-        level2Content.Should().Be("Level2 Content");
-
-        failedFiles.Should().BeEmpty();
-    }
 
     public void Dispose()
     {
