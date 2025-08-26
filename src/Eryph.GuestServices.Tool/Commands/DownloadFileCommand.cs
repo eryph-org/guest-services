@@ -186,17 +186,17 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         }
 
         var downloadedFiles = 0;
-        var totalFiles = settings.Recursive ? await CountFilesRecursivelyAsync(session, files, cancellationToken) : files.Count(f => !f.IsDirectory);
         var failedFiles = new List<string>();
 
-        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading directory '{settings.SourcePath}' with {totalFiles} files...[/]");
+        var fileCountText = settings.Recursive ? "files" : $"{files.Count(f => !f.IsDirectory)} files";
+        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading directory '{settings.SourcePath}' ({fileCountText})...[/]");
 
         foreach (var file in files)
         {
             if (file.IsDirectory && settings.Recursive)
             {
                 // Recursively download subdirectories (only if --recursive flag is set)
-                var subDirSourcePath = file.FullPath;
+                var subDirSourcePath = file.FullPath.Replace('\\', '/');
                 var subDirTargetPath = Path.Combine(settings.TargetPath, file.Name);
                 
                 var subDirSettings = new Settings
@@ -229,16 +229,16 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                     }
 
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(file.FullPath, "", targetStream, cancellationToken);
+                    var result = await session.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, cancellationToken);
                     
                     if (result == 0)
                     {
                         downloadedFiles++;
-                        AnsiConsole.MarkupLineInterpolated($"[dim]Downloaded: {file.Name}[/]");
+                        AnsiConsole.MarkupLineInterpolated($"[green]Downloaded: {file.Name}[/]");
                     }
                     else
                     {
-                        failedFiles.Add(file.FullPath);
+                        failedFiles.Add(file.FullPath.Replace('\\', '/'));
                         AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download: {file.Name}[/]");
                         
                         // Clean up failed file
@@ -250,7 +250,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                 }
                 catch (Exception ex)
                 {
-                    failedFiles.Add(file.FullPath);
+                    failedFiles.Add(file.FullPath.Replace('\\', '/'));
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
                     
                     // Clean up failed file
@@ -277,29 +277,5 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
             }
             return -1;
         }
-    }
-
-    private async Task<int> CountFilesRecursivelyAsync(SshSession session, List<RemoteFileInfo> files, CancellationToken cancellationToken = default)
-    {
-        var count = files.Count(f => !f.IsDirectory); // Count files in current directory
-        
-        // Recursively count files in subdirectories
-        foreach (var dir in files.Where(f => f.IsDirectory))
-        {
-            try
-            {
-                var (result, subFiles) = await session.ListDirectoryAsync(dir.FullPath, cancellationToken);
-                if (result == 0)
-                {
-                    count += await CountFilesRecursivelyAsync(session, subFiles, cancellationToken);
-                }
-            }
-            catch
-            {
-                // Skip directories we can't access for counting
-            }
-        }
-        
-        return count;
     }
 }

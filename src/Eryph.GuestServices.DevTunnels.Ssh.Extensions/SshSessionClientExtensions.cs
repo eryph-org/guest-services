@@ -78,7 +78,7 @@ public static class SshSessionClientExtensions
                     Path = path,
                     FileName = fileName,
                     Length = 0, // Will be determined by server
-                    Overwrite = false, // Not used for download
+                    Overwrite = false
                 },
                 cancellation);
             var stream = new SshStream(channel);
