@@ -43,6 +43,7 @@ internal sealed class SshServerService(
         config.Services.Add(typeof(CommandService), null);
         config.Services.Add(typeof(ShellService), null);
         config.Services.Add(typeof(UploadFileService), null);
+        config.Services.Add(typeof(DownloadFileService), null);
 
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
         _server.Credentials = new SshServerCredentials(hostKey);

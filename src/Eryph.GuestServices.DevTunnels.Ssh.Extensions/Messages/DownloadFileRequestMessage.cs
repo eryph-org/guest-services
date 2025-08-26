@@ -1,14 +1,14 @@
-﻿using Microsoft.DevTunnels.Ssh.IO;
+using Microsoft.DevTunnels.Ssh.IO;
 using Microsoft.DevTunnels.Ssh.Messages;
 using System.Text;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 
-public class UploadFileRequestMessage : ChannelRequestMessage, IFileTransferRequestMessage
+public class DownloadFileRequestMessage : ChannelRequestMessage, IFileTransferRequestMessage
 {
-    public UploadFileRequestMessage()
+    public DownloadFileRequestMessage()
     {
-        RequestType = EryphChannelRequestTypes.UploadFile;
+        RequestType = EryphChannelRequestTypes.DownloadFile;
     }
     
     public string Path { get; set; } = "";

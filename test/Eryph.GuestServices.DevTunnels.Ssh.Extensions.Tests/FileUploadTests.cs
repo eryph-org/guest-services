@@ -9,18 +9,18 @@ using Microsoft.DevTunnels.Ssh;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 
 [Collection("e2e")]
-public sealed class FileTransferTests : IDisposable
+public sealed class FileUploadTests : IDisposable
 {
     private readonly string _path;
 
-    public FileTransferTests()
+    public FileUploadTests()
     {
         _path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         Directory.CreateDirectory(_path);
     }
 
     [Fact]
-    public async Task Test()
+    public async Task UploadFile_ShouldTransferFileFromClientToServer()
     {
         var srcPath = Path.Combine(_path, "src.bin");
         await File.WriteAllTextAsync(srcPath, "Hello World!");
@@ -38,7 +38,7 @@ public sealed class FileTransferTests : IDisposable
         using var server = new SocketSshServer(config, new TraceSource("Server"));
         server.Credentials = new SshServerCredentials(serverKeyPair);
         using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
-        server.SessionAuthenticating += (sender, e) =>   e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
+        server.SessionAuthenticating += (sender, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
         server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
         _ = server.AcceptSessionsAsync(serverSocket);
 

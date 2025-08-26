@@ -261,3 +261,4 @@ __pycache__/
 *.pyc
 /docker/docker-compose-services/store/mysql
 /store/mysql
+.claude/settings.local.json
