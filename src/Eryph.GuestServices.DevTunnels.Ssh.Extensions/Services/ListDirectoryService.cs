@@ -48,47 +48,33 @@ public class ListDirectoryService(SshSession session) : SshService(session)
             var fileInfos = new List<RemoteFileInfo>();
             
             // Get directories first
-            try
+            var directories = Directory.GetDirectories(directoryPath);
+            foreach (var dir in directories)
             {
-                var directories = Directory.GetDirectories(directoryPath);
-                foreach (var dir in directories)
+                var dirInfo = new DirectoryInfo(dir);
+                fileInfos.Add(new RemoteFileInfo
                 {
-                    var dirInfo = new DirectoryInfo(dir);
-                    fileInfos.Add(new RemoteFileInfo
-                    {
-                        Name = dirInfo.Name,
-                        FullPath = dirInfo.FullName,
-                        IsDirectory = true,
-                        Size = 0,
-                        LastModified = dirInfo.LastWriteTime
-                    });
-                }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Skip directories we can't access
+                    Name = dirInfo.Name,
+                    FullPath = dirInfo.FullName,
+                    IsDirectory = true,
+                    Size = 0,
+                    LastModified = dirInfo.LastWriteTime
+                });
             }
             
             // Get files
-            try
+            var files = Directory.GetFiles(directoryPath);
+            foreach (var file in files)
             {
-                var files = Directory.GetFiles(directoryPath);
-                foreach (var file in files)
+                var fileInfo = new FileInfo(file);
+                fileInfos.Add(new RemoteFileInfo
                 {
-                    var fileInfo = new FileInfo(file);
-                    fileInfos.Add(new RemoteFileInfo
-                    {
-                        Name = fileInfo.Name,
-                        FullPath = fileInfo.FullName,
-                        IsDirectory = false,
-                        Size = fileInfo.Length,
-                        LastModified = fileInfo.LastWriteTime
-                    });
-                }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Skip files we can't access
+                    Name = fileInfo.Name,
+                    FullPath = fileInfo.FullName,
+                    IsDirectory = false,
+                    Size = fileInfo.Length,
+                    LastModified = fileInfo.LastWriteTime
+                });
             }
 
             // Serialize the file list as JSON

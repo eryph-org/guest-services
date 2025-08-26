@@ -74,12 +74,12 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         return fileResult;
     }
 
-    private async Task<int> TryDownloadAsFileAsync(SshSession session, Settings settings)
+    private async Task<int> TryDownloadAsFileAsync(SshSession session, Settings settings, CancellationToken cancellationToken = default)
     {
         // Check if target already exists and overwrite is not set
         if (File.Exists(settings.TargetPath) && !settings.Overwrite)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists. Use --overwrite to replace it.[/]");
+            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
             return ErrorCodes.FileExists;
         }
 
@@ -93,7 +93,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         try
         {
             await using var targetStream = new FileStream(settings.TargetPath, FileMode.Create, FileAccess.Write);
-            var result = await session.DownloadFileAsync(settings.SourcePath, "", targetStream, CancellationToken.None);
+            var result = await session.DownloadFileAsync(settings.SourcePath, "", targetStream, cancellationToken);
             
             if (result == 0)
             {
@@ -132,7 +132,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         }
     }
 
-    private async Task<int> TryDownloadAsDirectoryAsync(SshSession session, Settings settings)
+    private async Task<int> TryDownloadAsDirectoryAsync(SshSession session, Settings settings, CancellationToken cancellationToken = default)
     {
         if (!settings.Recursive)
         {
@@ -142,7 +142,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
 
         try
         {
-            var (listResult, files) = await session.ListDirectoryAsync(settings.SourcePath, CancellationToken.None);
+            var (listResult, files) = await session.ListDirectoryAsync(settings.SourcePath, cancellationToken);
             
             if (listResult == ErrorCodes.FileNotFound)
             {
@@ -156,7 +156,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                 return listResult;
             }
 
-            return await DownloadDirectoryAsync(session, settings, files);
+            return await DownloadDirectoryAsync(session, settings, files, cancellationToken);
         }
         catch (DownloadFileServerException ex)
         {
@@ -170,12 +170,12 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         }
     }
 
-    private async Task<int> DownloadDirectoryAsync(SshSession session, Settings settings, List<RemoteFileInfo> files)
+    private async Task<int> DownloadDirectoryAsync(SshSession session, Settings settings, List<RemoteFileInfo> files, CancellationToken cancellationToken = default)
     {
         // Check if target directory exists and handle overwrite
         if (Directory.Exists(settings.TargetPath) && !settings.Overwrite)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]The target directory '{settings.TargetPath}' already exists. Use --overwrite to replace it.[/]");
+            AnsiConsole.MarkupLineInterpolated($"[red]The directory '{settings.TargetPath}' already exists.[/]");
             return ErrorCodes.FileExists;
         }
 
@@ -186,17 +186,17 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         }
 
         var downloadedFiles = 0;
-        var totalFiles = files.Count(f => !f.IsDirectory);
+        var totalFiles = settings.Recursive ? await CountFilesRecursivelyAsync(session, files, cancellationToken) : files.Count(f => !f.IsDirectory);
         var failedFiles = new List<string>();
 
         AnsiConsole.MarkupLineInterpolated($"[blue]Downloading directory '{settings.SourcePath}' with {totalFiles} files...[/]");
 
         foreach (var file in files)
         {
-            if (file.IsDirectory)
+            if (file.IsDirectory && settings.Recursive)
             {
-                // Recursively download subdirectories
-                var subDirSourcePath = file.FullPath.Replace('\\', '/');
+                // Recursively download subdirectories (only if --recursive flag is set)
+                var subDirSourcePath = file.FullPath;
                 var subDirTargetPath = Path.Combine(settings.TargetPath, file.Name);
                 
                 var subDirSettings = new Settings
@@ -208,15 +208,15 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                     Recursive = settings.Recursive
                 };
 
-                var subDirResult = await TryDownloadAsDirectoryAsync(session, subDirSettings);
+                var subDirResult = await TryDownloadAsDirectoryAsync(session, subDirSettings, cancellationToken);
                 if (subDirResult != 0)
                 {
                     failedFiles.Add(subDirSourcePath);
                 }
             }
-            else
+            else if (!file.IsDirectory)
             {
-                // Download individual file
+                // Download individual file (only if it's not a directory)
                 var targetFilePath = Path.Combine(settings.TargetPath, file.Name);
                 
                 try
@@ -229,7 +229,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                     }
 
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, CancellationToken.None);
+                    var result = await session.DownloadFileAsync(file.FullPath, "", targetStream, cancellationToken);
                     
                     if (result == 0)
                     {
@@ -277,5 +277,29 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
             }
             return -1;
         }
+    }
+
+    private async Task<int> CountFilesRecursivelyAsync(SshSession session, List<RemoteFileInfo> files, CancellationToken cancellationToken = default)
+    {
+        var count = files.Count(f => !f.IsDirectory); // Count files in current directory
+        
+        // Recursively count files in subdirectories
+        foreach (var dir in files.Where(f => f.IsDirectory))
+        {
+            try
+            {
+                var (result, subFiles) = await session.ListDirectoryAsync(dir.FullPath, cancellationToken);
+                if (result == 0)
+                {
+                    count += await CountFilesRecursivelyAsync(session, subFiles, cancellationToken);
+                }
+            }
+            catch
+            {
+                // Skip directories we can't access for counting
+            }
+        }
+        
+        return count;
     }
 }
