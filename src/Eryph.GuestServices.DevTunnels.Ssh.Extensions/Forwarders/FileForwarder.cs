@@ -5,8 +5,8 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
 public enum FileTransferDirection
 {
-    Upload,   // SSH stream ? local file
-    Download  // local file ? SSH stream
+    Upload,   // SSH stream -> local file
+    Download  // local file -> SSH stream
 }
 
 public sealed class FileForwarder(
