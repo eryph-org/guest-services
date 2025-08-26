@@ -196,7 +196,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
             if (file.IsDirectory && settings.Recursive)
             {
                 // Recursively download subdirectories (only if --recursive flag is set)
-                var subDirSourcePath = file.FullPath.Replace('\\', '/');
+                var subDirSourcePath = SshExtensionUtils.NormalizePath(file.FullPath);
                 var subDirTargetPath = Path.Combine(settings.TargetPath, file.Name);
                 
                 var subDirSettings = new Settings
@@ -229,7 +229,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                     }
 
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, cancellationToken);
+                    var result = await session.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, cancellationToken);
                     
                     if (result == 0)
                     {
@@ -238,7 +238,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                     }
                     else
                     {
-                        failedFiles.Add(file.FullPath.Replace('\\', '/'));
+                        failedFiles.Add(SshExtensionUtils.NormalizePath(file.FullPath));
                         AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download: {file.Name}[/]");
                         
                         // Clean up failed file
@@ -250,7 +250,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                 }
                 catch (Exception ex)
                 {
-                    failedFiles.Add(file.FullPath.Replace('\\', '/'));
+                    failedFiles.Add(SshExtensionUtils.NormalizePath(file.FullPath));
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
                     
                     // Clean up failed file

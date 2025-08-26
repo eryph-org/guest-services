@@ -244,7 +244,7 @@ public sealed class FileDownloadTests : IDisposable
         {
             var targetFilePath = Path.Combine(targetDir, file.Name);
             await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-            var downloadResult = await clientSession.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, CancellationToken.None);
+            var downloadResult = await clientSession.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
             downloadResult.Should().Be(0);
         }
 
@@ -376,7 +376,7 @@ public sealed class FileDownloadTests : IDisposable
                 // Download individual file
                 var targetFilePath = Path.Combine(targetDir, file.Name);
                 await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                var downloadResult = await session.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, CancellationToken.None);
+                var downloadResult = await session.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
                 downloadResult.Should().Be(0);
             }
         }
@@ -460,7 +460,7 @@ public sealed class FileDownloadTests : IDisposable
                 // Download individual file
                 var targetFilePath = Path.Combine(targetDir, file.Name);
                 await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                var result = await clientSession.DownloadFileAsync(file.FullPath.Replace('\\', '/'), "", targetStream, CancellationToken.None);
+                var result = await clientSession.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
                 
                 if (result == 0)
                 {

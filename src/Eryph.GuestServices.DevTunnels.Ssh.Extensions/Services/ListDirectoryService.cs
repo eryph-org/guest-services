@@ -78,10 +78,7 @@ public class ListDirectoryService(SshSession session) : SshService(session)
             }
 
             // Serialize the file list as JSON
-            var json = JsonSerializer.Serialize(fileInfos, new JsonSerializerOptions 
-            { 
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase 
-            });
+            var json = JsonSerializer.Serialize(fileInfos, SshExtensionUtils.FileTransferOptions);
             var jsonBytes = Encoding.UTF8.GetBytes(json);
             
             // Send the data
