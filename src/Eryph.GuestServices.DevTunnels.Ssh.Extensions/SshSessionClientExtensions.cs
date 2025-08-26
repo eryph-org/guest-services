@@ -128,7 +128,7 @@ public static class SshSessionClientExtensions
                 cancellation);
 
             var stream = new SshStream(channel);
-            using var memoryStream = new MemoryStream();
+            using var memoryStream = new MemoryStream(4096);
             
             try
             {

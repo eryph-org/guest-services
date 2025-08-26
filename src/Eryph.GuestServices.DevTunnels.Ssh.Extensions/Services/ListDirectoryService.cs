@@ -86,8 +86,7 @@ public class ListDirectoryService(SshSession session) : SshService(session)
             await stream.WriteAsync(jsonBytes, cancellation);
             await stream.FlushAsync(cancellation);
             
-            // Close the stream before closing the channel
-            await stream.DisposeAsync();
+            // Channel closing will handle stream cleanup
             await channel.CloseAsync(cancellation);
         }
         catch (UnauthorizedAccessException)

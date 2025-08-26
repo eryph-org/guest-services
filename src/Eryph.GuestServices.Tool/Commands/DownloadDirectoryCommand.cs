@@ -61,7 +61,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                 return -1;
             }
 
-            return await DownloadDirectoryAsync(clientSession, settings);
+            return await DownloadDirectoryAsync(clientSession, settings.SourcePath, settings.TargetPath, settings.Overwrite, settings.Recursive);
         }
         catch (Exception ex)
         {
@@ -70,27 +70,27 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
         }
     }
 
-    private async Task<int> DownloadDirectoryAsync(SshSession session, Settings settings)
+    private async Task<int> DownloadDirectoryAsync(SshSession session, string sourcePath, string targetPath, bool overwrite, bool recursive)
     {
         // List the directory to get all files and subdirectories
-        var (listResult, files) = await session.ListDirectoryAsync(settings.SourcePath, CancellationToken.None);
+        var (listResult, files) = await session.ListDirectoryAsync(sourcePath, CancellationToken.None);
         if (listResult != 0)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{settings.SourcePath}' or directory does not exist.[/]");
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' or directory does not exist.[/]");
             return listResult;
         }
 
         // Check if target directory exists and handle overwrite
-        if (Directory.Exists(settings.TargetPath) && !settings.Overwrite)
+        if (Directory.Exists(targetPath) && !overwrite)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]The directory '{settings.TargetPath}' already exists.[/]");
+            AnsiConsole.MarkupLineInterpolated($"[red]The directory '{targetPath}' already exists.[/]");
             return ErrorCodes.FileExists;
         }
 
         // Create target directory if it doesn't exist
-        if (!Directory.Exists(settings.TargetPath))
+        if (!Directory.Exists(targetPath))
         {
-            Directory.CreateDirectory(settings.TargetPath);
+            Directory.CreateDirectory(targetPath);
         }
 
         var downloadedFiles = 0;
@@ -98,29 +98,20 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
 
         // Count files in current directory
         var currentLevelFiles = files.Where(f => !f.IsDirectory).ToList();
-        var fileCountText = settings.Recursive 
+        var fileCountText = recursive 
             ? $"directory (recursive - {currentLevelFiles.Count} files at root level)" 
             : $"directory ({currentLevelFiles.Count} files)";
-        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading {fileCountText} from '{settings.SourcePath}'...[/]");
+        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading {fileCountText} from '{sourcePath}'...[/]");
 
         foreach (var file in files)
         {
-            if (file.IsDirectory && settings.Recursive)
+            if (file.IsDirectory && recursive)
             {
                 // Recursively download subdirectories (only if --recursive flag is set)
                 var subDirSourcePath = SshExtensionUtils.NormalizePath(file.FullPath);
-                var subDirTargetPath = Path.Combine(settings.TargetPath, file.Name);
+                var subDirTargetPath = Path.Combine(targetPath, file.Name);
                 
-                var subDirSettings = new Settings
-                {
-                    VmId = settings.VmId,
-                    SourcePath = subDirSourcePath,
-                    TargetPath = subDirTargetPath,
-                    Overwrite = settings.Overwrite,
-                    Recursive = settings.Recursive
-                };
-
-                var subDirResult = await DownloadDirectoryAsync(session, subDirSettings);
+                var subDirResult = await DownloadDirectoryAsync(session, subDirSourcePath, subDirTargetPath, overwrite, recursive);
                 if (subDirResult != 0)
                 {
                     failedFiles.Add(subDirSourcePath);
@@ -129,7 +120,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
             else if (!file.IsDirectory)
             {
                 // Download individual file (only if it's not a directory)
-                var targetFilePath = Path.Combine(settings.TargetPath, file.Name);
+                var targetFilePath = Path.Combine(targetPath, file.Name);
                 
                 // Create target directory for the file if it doesn't exist
                 var fileDirectory = Path.GetDirectoryName(targetFilePath);
@@ -166,7 +157,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
                     
                     // Clean up failed file
-                    var failedTargetFilePath = Path.Combine(settings.TargetPath, file.Name);
+                    var failedTargetFilePath = Path.Combine(targetPath, file.Name);
                     if (File.Exists(failedTargetFilePath))
                     {
                         try
@@ -184,7 +175,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
 
         if (failedFiles.Count == 0)
         {
-            AnsiConsole.MarkupLineInterpolated($"[green]Successfully downloaded {downloadedFiles} files to '{settings.TargetPath}'[/]");
+            AnsiConsole.MarkupLineInterpolated($"[green]Successfully downloaded {downloadedFiles} files to '{targetPath}'[/]");
             return 0;
         }
 
