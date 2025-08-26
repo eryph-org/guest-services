@@ -75,7 +75,7 @@ fodder:
 
 More details: [genepool.eryph.io/b/dbosoft/guest-services](https://genepool.eryph.io/b/dbosoft/guest-services)
 
-### egs-tool
+#### egs-tool
 Same installations as for standalone Hyper-V - see below.
 
 ### Option 2: Standalone with Plain Hyper-V
