@@ -75,8 +75,8 @@ fodder:
 
 More details: [genepool.eryph.io/b/dbosoft/guest-services](https://genepool.eryph.io/b/dbosoft/guest-services)
 
-#### Host Tool (automatic with eryph)
-The `egs-tool` commands are available when eryph is installed.
+### egs-tool
+Same installations as for standalone Hyper-V - see below.
 
 ### Option 2: Standalone with Plain Hyper-V
 
