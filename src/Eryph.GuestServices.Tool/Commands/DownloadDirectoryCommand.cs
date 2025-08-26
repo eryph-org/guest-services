@@ -96,8 +96,12 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
         var downloadedFiles = 0;
         var failedFiles = new List<string>();
 
-        var fileCountText = settings.Recursive ? "files" : $"{files.Count(f => !f.IsDirectory)} files";
-        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading directory '{settings.SourcePath}' ({fileCountText})...[/]");
+        // Count files in current directory
+        var currentLevelFiles = files.Where(f => !f.IsDirectory).ToList();
+        var fileCountText = settings.Recursive 
+            ? $"directory (recursive - {currentLevelFiles.Count} files at root level)" 
+            : $"directory ({currentLevelFiles.Count} files)";
+        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading {fileCountText} from '{settings.SourcePath}'...[/]");
 
         foreach (var file in files)
         {

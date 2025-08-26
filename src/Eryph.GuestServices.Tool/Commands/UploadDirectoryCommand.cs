@@ -83,7 +83,9 @@ public class UploadDirectoryCommand : AsyncCommand<UploadDirectoryCommand.Settin
         var uploadedFiles = 0;
         var failedFiles = new List<string>();
 
-        var fileCountText = settings.Recursive ? "files" : $"{files.Count} files";
+        var fileCountText = settings.Recursive 
+            ? $"{files.Count} files (recursive)" 
+            : $"{files.Count} files";
         AnsiConsole.MarkupLineInterpolated($"[blue]Uploading directory '{settings.SourcePath}' ({fileCountText})...[/]");
 
         foreach (var file in files)

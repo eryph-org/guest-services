@@ -130,17 +130,9 @@ public static class SshSessionClientExtensions
             var stream = new SshStream(channel);
             using var memoryStream = new MemoryStream();
             
-            // Read data manually in chunks to avoid race condition
-            const int bufferSize = 4096;
-            var buffer = new byte[bufferSize];
-            
             try
             {
-                int bytesRead;
-                while ((bytesRead = await stream.ReadAsync(buffer, 0, bufferSize, cancellation)) > 0)
-                {
-                    await memoryStream.WriteAsync(buffer, 0, bytesRead, cancellation);
-                }
+                await stream.CopyToAsync(memoryStream, cancellation);
             }
             catch (ObjectDisposedException)
             {
@@ -170,7 +162,7 @@ public static class SshSessionClientExtensions
                     var json = Encoding.UTF8.GetString(jsonBytes);
                     try
                     {
-                        var files = JsonSerializer.Deserialize<List<RemoteFileInfo>>(json, SshExtensionUtils.FileTransferOptions) ?? new List<RemoteFileInfo>();
+                        var files = JsonSerializer.Deserialize<List<RemoteFileInfo>>(json, SshExtensionUtils.FileTransferOptions)!;
                         return (result, files);
                     }
                     catch (JsonException)
