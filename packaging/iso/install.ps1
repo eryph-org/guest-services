@@ -2,9 +2,10 @@
 #Requires -RunAsAdministrator
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version 3.0
 
-Expand-Archive -Path $PSScriptRoot\*.zip -DestinationPath "C:\Program Files\eryph\guest-services" -ProgressAction SilentlyContinue
+Expand-Archive -Path $PSScriptRoot\*.zip -DestinationPath "C:\Program Files\eryph\guest-services"
 
 $null = sc.exe create eryph-guest-services start=auto binpath="C:\Program Files\eryph\guest-services\bin\egs-service.exe"
 $null = sc.exe failure eryph-guest-services reset=60 actions=restart/10000
