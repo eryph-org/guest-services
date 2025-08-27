@@ -137,10 +137,9 @@ public sealed class FileDownloadTests : IDisposable
         // NON-RECURSIVE: Download only files, ignore directories (DownloadDirectoryCommand without --recursive)
         foreach (var file in files.Where(f => !f.IsDirectory))
         {
-            var normalizedPath = SshExtensionUtils.NormalizePath(file.FullPath);
             var targetFilePath = Path.Combine(targetDir, file.Name);
             await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-            var downloadResult = await helper.ClientSession.DownloadFileAsync(normalizedPath, "", targetStream, CancellationToken.None);
+            var downloadResult = await helper.ClientSession.DownloadFileAsync(file.FullPath, "", targetStream, CancellationToken.None);
             downloadResult.Should().Be(0);
         }
 

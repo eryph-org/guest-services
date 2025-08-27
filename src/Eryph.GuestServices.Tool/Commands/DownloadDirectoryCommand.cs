@@ -115,7 +115,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
             if (file.IsDirectory && recursive)
             {
                 // Recursively download subdirectories (only if --recursive flag is set)
-                var subDirSourcePath = SshExtensionUtils.NormalizePath(file.FullPath);
+                var subDirSourcePath = file.FullPath;
                 var subDirTargetPath = Path.Combine(targetPath, file.Name);
                 
                 var subDirResult = await DownloadDirectoryAsync(session, subDirSourcePath, subDirTargetPath, overwrite, recursive, cancellation);
@@ -146,7 +146,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     }
 
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, cancellation);
+                    var result = await session.DownloadFileAsync(file.FullPath, "", targetStream, cancellation);
                     
                     if (result == 0)
                     {
@@ -154,7 +154,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     }
                     else
                     {
-                        failedFiles.Add(SshExtensionUtils.NormalizePath(file.FullPath));
+                        failedFiles.Add(file.FullPath);
                         if (result == ErrorCodes.FileNotFound)
                         {
                             AnsiConsole.MarkupLineInterpolated($"[yellow]File not found: {file.Name}[/]");
@@ -180,7 +180,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                 }
                 catch (Exception ex)
                 {
-                    failedFiles.Add(SshExtensionUtils.NormalizePath(file.FullPath));
+                    failedFiles.Add(file.FullPath);
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
                     
                     // Clean up failed file
