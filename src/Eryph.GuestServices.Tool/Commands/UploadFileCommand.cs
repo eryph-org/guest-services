@@ -54,30 +54,9 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
             return -1;
         }
 
-        return Directory.Exists(settings.SourcePath)
-            ? await TransferDirectoryAsync(clientSession, settings)
-            : await TransferFileAsync(clientSession, settings);
+        return await TransferFileAsync(clientSession, settings);
     }
 
-    private async Task<int> TransferDirectoryAsync(SshSession session, Settings settings)
-    {
-        var files = Directory.EnumerateFiles(settings.SourcePath, "*", SearchOption.AllDirectories).ToList();
-        foreach (var file in files)
-        {
-            var relativePath = Path.GetRelativePath(settings.SourcePath, file)
-                .Replace(Path.DirectorySeparatorChar, '/');
-
-            await using var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
-            var result = await session.TransferFileAsync(settings.TargetPath, relativePath, fileStream, settings.Overwrite, CancellationToken.None);
-            if (result != 0 && result != ErrorCodes.FileExists)
-                return result;
-
-            if (result == ErrorCodes.FileExists)
-                AnsiConsole.MarkupLineInterpolated(
-                    $"[yellow]The file '{settings.TargetPath}' already exists at the destination and will not be overwritten.[/]");
-        }
-        return 0;
-    }
 
     private async Task<int> TransferFileAsync(SshSession session, Settings settings)
     {

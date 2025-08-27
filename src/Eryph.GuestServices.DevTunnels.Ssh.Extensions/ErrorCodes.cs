@@ -1,10 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
+﻿namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 /// <summary>
 /// The error codes which are used by the SSH extensions.
@@ -20,11 +14,12 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 ///   </listheader>
 ///   <item>
 ///     <facility><c>0x002</c></facility>
-///     <description>The custom file uploads</description>
+///     <description>The custom file transfers</description>
 ///   </item>
 /// </list>
 /// </remarks>
 public class ErrorCodes
 {
     public static readonly int FileExists = unchecked((int)0xa002_0001);
+    public static readonly int FileNotFound = unchecked((int)0xa002_0002);
 }

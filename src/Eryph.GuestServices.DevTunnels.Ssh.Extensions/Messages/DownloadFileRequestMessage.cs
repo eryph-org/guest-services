@@ -1,31 +1,25 @@
-﻿using Microsoft.DevTunnels.Ssh.IO;
+using Microsoft.DevTunnels.Ssh.IO;
 using Microsoft.DevTunnels.Ssh.Messages;
 using System.Text;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 
-public class UploadFileRequestMessage : ChannelRequestMessage, IFileTransferRequestMessage
+public class DownloadFileRequestMessage : ChannelRequestMessage, IFileTransferRequestMessage
 {
-    public UploadFileRequestMessage()
+    public DownloadFileRequestMessage()
     {
-        RequestType = EryphChannelRequestTypes.UploadFile;
+        RequestType = EryphChannelRequestTypes.DownloadFile;
     }
     
     public string Path { get; set; } = "";
 
     public string FileName { get; set; } = "";
 
-    public ulong Length { get; set; }
-
-    public bool Overwrite { get; set; }
-
     protected override void OnRead(ref SshDataReader reader)
     {
         base.OnRead(ref reader);
         Path = reader.ReadString(Encoding.UTF8);
         FileName = reader.ReadString(Encoding.UTF8);
-        Length = reader.ReadUInt64();
-        Overwrite = reader.ReadBoolean();
     }
 
     protected override void OnWrite(ref SshDataWriter writer)
@@ -33,7 +27,5 @@ public class UploadFileRequestMessage : ChannelRequestMessage, IFileTransferRequ
         base.OnWrite(ref writer);
         writer.Write(Path, Encoding.UTF8);
         writer.Write(FileName, Encoding.UTF8);
-        writer.Write(Length);
-        writer.Write(Overwrite);
     }
 }

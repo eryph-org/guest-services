@@ -21,6 +21,15 @@ app.Configure(config =>
     config.AddCommand<UploadFileCommand>("upload-file")
         .WithDescription("Uploads a file from the host to the VM.");
 
+    config.AddCommand<UploadDirectoryCommand>("upload-directory")
+        .WithDescription("Uploads a directory from the host to the VM.");
+
+    config.AddCommand<DownloadFileCommand>("download-file")
+        .WithDescription("Downloads a file from the VM to the host.");
+
+    config.AddCommand<DownloadDirectoryCommand>("download-directory")
+        .WithDescription("Downloads a directory from the VM to the host.");
+
     config.AddCommand<GetSshKeyCommand>("get-ssh-key")
         .WithDescription(
             "Returns the public key.");

@@ -17,7 +17,7 @@ While Windows Server 2025 ships with OpenSSH by default, native Hyper-V socket s
 - **Network-free connectivity**: Access VMs via Hyper-V sockets without network setup
 - **Cross-platform support**: Works on Windows and Linux VMs
 - **SSH-based access**: Standard SSH protocol over Hyper-V transport
-- **File upload capabilities**: Upload files and directories to VMs
+- **File transfer capabilities**: Upload/download files and directories to/from VMs
 - **Pseudo-terminal support**: Interactive shell sessions
 - **Public key authentication**: Secure key-based authentication
 - **Easy installation**: Simple installer scripts for both platforms
@@ -143,13 +143,28 @@ ssh <VM-ID>.hyper-v.alt
 ssh <alias>
 ```
 
-#### 4. File Upload
+#### 4. File Transfer
 ```powershell
-# Upload file to VM
-egs-tool upload-file <VM-ID> <local-path> <remote-path>
+# Upload single file to VM
+egs-tool upload-file <VM-ID> <local-file> <remote-file>
 
-# Upload with overwrite
-egs-tool upload-file <VM-ID> <local-path> <remote-path> --overwrite
+# Upload directory to VM (non-recursive - root files only)
+egs-tool upload-directory <VM-ID> <local-directory> <remote-directory>
+
+# Upload directory recursively (including subdirectories)
+egs-tool upload-directory <VM-ID> <local-directory> <remote-directory> --recursive
+
+# Download single file from VM
+egs-tool download-file <VM-ID> <remote-file> <local-file>
+
+# Download directory from VM (non-recursive - root files only)
+egs-tool download-directory <VM-ID> <remote-directory> <local-directory>
+
+# Download directory recursively (including subdirectories)
+egs-tool download-directory <VM-ID> <remote-directory> <local-directory> --recursive
+
+# All commands support --overwrite flag
+egs-tool upload-file <VM-ID> <local-file> <remote-file> --overwrite
 ```
 
 ### Eryph Platform Usage
@@ -237,8 +252,14 @@ The guest services use SSH public key authentication:
 | `get-ssh-key` | Display the SSH public key | None |
 | `add-ssh-config <VM-ID> [alias]` | Configure SSH access for a VM | VM GUID, optional alias |
 | `update-ssh-config` | Update SSH config for all VMs/catlets | None |
-| `upload-file <VM-ID> <local> <remote>` | Upload file or directory to VM | VM GUID, local path, remote path |
-| `upload-file ... --overwrite` | Upload with overwrite | Add `--overwrite` flag |
+| `upload-file <VM-ID> <local> <remote>` | Upload single file to VM | VM GUID, local file, remote file |
+| `upload-directory <VM-ID> <local> <remote>` | Upload directory to VM | VM GUID, local dir, remote dir |
+| `download-file <VM-ID> <remote> <local>` | Download single file from VM | VM GUID, remote file, local file |
+| `download-directory <VM-ID> <remote> <local>` | Download directory from VM | VM GUID, remote dir, local dir |
+
+**Flags for file/directory commands:**
+- `--overwrite`: Overwrite existing files/directories
+- `--recursive`: Include subdirectories (directory commands only)
 
 ### Finding VM IDs
 
@@ -273,9 +294,10 @@ Get-Catlet | Select-Object Name, VmId
    - Guest service may not be running: check service status in VM
    - Hyper-V integration services may be disabled
 
-4. **File upload failed**
-   - Check remote path exists and is writable
-   - Use `--overwrite` flag if file already exists
+4. **File transfer failed**
+   - Check paths exist and are writable/readable
+   - Use `--overwrite` flag if file/directory already exists
+   - Use `--recursive` flag for directory operations that need subdirectories
 
 ### Service Management
 
