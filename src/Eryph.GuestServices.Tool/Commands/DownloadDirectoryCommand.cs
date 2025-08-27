@@ -184,12 +184,11 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
                     
                     // Clean up failed file
-                    var failedTargetFilePath = Path.Combine(targetPath, file.Name);
-                    if (File.Exists(failedTargetFilePath))
+                    if (File.Exists(targetFilePath))
                     {
                         try
                         {
-                            File.Delete(failedTargetFilePath);
+                            File.Delete(targetFilePath);
                         }
                         catch
                         {
