@@ -70,24 +70,27 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
         }
     }
 
-    private async Task<int> DownloadDirectoryAsync(SshSession session, string sourcePath, string targetPath, bool overwrite, bool recursive)
+    private async Task<int> DownloadDirectoryAsync(SshSession session, string sourcePath, string targetPath, bool overwrite, bool recursive, CancellationToken cancellation = default)
     {
-        // List the directory to get all files and subdirectories
-        var (listResult, files) = await session.ListDirectoryAsync(sourcePath, CancellationToken.None);
-        if (listResult != 0)
+        List<RemoteFileInfo> files;
+        try
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' or directory does not exist.[/]");
-            return listResult;
+            var (listResult, filesList) = await session.ListDirectoryAsync(sourcePath, cancellation);
+            if (listResult != 0)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' - Error code: {listResult}[/]");
+                return listResult;
+            }
+            
+            files = filesList;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Error listing directory '{sourcePath}': {ex.Message}[/]");
+            return -1;
         }
 
-        // Check if target directory exists and handle overwrite
-        if (Directory.Exists(targetPath) && !overwrite)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]The directory '{targetPath}' already exists.[/]");
-            return ErrorCodes.FileExists;
-        }
-
-        // Create target directory if it doesn't exist
+        // Ensure target directory exists (create if needed)
         if (!Directory.Exists(targetPath))
         {
             Directory.CreateDirectory(targetPath);
@@ -111,7 +114,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                 var subDirSourcePath = SshExtensionUtils.NormalizePath(file.FullPath);
                 var subDirTargetPath = Path.Combine(targetPath, file.Name);
                 
-                var subDirResult = await DownloadDirectoryAsync(session, subDirSourcePath, subDirTargetPath, overwrite, recursive);
+                var subDirResult = await DownloadDirectoryAsync(session, subDirSourcePath, subDirTargetPath, overwrite, recursive, cancellation);
                 if (subDirResult != 0)
                 {
                     failedFiles.Add(subDirSourcePath);
@@ -131,13 +134,19 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
 
                 try
                 {
+                    // Check if file exists and handle overwrite
+                    if (File.Exists(targetFilePath) && !overwrite)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[yellow]Skipped: {file.Name} (already exists)[/]");
+                        continue;
+                    }
+
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, CancellationToken.None);
+                    var result = await session.DownloadFileAsync(SshExtensionUtils.NormalizePath(file.FullPath), "", targetStream, cancellation);
                     
                     if (result == 0)
                     {
                         downloadedFiles++;
-                        AnsiConsole.MarkupLineInterpolated($"[green]Downloaded: {file.Name}[/]");
                     }
                     else
                     {

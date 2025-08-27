@@ -27,7 +27,7 @@ public class ListDirectoryService(SshSession session) : SshService(session)
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
         request.ResponseContinuation = async _ =>
         {
-            await HandleListDirectoryAsync(channel, listDirectoryRequest, cancellation);
+            await HandleListDirectoryAsync(channel, listDirectoryRequest, request.Cancellation);
         };
 
         return Task.CompletedTask;
@@ -47,34 +47,65 @@ public class ListDirectoryService(SshSession session) : SshService(session)
 
             var fileInfos = new List<RemoteFileInfo>();
             
-            // Get directories first
-            var directories = Directory.GetDirectories(directoryPath);
-            foreach (var dir in directories)
+            // Get directories first - with better error handling
+            try
             {
-                var dirInfo = new DirectoryInfo(dir);
-                fileInfos.Add(new RemoteFileInfo
+                var directories = Directory.GetDirectories(directoryPath);
+                foreach (var dir in directories)
                 {
-                    Name = dirInfo.Name,
-                    FullPath = dirInfo.FullName,
-                    IsDirectory = true,
-                    Size = 0,
-                    LastModified = dirInfo.LastWriteTime
-                });
+                    try
+                    {
+                        var dirInfo = new DirectoryInfo(dir);
+                        fileInfos.Add(new RemoteFileInfo
+                        {
+                            Name = dirInfo.Name,
+                            FullPath = dirInfo.FullName,
+                            IsDirectory = true,
+                            Size = 0,
+                            LastModified = dirInfo.LastWriteTime
+                        });
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        // Skip directories we can't access, don't fail entirely
+                        continue;
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // If we can't list directories at all, continue with files only
             }
             
-            // Get files
-            var files = Directory.GetFiles(directoryPath);
-            foreach (var file in files)
+            // Get files - with better error handling
+            try
             {
-                var fileInfo = new FileInfo(file);
-                fileInfos.Add(new RemoteFileInfo
+                var files = Directory.GetFiles(directoryPath);
+                foreach (var file in files)
                 {
-                    Name = fileInfo.Name,
-                    FullPath = fileInfo.FullName,
-                    IsDirectory = false,
-                    Size = fileInfo.Length,
-                    LastModified = fileInfo.LastWriteTime
-                });
+                    try
+                    {
+                        var fileInfo = new FileInfo(file);
+                        fileInfos.Add(new RemoteFileInfo
+                        {
+                            Name = fileInfo.Name,
+                            FullPath = fileInfo.FullName,
+                            IsDirectory = false,
+                            Size = fileInfo.Length,
+                            LastModified = fileInfo.LastWriteTime
+                        });
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        // Skip files we can't access, don't fail entirely
+                        continue;
+                    }
+                }
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // If we can't list files at all, but we could access the directory, 
+                // return empty list rather than failing
             }
 
             // Serialize the file list as JSON
@@ -85,8 +116,6 @@ public class ListDirectoryService(SshSession session) : SshService(session)
             var stream = new SshStream(channel);
             await stream.WriteAsync(jsonBytes, cancellation);
             await stream.FlushAsync(cancellation);
-            
-            // Channel closing will handle stream cleanup
             await channel.CloseAsync(cancellation);
         }
         catch (UnauthorizedAccessException)
