@@ -12,6 +12,7 @@ try {
     $service = Get-Service eryph-guest-services -ErrorAction SilentlyContinue
     if($service) {
         $service | Stop-Service
+        Start-Sleep -Seconds 2
         Remove-Item -Recurse "C:\Program Files\eryph\guest-services"
     }
 
