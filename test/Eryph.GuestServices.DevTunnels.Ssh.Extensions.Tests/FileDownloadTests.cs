@@ -26,7 +26,8 @@ public sealed class FileDownloadTests : IDisposable
         await File.WriteAllTextAsync(srcPath, "Hello Download World!");
         var targetPath = Path.Combine(_path, "target.bin");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(DownloadFileService));
 
         await using (var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
         {
@@ -43,7 +44,8 @@ public sealed class FileDownloadTests : IDisposable
         var nonExistentPath = Path.Combine(_path, "nonexistent.bin");
         var targetPath = Path.Combine(_path, "target.bin");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(DownloadFileService));
         
         await using var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write);
         
@@ -67,7 +69,8 @@ public sealed class FileDownloadTests : IDisposable
         Directory.CreateDirectory(subDir);
         await File.WriteAllTextAsync(Path.Combine(subDir, "file3.txt"), "Content 3");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(ListDirectoryService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(ListDirectoryService));
 
         var (result, files) = await helper.ClientSession.ListDirectoryAsync(testDir, CancellationToken.None);
         
@@ -92,7 +95,8 @@ public sealed class FileDownloadTests : IDisposable
     {
         var nonExistentDir = Path.Combine(_path, "nonexistent");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(ListDirectoryService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(ListDirectoryService));
 
         var (result, files) = await helper.ClientSession.ListDirectoryAsync(nonExistentDir, CancellationToken.None);
         
@@ -119,7 +123,8 @@ public sealed class FileDownloadTests : IDisposable
         // Target directory
         var targetDir = Path.Combine(_path, "targetdir");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
 
         // List the directory to get the files
         var (listResult, files) = await helper.ClientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);
@@ -184,7 +189,8 @@ public sealed class FileDownloadTests : IDisposable
         // Target directory
         var targetDir = Path.Combine(_path, "targetdir");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
 
         // Test ListDirectoryAsync on nested structure
         var (listResult, files) = await helper.ClientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);

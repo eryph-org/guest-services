@@ -26,7 +26,8 @@ public sealed class FileUploadTests : IDisposable
         await File.WriteAllTextAsync(srcPath, "Hello World!");
         var targetPath = Path.Combine(_path, "target.bin");
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(UploadFileService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(UploadFileService));
 
         await using (var srcStream = new FileStream(srcPath, FileMode.Open, FileAccess.Read))
         {
@@ -57,7 +58,8 @@ public sealed class FileUploadTests : IDisposable
         var targetDir = Path.Combine(_path, "targetdir");
         Directory.CreateDirectory(targetDir);
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(UploadFileService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(UploadFileService));
 
         // NON-RECURSIVE: Upload only root directory files (UploadDirectoryCommand without --recursive)
         var rootFiles = Directory.EnumerateFiles(sourceDir, "*", SearchOption.TopDirectoryOnly).ToList();
@@ -110,7 +112,8 @@ public sealed class FileUploadTests : IDisposable
         var targetDir = Path.Combine(_path, "targetdir");
         Directory.CreateDirectory(targetDir);
 
-        using var helper = await new SshTestHelper().SetupAsync(typeof(UploadFileService));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(UploadFileService));
 
         // RECURSIVE: Upload directory with all subdirectories (UploadDirectoryCommand with --recursive)
         var allFiles = Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories).ToList();
