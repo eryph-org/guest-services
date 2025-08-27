@@ -262,3 +262,6 @@ __pycache__/
 /docker/docker-compose-services/store/mysql
 /store/mysql
 .claude/settings.local.json
+src/Eryph.GuestServices.DevTunnels.Ssh.Extensions/SshSessionClientExtensions.cs
+src/Eryph.GuestServices.Service/Properties/PublishProfiles/FolderProfile.pubxml
+src/Eryph.GuestServices.Tool/Properties/PublishProfiles/FolderProfile.pubxml

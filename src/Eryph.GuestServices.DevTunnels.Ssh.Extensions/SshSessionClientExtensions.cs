@@ -116,6 +116,8 @@ public static class SshSessionClientExtensions
         var tcs = new TaskCompletionSource<SshChannelClosedEventArgs>();
         channel.Closed += (_, e) => tcs.SetResult(e);
 
+        MemoryStream? memoryStream = null;
+        
         try
         {
             await channel.RequestAsync(
@@ -126,7 +128,7 @@ public static class SshSessionClientExtensions
                 cancellation);
 
             var stream = new SshStream(channel);
-            using var memoryStream = new MemoryStream(4096);
+            memoryStream = new MemoryStream(4096);
             
             try
             {
@@ -136,23 +138,37 @@ public static class SshSessionClientExtensions
             {
                 // Stream was closed by server, this is expected
             }
-
-            // Wait for channel to close
-            await tcs.Task.WaitAsync(cancellation);
-
-            var closedEvent = tcs.Task.Result;
-            if (closedEvent.ExitSignal is not null || closedEvent.ErrorMessage is not null)
+        }
+        catch (Exception)
+        {
+            // The server might close the channel which will result in e.g.
+            // an ObjectDisposedException
+            if (!tcs.Task.IsCompleted)
             {
-                var message = string.IsNullOrEmpty(closedEvent.ErrorMessage)
-                    ? $"The directory listing failed with signal {closedEvent.ExitSignal}."
-                    : $"The directory listing failed: {closedEvent.ErrorMessage}";
-
-                throw new DownloadFileServerException(message);
+                memoryStream?.Dispose();
+                throw;
             }
+        }
 
-            var result = unchecked((int)closedEvent.ExitStatus.GetValueOrDefault(0));
-            
-            if (result == 0)
+        // Wait for channel to close
+        await tcs.Task.WaitAsync(cancellation);
+
+        var closedEvent = tcs.Task.Result;
+        if (closedEvent.ExitSignal is not null || closedEvent.ErrorMessage is not null)
+        {
+            var message = string.IsNullOrEmpty(closedEvent.ErrorMessage)
+                ? $"The directory listing failed with signal {closedEvent.ExitSignal}."
+                : $"The directory listing failed: {closedEvent.ErrorMessage}";
+
+            memoryStream?.Dispose();
+            throw new DownloadFileServerException(message);
+        }
+
+        var result = unchecked((int)closedEvent.ExitStatus.GetValueOrDefault(0));
+        
+        using (memoryStream)
+        {
+            if (result == 0 && memoryStream is not null)
             {
                 var jsonBytes = memoryStream.ToArray();
                 if (jsonBytes.Length > 0)
@@ -163,26 +179,15 @@ public static class SshSessionClientExtensions
                         var files = JsonSerializer.Deserialize<List<RemoteFileInfo>>(json, SshExtensionUtils.FileTransferOptions) ?? new List<RemoteFileInfo>();
                         return (result, files);
                     }
-                    catch (JsonException)
+                    catch (JsonException ex)
                     {
-                        // Invalid JSON received
-                        return (-1, new List<RemoteFileInfo>());
+                        // Invalid JSON response from server
+                        throw new DownloadFileServerException($"Invalid JSON response from server: {ex.Message}");
                     }
                 }
             }
-            
-            return (result, new List<RemoteFileInfo>());
         }
-        catch (Exception)
-        {
-            // The server might close the channel which will result in e.g.
-            // an ObjectDisposedException
-            if (!tcs.Task.IsCompleted)
-                throw;
-
-            var closedEvent = tcs.Task.Result;
-            var result = unchecked((int)closedEvent.ExitStatus.GetValueOrDefault(0));
-            return (result, new List<RemoteFileInfo>());
-        }
+        
+        return (result, new List<RemoteFileInfo>());
     }
 }

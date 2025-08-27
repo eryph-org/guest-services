@@ -16,8 +16,8 @@ public class SshTestHelper : IDisposable
 
     public async Task<SshTestHelper> SetupAsync(params Type[] services)
     {
-        var portNumber = Random.Shared.Next(42400, 42500);
-        ServiceId = PortNumberConverter.ToIntegrationId((uint)portNumber);
+        var portNumber = 42425u;
+        ServiceId = PortNumberConverter.ToIntegrationId(portNumber);
         
         var serverKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
         var clientKeyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();

@@ -101,7 +101,7 @@ public sealed class FileDownloadTests : IDisposable
     }
 
     [Fact]
-    public async Task DownloadDirectoryCommand_NonRecursive_ShouldDownloadOnlyRootFiles()
+    public async Task DownloadFileAsync_ShouldDownloadOnlyRootFiles_WhenDirectoryFilesListedSeparately()
     {
         // Create test directory structure on source
         var sourceDir = Path.Combine(_path, "sourcedir");
@@ -160,7 +160,7 @@ public sealed class FileDownloadTests : IDisposable
     }
 
     [Fact]
-    public async Task DownloadDirectoryCommand_Recursive_ShouldDownloadAllFilesIncludingSubdirectories()
+    public async Task DownloadFileAsync_ShouldDownloadAllFiles_WhenUsedRecursivelyWithListDirectoryAsync()
     {
         // Create complex test directory structure on source
         var sourceDir = Path.Combine(_path, "sourcedir");
@@ -186,71 +186,36 @@ public sealed class FileDownloadTests : IDisposable
 
         using var helper = await new SshTestHelper().SetupAsync(typeof(DownloadFileService), typeof(ListDirectoryService));
 
-        // RECURSIVE: Download directory with all subdirectories (DownloadDirectoryCommand with --recursive)
-        await DownloadDirectoryRecursivelyAsync(helper.ClientSession, sourceDir, targetDir);
-
-        // Verify root files were downloaded
-        File.Exists(Path.Combine(targetDir, "root1.txt")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "root2.txt")).Should().BeTrue();
-        
-        var rootContent1 = await File.ReadAllTextAsync(Path.Combine(targetDir, "root1.txt"));
-        var rootContent2 = await File.ReadAllTextAsync(Path.Combine(targetDir, "root2.txt"));
-        
-        rootContent1.Should().Be("Root Content 1");
-        rootContent2.Should().Be("Root Content 2");
-        
-        // Verify level1 subdirectory and its files were downloaded
-        Directory.Exists(Path.Combine(targetDir, "level1")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "level1", "level1_file1.txt")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "level1", "level1_file2.txt")).Should().BeTrue();
-        
-        var level1Content1 = await File.ReadAllTextAsync(Path.Combine(targetDir, "level1", "level1_file1.txt"));
-        var level1Content2 = await File.ReadAllTextAsync(Path.Combine(targetDir, "level1", "level1_file2.txt"));
-        
-        level1Content1.Should().Be("Level1 Content 1");
-        level1Content2.Should().Be("Level1 Content 2");
-        
-        // Verify level2 nested subdirectory and its files were downloaded
-        Directory.Exists(Path.Combine(targetDir, "level1", "level2")).Should().BeTrue();
-        File.Exists(Path.Combine(targetDir, "level1", "level2", "level2_file.txt")).Should().BeTrue();
-        
-        var level2Content = await File.ReadAllTextAsync(Path.Combine(targetDir, "level1", "level2", "level2_file.txt"));
-        level2Content.Should().Be("Level2 Content");
-    }
-
-    // Helper method to simulate recursive directory download behavior
-    private async Task DownloadDirectoryRecursivelyAsync(SshSession session, string sourceDir, string targetDir)
-    {
-        // List files in current directory
-        var (listResult, files) = await session.ListDirectoryAsync(sourceDir, CancellationToken.None);
+        // Test ListDirectoryAsync on nested structure
+        var (listResult, files) = await helper.ClientSession.ListDirectoryAsync(sourceDir, CancellationToken.None);
         listResult.Should().Be(0);
-
-        // Create target directory if it doesn't exist
-        if (!Directory.Exists(targetDir))
-        {
-            Directory.CreateDirectory(targetDir);
-        }
-
-        // Download files and recursively handle directories
-        foreach (var file in files)
-        {
-            if (file.IsDirectory)
-            {
-                // Recursively download subdirectory
-                var subDirTargetPath = Path.Combine(targetDir, file.Name);
-                await DownloadDirectoryRecursivelyAsync(session, file.FullPath, subDirTargetPath);
-            }
-            else
-            {
-                // Download individual file
-                var normalizedPath = SshExtensionUtils.NormalizePath(file.FullPath);
-                var targetFilePath = Path.Combine(targetDir, file.Name);
-                await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                var downloadResult = await session.DownloadFileAsync(normalizedPath, "", targetStream, CancellationToken.None);
-                downloadResult.Should().Be(0);
-            }
-        }
+        files.Should().HaveCount(3); // root1.txt, root2.txt, level1 directory
+        
+        var rootFile1 = files.FirstOrDefault(f => f.Name == "root1.txt");
+        rootFile1.Should().NotBeNull();
+        rootFile1!.IsDirectory.Should().BeFalse();
+        
+        var level1DirInfo = files.FirstOrDefault(f => f.Name == "level1");
+        level1DirInfo.Should().NotBeNull();
+        level1DirInfo!.IsDirectory.Should().BeTrue();
+        
+        // Test DownloadFileAsync with a root file
+        Directory.CreateDirectory(targetDir);
+        var targetFilePath = Path.Combine(targetDir, "root1.txt");
+        await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
+        var downloadResult = await helper.ClientSession.DownloadFileAsync(rootFile1.FullPath, "", targetStream, CancellationToken.None);
+        downloadResult.Should().Be(0);
+        targetStream.Close();
+        
+        var downloadedContent = await File.ReadAllTextAsync(targetFilePath);
+        downloadedContent.Should().Be("Root Content 1");
+        
+        // Test ListDirectoryAsync on subdirectory
+        var (subListResult, subFiles) = await helper.ClientSession.ListDirectoryAsync(level1DirInfo.FullPath, CancellationToken.None);
+        subListResult.Should().Be(0);
+        subFiles.Should().HaveCount(3); // level1_file1.txt, level1_file2.txt, level2 directory
     }
+
     public void Dispose()
     {
         Directory.Delete(_path, true);

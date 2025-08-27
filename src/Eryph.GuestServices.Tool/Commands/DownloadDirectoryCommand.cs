@@ -78,7 +78,14 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
             var (listResult, filesList) = await session.ListDirectoryAsync(sourcePath, cancellation);
             if (listResult != 0)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' - Error code: {listResult}[/]");
+                if (listResult == ErrorCodes.FileNotFound)
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red]Directory '{sourcePath}' was not found on the VM.[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' - Error code: {listResult}[/]");
+                }
                 return listResult;
             }
             
@@ -91,10 +98,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
         }
 
         // Ensure target directory exists (create if needed)
-        if (!Directory.Exists(targetPath))
-        {
-            Directory.CreateDirectory(targetPath);
-        }
+        Directory.CreateDirectory(targetPath);
 
         var downloadedFiles = 0;
         var failedFiles = new List<string>();
@@ -127,7 +131,7 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                 
                 // Create target directory for the file if it doesn't exist
                 var fileDirectory = Path.GetDirectoryName(targetFilePath);
-                if (!string.IsNullOrEmpty(fileDirectory) && !Directory.Exists(fileDirectory))
+                if (!string.IsNullOrEmpty(fileDirectory))
                 {
                     Directory.CreateDirectory(fileDirectory);
                 }
@@ -151,12 +155,26 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     else
                     {
                         failedFiles.Add(SshExtensionUtils.NormalizePath(file.FullPath));
-                        AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download: {file.Name}[/]");
+                        if (result == ErrorCodes.FileNotFound)
+                        {
+                            AnsiConsole.MarkupLineInterpolated($"[yellow]File not found: {file.Name}[/]");
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download: {file.Name} (Error: {result})[/]");
+                        }
                         
                         // Clean up failed file
-                        if (File.Exists(targetFilePath))
+                        try
                         {
-                            File.Delete(targetFilePath);
+                            if (File.Exists(targetFilePath))
+                            {
+                                File.Delete(targetFilePath);
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore cleanup failures
                         }
                     }
                 }
