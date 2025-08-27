@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
@@ -11,9 +10,10 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 public abstract class FileTransferServiceBase<TRequest>(SshSession session) : SshService(session)
     where TRequest : ChannelRequestMessage, IFileTransferRequestMessage, new()
 {
-    private readonly ConcurrentDictionary<uint, FileForwarder> _forwarders = new();
+    private readonly ConcurrentDictionary<uint, IDisposable> _forwarders = new();
     protected abstract string RequestType { get; }
-    protected abstract FileTransferDirection Direction { get; }
+    protected abstract IDisposable CreateForwarder(TRequest request);
+    protected abstract Task StartForwarderAsync(IDisposable forwarder, SshStream stream, CancellationToken cancellation);
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
@@ -27,12 +27,7 @@ public abstract class FileTransferServiceBase<TRequest>(SshSession session) : Ss
         }
 
         var fileTransferRequest = request.Request.ConvertTo<TRequest>();
-        var forwarder = new FileForwarder(
-            fileTransferRequest.Path,
-            fileTransferRequest.FileName,
-            fileTransferRequest.Length,
-            fileTransferRequest.Overwrite,
-            Direction);
+        var forwarder = CreateForwarder(fileTransferRequest);
         
         if (!_forwarders.TryAdd(channel.ChannelId, forwarder))
         {
@@ -51,7 +46,7 @@ public abstract class FileTransferServiceBase<TRequest>(SshSession session) : Ss
         request.ResponseContinuation = async _ =>
         {
             var stream = new SshStream(channel);
-            await forwarder.StartAsync(stream, request.Cancellation);
+            await StartForwarderAsync(forwarder, stream, request.Cancellation);
         };
 
         return Task.CompletedTask;

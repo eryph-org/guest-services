@@ -9,5 +9,15 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 public class DownloadFileService(SshSession session) : FileTransferServiceBase<DownloadFileRequestMessage>(session)
 {
     protected override string RequestType => EryphChannelRequestTypes.DownloadFile;
-    protected override FileTransferDirection Direction => FileTransferDirection.Download;
+    
+    protected override IDisposable CreateForwarder(DownloadFileRequestMessage request)
+    {
+        return new DownloadFileForwarder(request.Path, request.FileName);
+    }
+    
+    protected override async Task StartForwarderAsync(IDisposable forwarder, SshStream stream, CancellationToken cancellation)
+    {
+        var downloadForwarder = (DownloadFileForwarder)forwarder;
+        await downloadForwarder.StartAsync(stream, cancellation);
+    }
 }

@@ -76,9 +76,7 @@ public static class SshSessionClientExtensions
                 new DownloadFileRequestMessage()
                 {
                     Path = path,
-                    FileName = fileName,
-                    Length = 0, // Will be determined by server
-                    Overwrite = false
+                    FileName = fileName
                 },
                 cancellation);
             var stream = new SshStream(channel);

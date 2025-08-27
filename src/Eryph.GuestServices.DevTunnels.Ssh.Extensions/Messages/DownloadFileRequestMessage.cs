@@ -15,17 +15,11 @@ public class DownloadFileRequestMessage : ChannelRequestMessage, IFileTransferRe
 
     public string FileName { get; set; } = "";
 
-    public ulong Length { get; set; }
-
-    public bool Overwrite { get; set; }
-
     protected override void OnRead(ref SshDataReader reader)
     {
         base.OnRead(ref reader);
         Path = reader.ReadString(Encoding.UTF8);
         FileName = reader.ReadString(Encoding.UTF8);
-        Length = reader.ReadUInt64();
-        Overwrite = reader.ReadBoolean();
     }
 
     protected override void OnWrite(ref SshDataWriter writer)
@@ -33,7 +27,5 @@ public class DownloadFileRequestMessage : ChannelRequestMessage, IFileTransferRe
         base.OnWrite(ref writer);
         writer.Write(Path, Encoding.UTF8);
         writer.Write(FileName, Encoding.UTF8);
-        writer.Write(Length);
-        writer.Write(Overwrite);
     }
 }
