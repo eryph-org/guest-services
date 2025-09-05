@@ -22,10 +22,11 @@ public static class SshConfigHelper
 
     public static async Task EnsureSshConfigAsync()
     {
-        var sshConfigPath = Path.Combine(
+        var sshUserProfilePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".ssh",
-            "config");
+            ".ssh");
+
+        var sshConfigPath = Path.Combine(sshUserProfilePath, "config");
 
         var config = $"""
                        {Border}
@@ -40,6 +41,7 @@ public static class SshConfigHelper
 
         if (!File.Exists(sshConfigPath))
         {
+            Directory.CreateDirectory(sshUserProfilePath);
             await File.WriteAllTextAsync(sshConfigPath, config);
             return;
         }
