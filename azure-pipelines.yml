@@ -179,7 +179,7 @@ jobs:
 
   - script: |
       chmod +x packaging/iso/install.sh
-      xorriso -as mkisofs -o '$(Build.ArtifactStagingDirectory)/$(serviceArtifactName)' -R -J -T -v 'packaging/iso'
+      xorriso -as mkisofs -o '$(Build.ArtifactStagingDirectory)/$(serviceArtifactName)' -V EGS -P eryph -R -J -T -v 'packaging/iso'
     displayName: Create ISO
 
   - task: PublishPipelineArtifact@1
