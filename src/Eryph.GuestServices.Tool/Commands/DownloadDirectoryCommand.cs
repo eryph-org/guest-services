@@ -62,9 +62,9 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
                     settings.TargetPath,
                     settings.Overwrite,
                     settings.Recursive,
-                    writeInfo: msg => AnsiConsole.MarkupLineInterpolated($"[blue]{msg}[/]"),
+                    writeInfo: msg => AnsiConsole.MarkupLineInterpolated($"[cyan]{msg}[/]"),
                     writeError: msg => AnsiConsole.MarkupLineInterpolated($"[red]{msg}[/]"),
-                    writeWarning: msg => AnsiConsole.MarkupLineInterpolated($"[yellow]{msg}[/]"),
+                    writeWarning: msg => AnsiConsole.MarkupLineInterpolated($"[orange3]{msg}[/]"),
                     writeSuccess: msg => AnsiConsole.MarkupLineInterpolated($"[green]{msg}[/]"));
             }
 

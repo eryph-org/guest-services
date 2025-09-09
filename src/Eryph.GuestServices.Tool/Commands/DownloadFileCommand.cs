@@ -77,7 +77,7 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
 
         try
         {
-            AnsiConsole.MarkupLineInterpolated($"[blue]Downloading file '{settings.SourcePath}'...[/]");
+            AnsiConsole.MarkupLineInterpolated($"[cyan]Downloading file '{settings.SourcePath}'...[/]");
             
             await using var targetStream = new FileStream(settings.TargetPath, FileMode.Create, FileAccess.Write);
             var result = await session.DownloadFileAsync(settings.SourcePath, "", targetStream, cancellationToken);

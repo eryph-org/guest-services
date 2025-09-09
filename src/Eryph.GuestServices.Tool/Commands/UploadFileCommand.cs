@@ -66,11 +66,22 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
             return -1;
         }
 
+        AnsiConsole.MarkupLineInterpolated($"[cyan]Uploading file '{settings.SourcePath}'...[/]");
+        
         await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
         var result = await session.TransferFileAsync(settings.TargetPath, "", fileStream, settings.Overwrite, CancellationToken.None);
-        if (result == ErrorCodes.FileExists)
+        
+        if (result == 0)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[green]File uploaded successfully to '{settings.TargetPath}'[/]");
+        }
+        else if (result == ErrorCodes.FileExists)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Upload failed with error code: {result}[/]");
         }
 
         return result;
