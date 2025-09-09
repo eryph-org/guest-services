@@ -55,13 +55,22 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
 
             var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
 
-            if (!isAuthenticated)
+            if (isAuthenticated)
             {
-                AnsiConsole.MarkupLineInterpolated($"[red]Failed to authenticate to the guest service.[/]");
-                return -1;
+                return await clientSession.DownloadDirectoryAsync(
+                    settings.SourcePath,
+                    settings.TargetPath,
+                    settings.Overwrite,
+                    settings.Recursive,
+                    writeInfo: msg => AnsiConsole.MarkupLineInterpolated($"[blue]{msg}[/]"),
+                    writeError: msg => AnsiConsole.MarkupLineInterpolated($"[red]{msg}[/]"),
+                    writeWarning: msg => AnsiConsole.MarkupLineInterpolated($"[yellow]{msg}[/]"),
+                    writeSuccess: msg => AnsiConsole.MarkupLineInterpolated($"[green]{msg}[/]"));
             }
 
-            return await DownloadDirectoryAsync(clientSession, settings.SourcePath, settings.TargetPath, settings.Overwrite, settings.Recursive);
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to authenticate to the guest service.[/]");
+            return -1;
+
         }
         catch (Exception ex)
         {
@@ -70,146 +79,4 @@ public class DownloadDirectoryCommand : AsyncCommand<DownloadDirectoryCommand.Se
         }
     }
 
-    private async Task<int> DownloadDirectoryAsync(SshSession session, string sourcePath, string targetPath, bool overwrite, bool recursive, CancellationToken cancellation = default)
-    {
-        List<RemoteFileInfo> files;
-        try
-        {
-            var (listResult, filesList) = await session.ListDirectoryAsync(sourcePath, cancellation);
-            if (listResult != 0)
-            {
-                if (listResult == ErrorCodes.FileNotFound)
-                {
-                    AnsiConsole.MarkupLineInterpolated($"[red]Directory '{sourcePath}' was not found on the VM.[/]");
-                }
-                else
-                {
-                    AnsiConsole.MarkupLineInterpolated($"[red]Failed to list directory '{sourcePath}' - Error code: {listResult}[/]");
-                }
-                return listResult;
-            }
-            
-            files = filesList;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]Error listing directory '{sourcePath}': {ex.Message}[/]");
-            return -1;
-        }
-
-        // Ensure target directory exists (create if needed)
-        Directory.CreateDirectory(targetPath);
-
-        var downloadedFiles = 0;
-        var failedFiles = new List<string>();
-
-        // Count files in current directory
-        var currentLevelFiles = files.Where(f => !f.IsDirectory).ToList();
-        var fileCountText = recursive 
-            ? $"directory (recursive - {currentLevelFiles.Count} files at root level)" 
-            : $"directory ({currentLevelFiles.Count} files)";
-        AnsiConsole.MarkupLineInterpolated($"[blue]Downloading {fileCountText} from '{sourcePath}'...[/]");
-
-        foreach (var file in files)
-        {
-            if (file.IsDirectory && recursive)
-            {
-                // Recursively download subdirectories (only if --recursive flag is set)
-                var subDirSourcePath = file.FullPath;
-                var subDirTargetPath = Path.Combine(targetPath, file.Name);
-                
-                var subDirResult = await DownloadDirectoryAsync(session, subDirSourcePath, subDirTargetPath, overwrite, recursive, cancellation);
-                if (subDirResult != 0)
-                {
-                    failedFiles.Add(subDirSourcePath);
-                }
-            }
-            else if (!file.IsDirectory)
-            {
-                // Download individual file (only if it's not a directory)
-                var targetFilePath = Path.Combine(targetPath, file.Name);
-                
-                // Create target directory for the file if it doesn't exist
-                var fileDirectory = Path.GetDirectoryName(targetFilePath);
-                if (!string.IsNullOrEmpty(fileDirectory))
-                {
-                    Directory.CreateDirectory(fileDirectory);
-                }
-
-                try
-                {
-                    // Check if file exists and handle overwrite
-                    if (File.Exists(targetFilePath) && !overwrite)
-                    {
-                        AnsiConsole.MarkupLineInterpolated($"[yellow]Skipped: {file.Name} (already exists)[/]");
-                        continue;
-                    }
-
-                    await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(file.FullPath, "", targetStream, cancellation);
-                    
-                    if (result == 0)
-                    {
-                        downloadedFiles++;
-                    }
-                    else
-                    {
-                        failedFiles.Add(file.FullPath);
-                        if (result == ErrorCodes.FileNotFound)
-                        {
-                            AnsiConsole.MarkupLineInterpolated($"[yellow]File not found: {file.Name}[/]");
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download: {file.Name} (Error: {result})[/]");
-                        }
-                        
-                        // Clean up failed file
-                        try
-                        {
-                            if (File.Exists(targetFilePath))
-                            {
-                                File.Delete(targetFilePath);
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore cleanup failures
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    failedFiles.Add(file.FullPath);
-                    AnsiConsole.MarkupLineInterpolated($"[yellow]Failed to download {file.Name}: {ex.Message}[/]");
-                    
-                    // Clean up failed file
-                    if (File.Exists(targetFilePath))
-                    {
-                        try
-                        {
-                            File.Delete(targetFilePath);
-                        }
-                        catch
-                        {
-                            // Ignore cleanup failures
-                        }
-                    }
-                }
-            }
-        }
-
-        if (failedFiles.Count == 0)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[green]Successfully downloaded {downloadedFiles} files to '{targetPath}'[/]");
-            return 0;
-        }
-
-        AnsiConsole.MarkupLineInterpolated($"[yellow]Downloaded {downloadedFiles} files with {failedFiles.Count} failures:[/]");
-        foreach (var failedFile in failedFiles)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[dim]Failed: {failedFile}[/]");
-        }
-        return -1;
-    }
 }

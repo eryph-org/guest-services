@@ -23,50 +23,42 @@ public sealed class ListDirectoryForwarder(string path) : IDisposable
             }
 
             var fileInfos = new List<RemoteFileInfo>();
-            
-            try
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(path))
             {
-                foreach (var entry in Directory.EnumerateFileSystemEntries(path))
+                _cts.Token.ThrowIfCancellationRequested();
+
+                try
                 {
-                    _cts.Token.ThrowIfCancellationRequested();
-                    
-                    try
+                    var info = new FileInfo(entry);
+                    if (info.Attributes.HasFlag(FileAttributes.Directory))
                     {
-                        var info = new FileInfo(entry);
-                        if (info.Attributes.HasFlag(FileAttributes.Directory))
+                        var dirInfo = new DirectoryInfo(entry);
+                        fileInfos.Add(new RemoteFileInfo
                         {
-                            var dirInfo = new DirectoryInfo(entry);
-                            fileInfos.Add(new RemoteFileInfo
-                            {
-                                Name = dirInfo.Name,
-                                FullPath = SshExtensionUtils.NormalizePath(dirInfo.FullName),
-                                IsDirectory = true,
-                                Size = 0,
-                                LastModified = dirInfo.LastWriteTime
-                            });
-                        }
-                        else
-                        {
-                            fileInfos.Add(new RemoteFileInfo
-                            {
-                                Name = info.Name,
-                                FullPath = SshExtensionUtils.NormalizePath(info.FullName),
-                                IsDirectory = false,
-                                Size = info.Length,
-                                LastModified = info.LastWriteTime
-                            });
-                        }
+                            Name = dirInfo.Name,
+                            FullPath = dirInfo.FullName,
+                            IsDirectory = true,
+                            Size = 0,
+                            LastModified = dirInfo.LastWriteTime
+                        });
                     }
-                    catch (UnauthorizedAccessException)
+                    else
                     {
-                        // Skip entries we can't access, don't fail entirely
-                        continue;
+                        fileInfos.Add(new RemoteFileInfo
+                        {
+                            Name = info.Name,
+                            FullPath = info.FullName,
+                            IsDirectory = false,
+                            Size = info.Length,
+                            LastModified = info.LastWriteTime
+                        });
                     }
                 }
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // If we can't enumerate at all, return empty list
+                catch (UnauthorizedAccessException)
+                {
+                    // Skip entries we can't access, don't fail entirely
+                }
             }
 
             // Serialize the file list as JSON
