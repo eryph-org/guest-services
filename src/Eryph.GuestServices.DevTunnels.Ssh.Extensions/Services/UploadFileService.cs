@@ -6,18 +6,13 @@ using Microsoft.DevTunnels.Ssh.Services;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
 [ServiceActivation(ChannelRequest = EryphChannelRequestTypes.UploadFile)]
-public class UploadFileService(SshSession session) : FileTransferServiceBase<UploadFileRequestMessage>(session)
+public class UploadFileService(SshSession session)
+    : FileServiceBase<UploadFileRequestMessage, UploadFileForwarder>(session)
 {
     protected override string RequestType => EryphChannelRequestTypes.UploadFile;
     
-    protected override IDisposable CreateForwarder(UploadFileRequestMessage request)
+    protected override UploadFileForwarder CreateForwarder(UploadFileRequestMessage request)
     {
-        return new UploadFileForwarder(request.Path, request.FileName, request.Length, request.Overwrite);
-    }
-    
-    protected override async Task StartForwarderAsync(IDisposable forwarder, SshStream stream, CancellationToken cancellation)
-    {
-        var uploadForwarder = (UploadFileForwarder)forwarder;
-        await uploadForwarder.StartAsync(stream, cancellation);
+        return new UploadFileForwarder(request.BasePath, request.Path, request.Length, request.Overwrite);
     }
 }

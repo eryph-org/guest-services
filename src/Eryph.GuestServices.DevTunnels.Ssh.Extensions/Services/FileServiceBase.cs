@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
+using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Messages;
@@ -7,13 +7,16 @@ using Microsoft.DevTunnels.Ssh.Services;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
-public abstract class FileTransferServiceBase<TRequest>(SshSession session) : SshService(session)
-    where TRequest : ChannelRequestMessage, IFileTransferRequestMessage, new()
+public abstract class FileServiceBase<TRequest, TForwarder>(SshSession session)
+    : SshService(session)
+    where TRequest : ChannelRequestMessage, new()
+    where TForwarder : IForwarder
 {
-    private readonly ConcurrentDictionary<uint, IDisposable> _forwarders = new();
+    private readonly ConcurrentDictionary<uint, TForwarder> _forwarders = new();
+
     protected abstract string RequestType { get; }
-    protected abstract IDisposable CreateForwarder(TRequest request);
-    protected abstract Task StartForwarderAsync(IDisposable forwarder, SshStream stream, CancellationToken cancellation);
+    
+    protected abstract TForwarder CreateForwarder(TRequest request);
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
@@ -46,7 +49,7 @@ public abstract class FileTransferServiceBase<TRequest>(SshSession session) : Ss
         request.ResponseContinuation = async _ =>
         {
             var stream = new SshStream(channel);
-            await StartForwarderAsync(forwarder, stream, request.Cancellation);
+            await forwarder.StartAsync(stream, request.Cancellation);
         };
 
         return Task.CompletedTask;

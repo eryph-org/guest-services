@@ -26,7 +26,7 @@ public sealed class FileUploadTests : IDisposable
 
         await using (var srcStream = new FileStream(srcPath, FileMode.Open, FileAccess.Read))
         {
-            await helper.ClientSession.TransferFileAsync(targetPath, "", srcStream, false, CancellationToken.None);
+            await helper.ClientSession.UploadFileAsync(targetPath, srcStream, false, CancellationToken.None);
         }
 
         var targetContent = await File.ReadAllTextAsync(targetPath);

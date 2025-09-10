@@ -4,11 +4,11 @@ using Microsoft.DevTunnels.Ssh;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
 public sealed class UploadFileForwarder(
+    string basePath,
     string path,
-    string fileName,
     ulong length,
     bool overwrite)
-    : IDisposable
+    : IForwarder
 {
     private readonly CancellationTokenSource _cts = new();
     private FileStream? _fileStream;
@@ -21,7 +21,7 @@ public sealed class UploadFileForwarder(
 
         try
         {
-            var fullPath = string.IsNullOrEmpty(fileName) ? path : Path.Combine(path, fileName);
+            var fullPath = string.IsNullOrEmpty(basePath) ? path : Path.Combine(basePath, path);
             
             if (!overwrite && File.Exists(fullPath))
             {

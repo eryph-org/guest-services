@@ -69,7 +69,7 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
         AnsiConsole.MarkupLineInterpolated($"[cyan]Uploading file '{settings.SourcePath}'...[/]");
         
         await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
-        var result = await session.TransferFileAsync(settings.TargetPath, "", fileStream, settings.Overwrite, CancellationToken.None);
+        var result = await session.UploadFileAsync(settings.TargetPath, fileStream, settings.Overwrite, CancellationToken.None);
         
         if (result == 0)
         {

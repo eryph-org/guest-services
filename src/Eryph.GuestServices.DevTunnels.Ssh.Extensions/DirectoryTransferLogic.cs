@@ -34,7 +34,7 @@ public static class DirectoryTransferExtensions
             try
             {
                 await using var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
-                var result = await session.TransferFileAsync(targetPath, relativePath, fileStream, overwrite, CancellationToken.None);
+                var result = await session.UploadFileAsync(targetPath, relativePath, fileStream, overwrite, CancellationToken.None);
                 
                 if (result == 0)
                 {
@@ -153,7 +153,7 @@ public static class DirectoryTransferExtensions
                     }
 
                     await using var targetStream = new FileStream(targetFilePath, FileMode.Create, FileAccess.Write);
-                    var result = await session.DownloadFileAsync(file.FullPath, "", targetStream, cancellation);
+                    var result = await session.DownloadFileAsync(file.FullPath, targetStream, cancellation);
                     
                     if (result == 0)
                     {

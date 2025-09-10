@@ -3,7 +3,7 @@ using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
-public sealed class DownloadFileForwarder(string path, string fileName) : IDisposable
+public sealed class DownloadFileForwarder(string path) : IForwarder
 {
     private readonly CancellationTokenSource _cts = new();
     private FileStream? _fileStream;
@@ -16,15 +16,13 @@ public sealed class DownloadFileForwarder(string path, string fileName) : IDispo
 
         try
         {
-            var fullPath = string.IsNullOrEmpty(fileName) ? path : Path.Combine(path, fileName);
-            
-            if (!File.Exists(fullPath))
+            if (!File.Exists(path))
             {
                 await stream.Channel.CloseAsync(unchecked((uint)ErrorCodes.FileNotFound), cancellation);
                 return;
             }
 
-            _fileStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
+            _fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
             _ = CopyFromFileToStreamAsync(stream);
         }
         catch (Exception ex)

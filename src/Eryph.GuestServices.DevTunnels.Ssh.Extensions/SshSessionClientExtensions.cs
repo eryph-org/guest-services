@@ -8,10 +8,20 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 public static class SshSessionClientExtensions
 {
-    public static async Task<int> TransferFileAsync(
+    public static Task<int> UploadFileAsync(
         this SshSession session,
         string path,
-        string fileName,
+        Stream content,
+        bool overwrite,
+        CancellationToken cancellation)
+    {
+        return UploadFileAsync(session, "", path, content, overwrite, cancellation);
+    }
+
+    public static async Task<int> UploadFileAsync(
+        this SshSession session,
+        string basePath,
+        string relativePath,
         Stream content,
         bool overwrite,
         CancellationToken cancellation)
@@ -25,8 +35,8 @@ public static class SshSessionClientExtensions
             await channel.RequestAsync(
                 new UploadFileRequestMessage()
                 {
-                    Path = path,
-                    FileName = fileName,
+                    BasePath = basePath,
+                    Path = relativePath,
                     Length = (ulong)content.Length,
                     Overwrite = overwrite,
                 },
@@ -62,7 +72,6 @@ public static class SshSessionClientExtensions
     public static async Task<int> DownloadFileAsync(
         this SshSession session,
         string path,
-        string fileName,
         Stream targetStream,
         CancellationToken cancellation)
     {
@@ -73,11 +82,7 @@ public static class SshSessionClientExtensions
         try
         {
             await channel.RequestAsync(
-                new DownloadFileRequestMessage()
-                {
-                    Path = path,
-                    FileName = fileName
-                },
+                new DownloadFileRequestMessage { Path = path },
                 cancellation);
             var stream = new SshStream(channel);
             await stream.CopyToAsync(targetStream, cancellation);

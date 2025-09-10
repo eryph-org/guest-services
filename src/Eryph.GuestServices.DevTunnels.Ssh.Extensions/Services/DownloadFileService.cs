@@ -6,18 +6,13 @@ using Microsoft.DevTunnels.Ssh.Services;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
 [ServiceActivation(ChannelRequest = EryphChannelRequestTypes.DownloadFile)]
-public class DownloadFileService(SshSession session) : FileTransferServiceBase<DownloadFileRequestMessage>(session)
+public class DownloadFileService(SshSession session)
+    : FileServiceBase<DownloadFileRequestMessage, DownloadFileForwarder>(session)
 {
     protected override string RequestType => EryphChannelRequestTypes.DownloadFile;
     
-    protected override IDisposable CreateForwarder(DownloadFileRequestMessage request)
+    protected override DownloadFileForwarder CreateForwarder(DownloadFileRequestMessage request)
     {
-        return new DownloadFileForwarder(request.Path, request.FileName);
-    }
-    
-    protected override async Task StartForwarderAsync(IDisposable forwarder, SshStream stream, CancellationToken cancellation)
-    {
-        var downloadForwarder = (DownloadFileForwarder)forwarder;
-        await downloadForwarder.StartAsync(stream, cancellation);
+        return new DownloadFileForwarder(request.Path);
     }
 }

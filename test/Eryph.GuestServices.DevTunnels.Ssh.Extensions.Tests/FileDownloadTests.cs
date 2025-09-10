@@ -26,7 +26,7 @@ public sealed class FileDownloadTests : IDisposable
 
         await using (var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write))
         {
-            await helper.ClientSession.DownloadFileAsync(srcPath, "", targetStream, CancellationToken.None);
+            await helper.ClientSession.DownloadFileAsync(srcPath, targetStream, CancellationToken.None);
         }
 
         var targetContent = await File.ReadAllTextAsync(targetPath);
@@ -44,7 +44,7 @@ public sealed class FileDownloadTests : IDisposable
         
         await using var targetStream = new FileStream(targetPath, FileMode.Create, FileAccess.Write);
         
-        var result = await helper.ClientSession.DownloadFileAsync(nonExistentPath, "", targetStream, CancellationToken.None);
+        var result = await helper.ClientSession.DownloadFileAsync(nonExistentPath, targetStream, CancellationToken.None);
         result.Should().Be(ErrorCodes.FileNotFound);
     }
 
