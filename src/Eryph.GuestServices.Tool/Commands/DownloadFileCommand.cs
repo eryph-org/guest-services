@@ -56,7 +56,15 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
         }
 
         // Download the specified file
-        return await DownloadFileAsync(clientSession, settings);
+        var result = await DownloadFileAsync(clientSession, settings);
+
+        // Remove the incomplete file when the download failed
+        if (result != 0 && File.Exists(settings.TargetPath))
+        {
+            File.Delete(settings.TargetPath);
+        }
+        
+        return result;
     }
 
     private async Task<int> DownloadFileAsync(SshSession session, Settings settings, CancellationToken cancellationToken = default)
@@ -97,22 +105,11 @@ public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
                 AnsiConsole.MarkupLineInterpolated($"[red]Download failed with error code: {result}[/]");
             }
 
-            // Clean up the partial file
-            if (File.Exists(settings.TargetPath))
-            {
-                File.Delete(settings.TargetPath);
-            }
             return result;
         }
         catch (Exception ex)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]Download failed: {ex.Message}[/]");
-            
-            // Clean up the partial file
-            if (File.Exists(settings.TargetPath))
-            {
-                File.Delete(settings.TargetPath);
-            }
             return -1;
         }
     }

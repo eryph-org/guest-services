@@ -20,8 +20,8 @@ public class UploadFileRequestMessage : ChannelRequestMessage
 
     /// <summary>
     /// When the <see cref="BasePath"/> is provided, the <see cref="Path"/>
-    /// is relative to the <see cref="BasePath"/>. In this case, it
-    /// should use <c>/</c> as the separator.
+    /// is relative to the <see cref="BasePath"/>. In this case, the
+    /// <see cref="Path"/> should use <c>/</c> as the separator.
     /// </summary>
     public string Path { get; set; } = "";
 
