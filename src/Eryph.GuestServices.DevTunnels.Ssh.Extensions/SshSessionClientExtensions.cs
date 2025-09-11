@@ -1,15 +1,27 @@
 ﻿using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
+using System.Text;
+using System.Text.Json;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 public static class SshSessionClientExtensions
 {
-    public static async Task<int> TransferFileAsync(
+    public static Task<int> UploadFileAsync(
         this SshSession session,
         string path,
-        string fileName,
+        Stream content,
+        bool overwrite,
+        CancellationToken cancellation)
+    {
+        return UploadFileAsync(session, "", path, content, overwrite, cancellation);
+    }
+
+    public static async Task<int> UploadFileAsync(
+        this SshSession session,
+        string basePath,
+        string relativePath,
         Stream content,
         bool overwrite,
         CancellationToken cancellation)
@@ -23,8 +35,8 @@ public static class SshSessionClientExtensions
             await channel.RequestAsync(
                 new UploadFileRequestMessage()
                 {
-                    Path = path,
-                    FileName = fileName,
+                    BasePath = basePath,
+                    Path = relativePath,
                     Length = (ulong)content.Length,
                     Overwrite = overwrite,
                 },
@@ -55,5 +67,132 @@ public static class SshSessionClientExtensions
         }
 
         return unchecked((int)tcs.Task.Result.ExitStatus.GetValueOrDefault(0));
+    }
+
+    public static async Task<int> DownloadFileAsync(
+        this SshSession session,
+        string path,
+        Stream targetStream,
+        CancellationToken cancellation)
+    {
+        var channel = await session.OpenChannelAsync(cancellation);
+        var tcs = new TaskCompletionSource<SshChannelClosedEventArgs>();
+        channel.Closed += (_, e) => tcs.SetResult(e);
+
+        try
+        {
+            await channel.RequestAsync(
+                new DownloadFileRequestMessage { Path = path },
+                cancellation);
+            var stream = new SshStream(channel);
+            await stream.CopyToAsync(targetStream, cancellation);
+
+            // The server will close the channel when the file is fully sent.
+            // Hence, we just wait for the channel to close.
+            await tcs.Task.WaitAsync(cancellation);
+        }
+        catch (Exception)
+        {
+            // The server might close the channel which will result in e.g.
+            // an ObjectDisposedException
+            if (!tcs.Task.IsCompleted)
+                throw;
+        }
+
+        var closedEvent = tcs.Task.Result;
+        if (closedEvent.ExitSignal is not null || closedEvent.ErrorMessage is not null)
+        {
+            var message = string.IsNullOrEmpty(closedEvent.ErrorMessage)
+                ? $"The file download failed with signal {closedEvent.ExitSignal}."
+                : $"The file download failed: {closedEvent.ErrorMessage}";
+
+            throw new DownloadFileServerException(message);
+        }
+
+        return unchecked((int)tcs.Task.Result.ExitStatus.GetValueOrDefault(0));
+    }
+
+    public static async Task<(int result, List<RemoteFileInfo> files)> ListDirectoryAsync(
+        this SshSession session,
+        string path,
+        CancellationToken cancellation)
+    {
+        var channel = await session.OpenChannelAsync(cancellation);
+        var tcs = new TaskCompletionSource<SshChannelClosedEventArgs>();
+        channel.Closed += (_, e) => tcs.SetResult(e);
+
+        MemoryStream? memoryStream = null;
+        
+        try
+        {
+            await channel.RequestAsync(
+                new ListDirectoryRequestMessage()
+                {
+                    Path = path,
+                },
+                cancellation);
+
+            var stream = new SshStream(channel);
+            memoryStream = new MemoryStream(4096);
+            
+            try
+            {
+                await stream.CopyToAsync(memoryStream, cancellation);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Stream was closed by server, this is expected
+            }
+        }
+        catch (Exception)
+        {
+            // The server might close the channel which will result in e.g.
+            // an ObjectDisposedException
+            if (!tcs.Task.IsCompleted)
+            {
+                memoryStream?.Dispose();
+                throw;
+            }
+        }
+
+        // Wait for channel to close
+        await tcs.Task.WaitAsync(cancellation);
+
+        var closedEvent = tcs.Task.Result;
+        if (closedEvent.ExitSignal is not null || closedEvent.ErrorMessage is not null)
+        {
+            var message = string.IsNullOrEmpty(closedEvent.ErrorMessage)
+                ? $"The directory listing failed with signal {closedEvent.ExitSignal}."
+                : $"The directory listing failed: {closedEvent.ErrorMessage}";
+
+            memoryStream?.Dispose();
+            throw new DownloadFileServerException(message);
+        }
+
+        var result = unchecked((int)closedEvent.ExitStatus.GetValueOrDefault(0));
+        
+        using (memoryStream)
+        {
+            if (result == 0 && memoryStream is not null)
+            {
+                var jsonBytes = memoryStream.ToArray();
+                if (jsonBytes.Length > 0)
+                {
+                    var json = Encoding.UTF8.GetString(jsonBytes);
+                    try
+                    {
+                        var files = JsonSerializer.Deserialize<List<RemoteFileInfo>>(json, SshExtensionUtils.FileTransferOptions) ?? new List<RemoteFileInfo>();
+                        return (result, files);
+                    }
+                    catch (JsonException ex)
+                    {
+                        // Invalid JSON response from server
+                        throw new DownloadFileServerException($"Invalid JSON response from server: {ex.Message}");
+                    }
+                }
+            }
+        }
+        
+        return (result, new List<RemoteFileInfo>());
     }
 }

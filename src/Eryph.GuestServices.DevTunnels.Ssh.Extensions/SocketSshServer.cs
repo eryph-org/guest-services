@@ -9,19 +9,11 @@ using Microsoft.DevTunnels.Ssh.Messages;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
-public sealed class SocketSshServer : IDisposable
+public sealed class SocketSshServer(SshSessionConfiguration config, TraceSource trace) : IDisposable
 {
-    private readonly SshSessionConfiguration _config;
     private readonly CancellationTokenSource _disposeCancellationTokenSource = new();
     private readonly object _lock = new();
-    private readonly IList<SshServerSession> _sessions = [];
-    private readonly TraceSource _trace;
-
-    public SocketSshServer(SshSessionConfiguration config, TraceSource trace)
-    {
-        _config = config;
-        _trace = trace;
-    }
+    private readonly IList<SshServerSession?> _sessions = [];
 
     public SshServerCredentials Credentials { get; set; } = new();
 
@@ -40,7 +32,7 @@ public sealed class SocketSshServer : IDisposable
             var socket = await serverSocket.AcceptAsync(_disposeCancellationTokenSource.Token)
                 .ConfigureAwait(false);
             ConfigureSocketOptionsForSsh(socket);
-            var session = new SshServerSession(_config, _trace);
+            var session = new SshServerSession(config, trace);
             
             lock (_lock)
             {
@@ -116,7 +108,7 @@ public sealed class SocketSshServer : IDisposable
 
         foreach (var session in _sessions.ToArray())
         {
-            session.Dispose();
+            session?.Dispose();
         }
 
         lock (_lock)

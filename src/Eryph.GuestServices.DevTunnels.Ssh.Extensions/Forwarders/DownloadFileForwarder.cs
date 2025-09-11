@@ -3,12 +3,7 @@ using Microsoft.DevTunnels.Ssh;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 
-public sealed class UploadFileForwarder(
-    string basePath,
-    string path,
-    ulong length,
-    bool overwrite)
-    : IForwarder
+public sealed class DownloadFileForwarder(string path) : IForwarder
 {
     private readonly CancellationTokenSource _cts = new();
     private FileStream? _fileStream;
@@ -21,22 +16,14 @@ public sealed class UploadFileForwarder(
 
         try
         {
-            var fullPath = string.IsNullOrEmpty(basePath) ? path : Path.Combine(basePath, path);
-            
-            if (!overwrite && File.Exists(fullPath))
+            if (!File.Exists(path))
             {
-                await stream.Channel.CloseAsync(unchecked((uint)ErrorCodes.FileExists), cancellation);
+                await stream.Channel.CloseAsync(unchecked((uint)ErrorCodes.FileNotFound), cancellation);
                 return;
             }
 
-            var directory = Path.GetDirectoryName(fullPath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            _fileStream = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write);
-            _ = CopyFromStreamToFileAsync(stream, (long)length);
+            _fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
+            _ = CopyFromFileToStreamAsync(stream);
         }
         catch (Exception ex)
         {
@@ -44,25 +31,20 @@ public sealed class UploadFileForwarder(
         }
     }
 
-
-    private async Task CopyFromStreamToFileAsync(SshStream sshStream, long expectedLength)
+    private async Task CopyFromFileToStreamAsync(SshStream sshStream)
     {
         try
         {
-            // Reset the file in case we are overwriting it
-            _fileStream!.SetLength(0);
             const int bufferSize = (int)(2 * SshChannel.DefaultMaxPacketSize);
             using var memoryOwner = MemoryPool<byte>.Shared.Rent(bufferSize);
             var buffer = memoryOwner.Memory[..bufferSize];
             
-            while (_fileStream.Length < expectedLength)
+            int bytesRead;
+            while ((bytesRead = await _fileStream!.ReadAsync(buffer, _cts.Token)) > 0)
             {
-                var bytesRead = await sshStream.ReadAsync(buffer, _cts.Token);
-                if (bytesRead == 0) break;
-                await _fileStream.WriteAsync(buffer[..bytesRead], _cts.Token);
+                await sshStream.WriteAsync(buffer[..bytesRead], _cts.Token);
             }
 
-            await _fileStream.FlushAsync(_cts.Token);
             await _fileStream.DisposeAsync();
             await sshStream.Channel.CloseAsync(_cts.Token);
         }
@@ -71,7 +53,6 @@ public sealed class UploadFileForwarder(
             await sshStream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, _cts.Token);
         }
     }
-
 
     public void Dispose()
     {

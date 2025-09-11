@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Claims;
 using Eryph.GuestServices.Core;
@@ -11,7 +11,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
-public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
+public class UploadDirectoryCommand : AsyncCommand<UploadDirectoryCommand.Settings>
 {
     public class Settings : CommandSettings
     {
@@ -22,6 +22,8 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
         [CommandArgument(2, "<TargetPath>")] public string TargetPath { get; set; } = string.Empty;
 
         [CommandOption("--overwrite")] public bool Overwrite { get; set; }
+        
+        [CommandOption("--recursive")] public bool Recursive { get; set; }
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
@@ -30,6 +32,12 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
         if (keyPair is null)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]No SSH key found. Have you run the initialize command?[/]");
+            return -1;
+        }
+
+        if (!Directory.Exists(settings.SourcePath))
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]The directory '{settings.SourcePath}' does not exist.[/]");
             return -1;
         }
         
@@ -46,44 +54,37 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
                 e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
             }
         };
-        await clientSession.ConnectAsync(clientStream);
-        var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
-        if (!isAuthenticated)
+
+        try
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Could not connect. The authentication failed.[/]");
+            await clientSession.ConnectAsync(clientStream);
+            var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
+            
+            if (!isAuthenticated)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Could not connect. The authentication failed.[/]");
+                return -1;
+            }
+
+            return await UploadDirectoryAsync(clientSession, settings);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Error: {ex.Message}[/]");
             return -1;
         }
-
-        return await TransferFileAsync(clientSession, settings);
     }
 
-
-    private async Task<int> TransferFileAsync(SshSession session, Settings settings)
+    private static async Task<int> UploadDirectoryAsync(SshSession session, Settings settings)
     {
-        if (!File.Exists(settings.SourcePath))
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.SourcePath}' does not exist.[/]");
-            return -1;
-        }
-
-        AnsiConsole.MarkupLineInterpolated($"[cyan]Uploading file '{settings.SourcePath}'...[/]");
-        
-        await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
-        var result = await session.UploadFileAsync(settings.TargetPath, fileStream, settings.Overwrite, CancellationToken.None);
-        
-        if (result == 0)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[green]File uploaded successfully to '{settings.TargetPath}'[/]");
-        }
-        else if (result == ErrorCodes.FileExists)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]Upload failed with error code: {result}[/]");
-        }
-
-        return result;
+        return await session.UploadDirectoryAsync(
+            settings.SourcePath,
+            settings.TargetPath,
+            settings.Overwrite,
+            settings.Recursive,
+            writeInfo: msg => AnsiConsole.MarkupLineInterpolated($"[cyan]{msg}[/]"),
+            writeError: msg => AnsiConsole.MarkupLineInterpolated($"[red]{msg}[/]"),
+            writeWarning: msg => AnsiConsole.MarkupLineInterpolated($"[orange3]{msg}[/]"),
+            writeSuccess: msg => AnsiConsole.MarkupLineInterpolated($"[green]{msg}[/]"));
     }
 }

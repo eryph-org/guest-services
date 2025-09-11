@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Security.Claims;
 using Eryph.GuestServices.Core;
@@ -11,7 +11,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands;
 
-public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
+public class DownloadFileCommand : AsyncCommand<DownloadFileCommand.Settings>
 {
     public class Settings : CommandSettings
     {
@@ -46,6 +46,7 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
                 e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
             }
         };
+
         await clientSession.ConnectAsync(clientStream);
         var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
         if (!isAuthenticated)
@@ -54,36 +55,62 @@ public class UploadFileCommand : AsyncCommand<UploadFileCommand.Settings>
             return -1;
         }
 
-        return await TransferFileAsync(clientSession, settings);
+        // Download the specified file
+        var result = await DownloadFileAsync(clientSession, settings);
+
+        // Remove the incomplete file when the download failed
+        if (result != 0 && File.Exists(settings.TargetPath))
+        {
+            File.Delete(settings.TargetPath);
+        }
+        
+        return result;
     }
 
-
-    private async Task<int> TransferFileAsync(SshSession session, Settings settings)
+    private async Task<int> DownloadFileAsync(SshSession session, Settings settings, CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(settings.SourcePath))
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.SourcePath}' does not exist.[/]");
-            return -1;
-        }
-
-        AnsiConsole.MarkupLineInterpolated($"[cyan]Uploading file '{settings.SourcePath}'...[/]");
-        
-        await using var fileStream = new FileStream(settings.SourcePath, FileMode.Open, FileAccess.Read);
-        var result = await session.UploadFileAsync(settings.TargetPath, fileStream, settings.Overwrite, CancellationToken.None);
-        
-        if (result == 0)
-        {
-            AnsiConsole.MarkupLineInterpolated($"[green]File uploaded successfully to '{settings.TargetPath}'[/]");
-        }
-        else if (result == ErrorCodes.FileExists)
+        // Check if target already exists and overwrite is not set
+        if (File.Exists(settings.TargetPath) && !settings.Overwrite)
         {
             AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.TargetPath}' already exists.[/]");
-        }
-        else
-        {
-            AnsiConsole.MarkupLineInterpolated($"[red]Upload failed with error code: {result}[/]");
+            return ErrorCodes.FileExists;
         }
 
-        return result;
+        // Create target directory if it doesn't exist
+        var targetDirectory = Path.GetDirectoryName(settings.TargetPath);
+        if (!string.IsNullOrEmpty(targetDirectory) && !Directory.Exists(targetDirectory))
+        {
+            Directory.CreateDirectory(targetDirectory);
+        }
+
+        try
+        {
+            AnsiConsole.MarkupLineInterpolated($"[cyan]Downloading file '{settings.SourcePath}'...[/]");
+            
+            await using var targetStream = new FileStream(settings.TargetPath, FileMode.Create, FileAccess.Write);
+            var result = await session.DownloadFileAsync(settings.SourcePath, targetStream, cancellationToken);
+
+            if (result == 0)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[green]File downloaded successfully to '{settings.TargetPath}'[/]");
+                return 0;
+            }
+
+            if (result == ErrorCodes.FileNotFound)
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]The file '{settings.SourcePath}' was not found on the VM.[/]");
+            }
+            else
+            {
+                AnsiConsole.MarkupLineInterpolated($"[red]Download failed with error code: {result}[/]");
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Download failed: {ex.Message}[/]");
+            return -1;
+        }
     }
 }

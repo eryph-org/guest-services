@@ -1,66 +1,18 @@
-﻿using System.Collections.Concurrent;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Microsoft.DevTunnels.Ssh;
-using Microsoft.DevTunnels.Ssh.Events;
-using Microsoft.DevTunnels.Ssh.Messages;
 using Microsoft.DevTunnels.Ssh.Services;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
 [ServiceActivation(ChannelRequest = EryphChannelRequestTypes.UploadFile)]
-public class UploadFileService(SshSession session) : SshService(session)
+public class UploadFileService(SshSession session)
+    : FileServiceBase<UploadFileRequestMessage, UploadFileForwarder>(session)
 {
-    private readonly ConcurrentDictionary<uint, UploadFileForwarder> _forwarders = new();
-
-    protected override Task OnChannelRequestAsync(
-        SshChannel channel,
-        SshRequestEventArgs<ChannelRequestMessage> request,
-        CancellationToken cancellation)
+    protected override string RequestType => EryphChannelRequestTypes.UploadFile;
+    
+    protected override UploadFileForwarder CreateForwarder(UploadFileRequestMessage request)
     {
-        if (request.RequestType != EryphChannelRequestTypes.UploadFile)
-        {
-            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
-            return Task.CompletedTask;
-        }
-
-        var fileTransferRequest = request.Request.ConvertTo<UploadFileRequestMessage>();
-        var forwarder = new UploadFileForwarder(
-            fileTransferRequest.Path,
-            fileTransferRequest.FileName,
-            fileTransferRequest.Length,
-            fileTransferRequest.Overwrite);
-        
-        if (!_forwarders.TryAdd(channel.ChannelId, forwarder))
-        {
-            forwarder.Dispose();
-            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
-            return Task.CompletedTask;
-        }
-
-        channel.Closed += (_, _) =>
-        {
-            _forwarders.TryRemove(channel.ChannelId, out _);
-            forwarder.Dispose();
-        };
-        
-        request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
-        request.ResponseContinuation = async _ =>
-        {
-            var stream = new SshStream(channel);
-            await forwarder.StartAsync(stream, request.Cancellation);
-        };
-
-        return Task.CompletedTask;
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        foreach (var forwarder in _forwarders.Values.ToArray())
-        {
-            forwarder.Dispose();
-        }
-
-        base.Dispose(disposing);
+        return new UploadFileForwarder(request.BasePath, request.Path, request.Length, request.Overwrite);
     }
 }
