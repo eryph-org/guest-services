@@ -125,6 +125,9 @@ internal sealed class SshServerService(
         var values = new Dictionary<string, string?>
         {
             [Constants.StatusKey] = status,
+            // TODO does this work on Linux?
+            [Constants.OsVersionKey] =  Environment.OSVersion.VersionString,
+            [Constants.VersionKey] = GitVersionInformation.InformationalVersion,
         };
         await guestDataExchange.SetGuestValuesAsync(values);
     }
