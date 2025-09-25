@@ -10,21 +10,29 @@ try {
     $global:ProgressPreference = 'SilentlyContinue'
 
     $service = Get-Service eryph-guest-services -ErrorAction SilentlyContinue
-    if($service) {
+    if ($service) {
         $service | Stop-Service
-        Start-Sleep -Seconds 2
-        Remove-Item -Recurse "C:\Program Files\eryph\guest-services"
+
+        while ($true) {
+            try {
+                Remove-Item -Recurse "C:\Program Files\eryph\guest-services"
+                break
+            } catch [System.Management.Automation.ItemNotFoundException] {
+                break
+            } catch {
+                Start-Sleep -Seconds 2
+            }
+        }
     }
 
     Expand-Archive -Path $PSScriptRoot\*.zip -DestinationPath "C:\Program Files\eryph\guest-services"
 
-    if(-not $service) {
+    if (-not $service) {
         $null = sc.exe create eryph-guest-services start=auto binpath="C:\Program Files\eryph\guest-services\bin\egs-service.exe"
         $null = sc.exe failure eryph-guest-services reset=60 actions=restart/10000
-        $null = sc.exe start eryph-guest-services
-    } else{
-        $service | Start-Service
     }
+
+    $null = sc.exe start eryph-guest-services
 } finally {
     $global:ProgressPreference = $savedProgressPreference
 }
