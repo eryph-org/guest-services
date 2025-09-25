@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.Claims;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
@@ -125,8 +126,7 @@ internal sealed class SshServerService(
         var values = new Dictionary<string, string?>
         {
             [Constants.StatusKey] = status,
-            // TODO does this work on Linux?
-            [Constants.OsVersionKey] =  Environment.OSVersion.VersionString,
+            [Constants.OperatingSystemKey] = RuntimeInformation.OSDescription,
             [Constants.VersionKey] = GitVersionInformation.InformationalVersion,
         };
         await guestDataExchange.SetGuestValuesAsync(values);
