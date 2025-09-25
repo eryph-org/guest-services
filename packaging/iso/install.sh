@@ -8,6 +8,12 @@ fi
 
 script_directory="$(cd "$(dirname "$0")" && pwd)"
 
+if systemctl list-unit-files eryph-guest-services.service | grep -q eryph-guest-services.service; then
+    systemctl stop eryph-guest-services.service
+    sleep 2
+    rm -rf /opt/eryph/guest-services
+fi
+
 mkdir -p /opt/eryph/guest-services
 tar -xzf "$script_directory"/*.tar.gz -C /opt/eryph/guest-services
 cp "$script_directory/eryph-guest-services.service" /etc/systemd/system/eryph-guest-services.service
