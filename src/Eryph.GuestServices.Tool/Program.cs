@@ -42,6 +42,11 @@ app.Configure(config =>
         .WithDescription(
             "Returns information about the guest services in the VM.");
 
+
+    config.AddCommand<InspectCommand>("inspect")
+        .WithDescription(
+            "Inspects the data of the VM.");
+
     config.AddCommand<AddSshConfigCommand>("add-ssh-config")
         .WithDescription(
             "Adds the necessary config for connecting to the given VM.");
