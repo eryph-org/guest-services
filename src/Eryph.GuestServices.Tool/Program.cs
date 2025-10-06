@@ -38,14 +38,9 @@ app.Configure(config =>
         .WithDescription(
             "Returns the status of the guest services in the VM.");
 
-    config.AddCommand<GetInfoCommand>("get-info")
+    config.AddCommand<GetDataCommand>("get-data")
         .WithDescription(
-            "Returns information about the guest services in the VM.");
-
-
-    config.AddCommand<InspectCommand>("inspect")
-        .WithDescription(
-            "Inspects the data of the VM.");
+            "Returns the key-value data which is associated with the VM.");
 
     config.AddCommand<AddSshConfigCommand>("add-ssh-config")
         .WithDescription(
