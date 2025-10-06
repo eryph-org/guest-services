@@ -42,7 +42,9 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
                 ["host_only"] = ConvertToJson(hostOnlyData),
             };
             var json = JsonSerializer.Serialize(allData, LazyOptions.Value);
-            AnsiConsole.WriteLine(json);
+            // Write directly to the output as AnsiConsole would introduce line breaks
+            // into the output and break the JSON.
+            await AnsiConsole.Console.Profile.Out.Writer.WriteLineAsync(json);
             return 0;
         }
 
