@@ -7,8 +7,9 @@ public interface IHostDataExchange
     /// given <paramref name="vmId"/>.
     /// </summary>
     /// <remarks>
-    /// This data is stored in <c>Virtual Machine\Guest</c> pool
-    /// of the Hyper-V data exchange.
+    /// This data is stored in the <c>Virtual Machine\Guest</c> pool
+    /// of the Hyper-V data exchange. The data can be set in the guest and
+    /// is then pushed to the host.
     /// </remarks>
     Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync(Guid vmId);
 
@@ -17,7 +18,7 @@ public interface IHostDataExchange
     /// given <paramref name="vmId"/>.
     /// </summary>
     /// <remarks>
-    /// This data is stored in <c>Virtual Machine\Auto</c> pool
+    /// This data is stored in the <c>Virtual Machine\Auto</c> pool
     /// of the Hyper-V data exchange. The data is automatically
     /// populated by the driver or kernel module which is responsible
     /// for the Hyper-V integration in the guest.
@@ -29,8 +30,9 @@ public interface IHostDataExchange
     /// given <paramref name="vmId"/>.
     /// </summary>
     /// <remarks>
-    /// This data is stored in <c>Virtual Machine\External</c> pool
-    /// of the Hyper-V data exchange.
+    /// This data is stored in the <c>Virtual Machine\External</c> pool
+    /// of the Hyper-V data exchange. The data can be set on the host and
+    /// is then pushed to the guest.
     /// </remarks>
     Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync(Guid vmId);
 
@@ -39,7 +41,7 @@ public interface IHostDataExchange
     /// given <paramref name="vmId"/>.
     /// </summary>
     /// <remarks>
-    /// This data is in the configuration of the Hyper-V VM but is not
+    /// This data is stored in the configuration of the Hyper-V VM but is not
     /// pushed to the guest.
     /// </remarks>
     Task<IReadOnlyDictionary<string, string>> GetHostOnlyDataAsync(Guid vmId);
