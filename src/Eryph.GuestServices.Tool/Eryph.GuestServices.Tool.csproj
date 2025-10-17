@@ -14,8 +14,8 @@
     <PackageReference Include="Eryph.ComputeClient" Version="0.13.0" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
     <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
-    <PackageReference Include="Spectre.Console" Version="0.50.0" />
-    <PackageReference Include="Spectre.Console.Cli" Version="0.50.0" />
+    <PackageReference Include="Spectre.Console" Version="0.51.1" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
   </ItemGroup>
 
   <ItemGroup>

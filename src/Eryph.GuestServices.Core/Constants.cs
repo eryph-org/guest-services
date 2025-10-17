@@ -17,7 +17,11 @@ public static class Constants
 
     public static readonly string ServiceName = "Eryph Guest Services";
 
+    public static readonly string OperatingSystemKey = "eryph:guest-services:operating-system";
+
     public static readonly string StatusKey = "eryph:guest-services:status";
+
+    public static readonly string VersionKey = "eryph:guest-services:version";
 
     public static readonly string ClientAuthKey = "eryph:guest-services:client-public-key";
 }

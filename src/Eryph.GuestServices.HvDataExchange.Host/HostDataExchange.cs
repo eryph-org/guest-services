@@ -12,22 +12,35 @@ public class HostDataExchange : IHostDataExchange
     private static readonly TimeSpan TimeOut = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(1);
 
-    public async Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync(Guid vmId)
+    public Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync(Guid vmId)
+    {
+        return GetGuestData(vmId, "GuestExchangeItems");
+    }
+
+
+    public Task<IReadOnlyDictionary<string, string>> GetIntrinsicGuestDataAsync(Guid vmId)
+    {
+        return GetGuestData(vmId, "GuestIntrinsicExchangeItems");
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> GetGuestData(
+        Guid vmId,
+        string propertyName)
     {
         return await Task.Run(() =>
         {
             using var searcher = new ManagementObjectSearcher(
                 new ManagementScope(Scope),
-                new ObjectQuery("SELECT SystemName,GuestExchangeItems "
+                new ObjectQuery($"SELECT SystemName,{propertyName} "
                                 + "FROM Msvm_KvpExchangeComponent "
                                 + $"WHERE SystemName = '{vmId.ToString().ToUpperInvariant()}'"));
-            
+
             using var collection = searcher.Get();
             var managementObjects = collection.Cast<ManagementBaseObject>().ToList();
             try
             {
                 var mo = managementObjects.SingleOrDefault();
-                if (mo is null || mo["GuestExchangeItems"] is not string[] items)
+                if (mo is null || mo[propertyName] is not string[] items)
                     return new Dictionary<string, string>();
 
                 return ParseItems(items);
@@ -39,13 +52,26 @@ public class HostDataExchange : IHostDataExchange
         }).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync(Guid vmId)
+
+    public Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync(Guid vmId)
+    {
+        return GetHostDataAsync(vmId, "HostExchangeItems");
+    }
+
+    public Task<IReadOnlyDictionary<string, string>> GetHostOnlyDataAsync(Guid vmId)
+    {
+        return GetHostDataAsync(vmId, "HostOnlyItems");
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> GetHostDataAsync(
+        Guid vmId,
+        string propertyName)
     {
         return await Task.Run(() =>
         {
             using var searcher = new ManagementObjectSearcher(
                 new ManagementScope(Scope),
-                new ObjectQuery("SELECT InstanceID,HostExchangeItems "
+                new ObjectQuery($"SELECT InstanceID,{propertyName} "
                                 + "FROM Msvm_KvpExchangeComponentSettingData "
                                 + @$"WHERE InstanceID LIKE 'Microsoft:{vmId.ToString().ToUpperInvariant()}\\%'"));
 
@@ -54,7 +80,7 @@ public class HostDataExchange : IHostDataExchange
             try
             {
                 var mo = managementObjects.SingleOrDefault();
-                if (mo is null || mo["HostExchangeItems"] is not string[] items)
+                if (mo is null || mo[propertyName] is not string[] items)
                     return new Dictionary<string, string>();
 
                 return ParseItems(items);
@@ -65,7 +91,7 @@ public class HostDataExchange : IHostDataExchange
             }
         }).ConfigureAwait(false);
     }
-    
+
     private IReadOnlyDictionary<string, string> ParseItems(string[] items)
     {
         var parsed = items.Select(item =>
@@ -74,7 +100,7 @@ public class HostDataExchange : IHostDataExchange
             // actual key and value.
             var xml = XDocument.Parse(item);
             var name = xml.XPathSelectElement("/INSTANCE/PROPERTY[@NAME='Name']/VALUE")?.Value;
-            if(string.IsNullOrEmpty(name))
+            if (string.IsNullOrEmpty(name))
                 throw new DataExchangeException("The key is missing in the KVP item.");
 
             var data = xml.XPathSelectElement("/INSTANCE/PROPERTY[@NAME='Data']/VALUE")?.Value;
@@ -84,7 +110,17 @@ public class HostDataExchange : IHostDataExchange
         return new Dictionary<string, string>(parsed);
     }
 
-    public async Task SetExternalValuesAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
+    public Task SetExternalValuesAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
+    {
+        return SetHostDataAsync(vmId, DataSource.HostExternal, values);
+    }
+
+    public Task SetHostOnlyValuesAsync(Guid vmId, IReadOnlyDictionary<string, string?> values)
+    {
+        return SetHostDataAsync(vmId, DataSource.HostOnly, values);
+    }
+
+    private async Task SetHostDataAsync(Guid vmId, DataSource source, IReadOnlyDictionary<string, string?> values)
     {
         await Task.Run(async () =>
         {
@@ -97,7 +133,12 @@ public class HostDataExchange : IHostDataExchange
                     throw new DataExchangeException($"The value for key '{kvp.Key}' is invalid. {valueError}");
             }
 
-            var existingValues = await GetExternalDataAsync(vmId);
+            var existingValues = source switch
+            {
+                DataSource.HostExternal => await GetExternalDataAsync(vmId),
+                DataSource.HostOnly => await GetHostOnlyDataAsync(vmId),
+                _ => throw new ArgumentException("The source is not supported.", nameof(source))
+            };
 
             var missing = values
                 .Where(kvp => !existingValues.ContainsKey(kvp.Key) && kvp.Value is not null)
@@ -122,9 +163,9 @@ public class HostDataExchange : IHostDataExchange
 
                 // The WMI API of Hyper-V for the KVP exchange requires us to explicitly
                 // split create, update and delete operations into three separate method calls.
-                await InvokeMethod(vmms, "AddKvpItems", vm, missing).ConfigureAwait(false);
-                await InvokeMethod(vmms, "ModifyKvpItems", vm, changed).ConfigureAwait(false);
-                await InvokeMethod(vmms, "RemoveKvpItems", vm, removed).ConfigureAwait(false);
+                await InvokeMethod(vmms, "AddKvpItems", vm, source, missing).ConfigureAwait(false);
+                await InvokeMethod(vmms, "ModifyKvpItems", vm, source, changed).ConfigureAwait(false);
+                await InvokeMethod(vmms, "RemoveKvpItems", vm, source, removed).ConfigureAwait(false);
             }
             finally
             {
@@ -138,11 +179,12 @@ public class HostDataExchange : IHostDataExchange
         ManagementObject vmms,
         string method,
         ManagementBaseObject vm,
+        DataSource source,
         IList<KeyValuePair<string, string?>> values)
     {
         using var parameters = vmms.GetMethodParameters(method);
         parameters["TargetSystem"] = vm;
-        parameters["DataItems"] = CreateItems(vmms, values);
+        parameters["DataItems"] = CreateItems(vmms, source, values);
         var result = vmms.InvokeMethod(method, parameters, null);
         var returnValue = (uint)result["ReturnValue"];
 
@@ -159,8 +201,12 @@ public class HostDataExchange : IHostDataExchange
 
     private string[] CreateItems(
         ManagementObject vmms,
+        DataSource source,
         IEnumerable<KeyValuePair<string, string?>> values)
     {
+        if (source is not (DataSource.HostExternal or DataSource.HostOnly))
+            throw new ArgumentException("The source is not supported.", nameof(source));
+
         using var @class = new ManagementClass(
             @$"\\{vmms.ClassPath.Server}\{vmms.ClassPath.NamespacePath}:Msvm_KvpExchangeDataItem");
 
@@ -176,7 +222,7 @@ public class HostDataExchange : IHostDataExchange
                 // on the invoked method whether the key is updated or removed.
                 // Hence, we can just change null to an empty string here.
                 kvpItem["Data"] = kvp.Value ?? "";
-                kvpItem["Source"] = 0;
+                kvpItem["Source"] = (int)source;
                 result.Add(kvpItem.GetText(TextFormat.WmiDtd20));
             }
             finally
@@ -313,4 +359,12 @@ public class HostDataExchange : IHostDataExchange
 
     private static bool IsJobCompleted(ushort jobState) =>
         jobState is 7;
+
+    private enum DataSource
+    {
+        HostExternal = 0,
+        Guest = 1,
+        GuestIntrinsic = 2,
+        HostOnly = 4,
+    }
 }
