@@ -63,19 +63,18 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        // Give the output pump its own cancellation source so we can stop it
-        // before closing the channel without tearing down the rest of the
-        // forwarder.
+        // Both pumps share a cancellation source so we can stop them together
+        // before closing the channel.
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         var outputTask = pty.Output!.CopyToAsync(stream, pumpCts.Token);
-        _ = stream.CopyToAsync(pty.Input!, _cts.Token);
+        var inputTask = stream.CopyToAsync(pty.Input!, pumpCts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
 
-        // Brief natural-drain window for any final bytes the PTY emitted on
+        // Brief natural-drain window so any final bytes the PTY emitted on
         // shell exit (e.g. ConPTY's terminal-reset escape sequence after
-        // `cmd.exe` exits). The PTY master never returns EOF while we hold
-        // its handle, so this can only time out — the timeout is the budget.
+        // `cmd.exe` exits) reach the wire. The PTY master never returns EOF
+        // while we hold its handle, so this can only time out.
         try
         {
             await outputTask.WaitAsync(TimeSpan.FromMilliseconds(500), _cts.Token);
@@ -83,24 +82,18 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         catch (TimeoutException) { }
         catch (OperationCanceledException) { }
 
-        // Stop the pump and wait for it to actually finish before closing.
-        // Otherwise an in-flight read could deliver bytes *after* the
-        // channel-close message goes out, and the client would log
-        // "data packet referred to nonexistent channel".
+        // Stop BOTH pumps and wait for them before closing. The output pump
+        // is the obvious one. The input pump matters too: when it reads from
+        // the SshStream, the underlying channel calls AdjustWindow, which
+        // fires off an async-void CHANNEL_WINDOW_ADJUST message. Without
+        // stopping it, that adjust can race past our channel close and the
+        // client logs "data packet referred to nonexistent channel".
         await pumpCts.CancelAsync();
         try
         {
-            await outputTask;
+            await Task.WhenAll(outputTask, inputTask);
         }
         catch (Exception) { /* expected on cancellation / pipe disposal */ }
-
-        // Flush any data still sitting in the SshStream's write queue so the
-        // bytes hit the wire before the channel-close message does.
-        try
-        {
-            await stream.FlushAsync(_cts.Token);
-        }
-        catch (Exception) { /* best-effort drain */ }
 
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
