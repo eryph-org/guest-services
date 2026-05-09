@@ -94,6 +94,14 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         }
         catch (Exception) { /* expected on cancellation / pipe disposal */ }
 
+        // Flush any data still sitting in the SshStream's write queue so the
+        // bytes hit the wire before the channel-close message does.
+        try
+        {
+            await stream.FlushAsync(_cts.Token);
+        }
+        catch (Exception) { /* best-effort drain */ }
+
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
 
