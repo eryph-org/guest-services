@@ -28,23 +28,27 @@ is already cached.
 
 ## What gets tested
 
-Six tests in two groups:
+Three active tests under `set-shell tool command`:
 
-- `set-shell tool command`
-  - Writes shell + shell-args to the External KVP pool
-  - Writes only shell when no arguments are passed
-  - `--reset` clears both keys
-- `shell selection`
-  - Default: spawns Windows PowerShell (`powershell.exe`)
-  - KVP override: spawns `pwsh.exe`
-  - SSH-sent `SHELL` env var: spawns `pwsh.exe`
-  - KVP wins over SSH env
-  - `--reset` returns to default
+- Writes shell + shell-args to the External KVP pool (use `--arguments=-...`
+  syntax — Spectre.Console.Cli treats space-separated `-`-prefixed values as
+  new flags)
+- Writes only shell when no arguments are passed
+- `--reset` clears both keys
 
-The shell-selection tests use `ssh -tt` with redirected stdin to feed a
-`Get-Process -Id $PID | Select-Object -ExpandProperty ProcessName` snippet
-into the interactive shell and assert on the captured output. `cmd.exe` as an
-override is documented but not e2e-tested (different shell syntax = brittle).
+Five `shell selection` tests are present but **skipped** (`Context ... -Skip`).
+They need to drive an interactive shell session (`pty-req + env + shell` over
+SSH) to verify that the configured executable was actually spawned. Win32-
+OpenSSH's `ssh.exe` with `-tt` and redirected stdin silently refuses to send
+`pty-req` — the channel opens and closes without ever invoking `ShellService`.
+Properly testing this end-to-end requires a custom probe built on
+`Microsoft.DevTunnels.Ssh` (e.g. a small `EgsShellProbe` console app). The
+selector logic itself is covered exhaustively by the unit-test suites:
+
+- `Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests/DefaultShellSelectorTests.cs`
+  — env-var honoring + platform default
+- `Eryph.GuestServices.Service.Tests/KvpShellSelectorTests.cs` — full chain
+  (KVP > env > default), KVP-read failure handling, blank-value fall-through
 
 ## How the patch works
 

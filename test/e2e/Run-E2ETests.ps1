@@ -35,9 +35,20 @@ if (-not $SkipBuild) {
   Write-Host "Publishing egs-service for win-x64 ..."
   dotnet publish "$PSScriptRoot/../../src/Eryph.GuestServices.Service/Eryph.GuestServices.Service.csproj" `
     -c Release -r win-x64 --nologo
+
+  Write-Host "Publishing egs-tool for win-x64 ..."
+  dotnet publish "$PSScriptRoot/../../src/Eryph.GuestServices.Tool/Eryph.GuestServices.Tool.csproj" `
+    -c Release -r win-x64 --nologo
 }
 
 $publishPath = Resolve-Path "$PSScriptRoot/../../src/Eryph.GuestServices.Service/bin/Release/net10.0/win-x64/publish"
+$toolPublishPath = Resolve-Path "$PSScriptRoot/../../src/Eryph.GuestServices.Tool/bin/Release/net10.0-windows/win-x64/publish"
+
+# Use the locally-built egs-tool for this session — set-shell does not exist
+# in older system installs.
+$env:Path = "$($toolPublishPath.Path);$env:Path"
+Write-Host "Using egs-tool from: $toolPublishPath"
+Write-Host "egs-tool version: $(egs-tool --version)"
 
 Write-Host "Running Pester suite ..."
 $container = New-PesterContainer -Path "$PSScriptRoot/Shell.E2E.Tests.ps1" `

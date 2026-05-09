@@ -262,5 +262,7 @@ __pycache__/
 /docker/docker-compose-services/store/mysql
 /store/mysql
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 src/Eryph.GuestServices.Service/Properties/PublishProfiles/FolderProfile.pubxml
 src/Eryph.GuestServices.Tool/Properties/PublishProfiles/FolderProfile.pubxml
+test/e2e/TEST-pesterResults.xml

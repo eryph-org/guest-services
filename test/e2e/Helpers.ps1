@@ -112,7 +112,7 @@ function Update-EgsService {
   }
 
   Write-Verbose "Uploading service binaries from $PublishPath ..."
-  egs-tool upload-directory $Catlet.VmId $PublishPath 'C:\egs-staging' --overwrite
+  egs-tool upload-directory $Catlet.VmId $PublishPath 'C:\egs-staging' --overwrite --recursive
 
   # Deploy script: stop service, copy files, start. Runs detached via scheduled
   # task so the SSH session that triggers it can disconnect cleanly when the
@@ -120,18 +120,34 @@ function Update-EgsService {
   $deployScript = @'
 $ErrorActionPreference = 'Stop'
 $logPath = 'C:\egs-staging\deploy.log'
+$src = 'C:\egs-staging'
+$dst = 'C:\Program Files\eryph\guest-services\bin'
 try {
   "[$(Get-Date -Format o)] stopping service" | Out-File -Append $logPath
   Stop-Service -Name eryph-guest-services -Force
+  # Status can flip to Stopped while the process is still releasing its DLLs.
+  # Wait until the process is actually gone before touching the bin directory.
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  while ((Get-Service eryph-guest-services).Status -ne 'Stopped') {
-    if ($sw.Elapsed.TotalSeconds -gt 60) { throw 'service did not stop in 60s' }
+  while (
+    (Get-Service eryph-guest-services).Status -ne 'Stopped' `
+    -or (Get-Process -Name egs-service -ErrorAction SilentlyContinue)
+  ) {
+    if ($sw.Elapsed.TotalSeconds -gt 60) { throw 'service did not fully stop in 60s' }
     Start-Sleep -Milliseconds 500
   }
-  "[$(Get-Date -Format o)] copying files" | Out-File -Append $logPath
-  Get-ChildItem 'C:\egs-staging' -File `
-    | Where-Object { $_.Name -ne 'deploy.ps1' -and $_.Name -ne 'deploy.log' } `
-    | Copy-Item -Destination 'C:\Program Files\eryph\guest-services\bin' -Force
+  "[$(Get-Date -Format o)] service process gone after $([int]$sw.Elapsed.TotalSeconds)s" | Out-File -Append $logPath
+  "[$(Get-Date -Format o)] copying files (recursive, mirror $src -> $dst)" | Out-File -Append $logPath
+  Get-ChildItem $src -Recurse -File `
+    | Where-Object { $_.FullName -notlike "$src\deploy.ps1" -and $_.FullName -notlike "$src\deploy.log" } `
+    | ForEach-Object {
+        $relative = $_.FullName.Substring($src.Length).TrimStart('\')
+        $target = Join-Path $dst $relative
+        $targetDir = Split-Path $target -Parent
+        if (-not (Test-Path -LiteralPath $targetDir)) {
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+      }
   "[$(Get-Date -Format o)] starting service" | Out-File -Append $logPath
   Start-Service -Name eryph-guest-services
   "[$(Get-Date -Format o)] done" | Out-File -Append $logPath
@@ -156,10 +172,17 @@ try {
 
   Write-Verbose "Waiting for service to come back ..."
   Start-Sleep -Seconds 5
-  Wait-Assert -Timeout (New-TimeSpan -Minutes 3) {
-    (egs-tool get-status $Catlet.VmId) | Should -Be 'available'
+  try {
+    Wait-Assert -Timeout (New-TimeSpan -Minutes 5) {
+      (egs-tool get-status $Catlet.VmId) | Should -Be 'available'
+    }
+  } catch {
+    Write-Host "Service did not come back. VM=$($Catlet.Name) (VmId=$($Catlet.VmId))"
+    Write-Host "Inspect via Hyper-V Manager -> $($Catlet.Name) -> Connect."
+    Write-Host "Deploy log lives at C:\egs-staging\deploy.log inside the VM."
+    throw
   }
-  # Confirm the patched binary is the one running by checking version metadata.
+  # Confirm SSH is responsive.
   Wait-Assert -Timeout (New-TimeSpan -Seconds 30) {
     $sshProcess = Start-Process -FilePath 'ssh.exe' `
       -ArgumentList "$hostName hostname" -Wait -PassThru -WindowStyle Hidden
@@ -171,11 +194,13 @@ function Invoke-InteractiveShell {
   <#
   .SYNOPSIS
     Opens an interactive SSH shell session and feeds the supplied PowerShell
-    snippets into stdin. Returns the captured output (stdout+stderr merged).
+    snippets into stdin. Returns the captured output (stdout + stderr).
 
   .DESCRIPTION
     Uses `ssh.exe -tt` to force PTY allocation even with redirected stdio, so
-    the server-side ShellService is exercised (not CommandService).
+    the server-side ShellService is exercised (not CommandService). On
+    failure or empty output, the captured stdout+stderr are written to host
+    so the test diagnostics show what happened.
   #>
   [CmdletBinding()]
   param(
@@ -185,6 +210,14 @@ function Invoke-InteractiveShell {
     [Parameter()] [int] $TimeoutSeconds = 60
   )
 
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = 'ssh.exe'
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardInput = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = $true
+
   $sshArgs = @('-tt', '-o', 'StrictHostKeyChecking=no')
   if ($SetEnv) {
     foreach ($k in $SetEnv.Keys) {
@@ -193,24 +226,38 @@ function Invoke-InteractiveShell {
   }
   $sshArgs += $HostName
 
-  $stdinFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "egs-ssh-in-$([guid]::NewGuid()).txt")
-  $stdoutFile = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "egs-ssh-out-$([guid]::NewGuid()).txt")
-  Set-Content -Path $stdinFile -Value (($InputLines + 'exit') -join "`n") -NoNewline -Encoding utf8
+  foreach ($a in $sshArgs) { $psi.ArgumentList.Add($a) }
 
-  try {
-    $process = Start-Process -FilePath 'ssh.exe' `
-      -ArgumentList $sshArgs `
-      -RedirectStandardInput $stdinFile `
-      -RedirectStandardOutput $stdoutFile `
-      -WindowStyle Hidden `
-      -PassThru
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-      $process | Stop-Process -Force
-      throw "ssh interactive session timed out after ${TimeoutSeconds}s"
-    }
-    return Get-Content -Raw -Path $stdoutFile
-  } finally {
-    Remove-Item -LiteralPath $stdinFile -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
+  $proc = [System.Diagnostics.Process]::Start($psi)
+
+  # Buffer the stdin payload, then close so the shell sees EOF and exits.
+  # A short pause before 'exit' lets PowerShell flush its prompt + banner +
+  # the marker output before the channel closes.
+  $payload = (($InputLines + @('Start-Sleep -Milliseconds 500', 'exit')) -join "`r`n") + "`r`n"
+  $proc.StandardInput.Write($payload)
+  $proc.StandardInput.Flush()
+  $proc.StandardInput.Close()
+
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+
+  if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+    $proc.Kill($true)
+    Write-Host "ssh -tt timed out after ${TimeoutSeconds}s. Captured so far:"
+    Write-Host "STDOUT: $($stdoutTask.Result)"
+    Write-Host "STDERR: $($stderrTask.Result)"
+    throw "ssh interactive session timed out"
   }
+
+  $stdout = $stdoutTask.Result
+  $stderr = $stderrTask.Result
+  $merged = "$stdout$stderr"
+
+  if ([string]::IsNullOrWhiteSpace($merged)) {
+    Write-Host "ssh -tt produced no output. exit=$($proc.ExitCode)"
+    Write-Host "STDOUT bytes: $([Text.Encoding]::UTF8.GetByteCount($stdout))"
+    Write-Host "STDERR bytes: $([Text.Encoding]::UTF8.GetByteCount($stderr))"
+  }
+
+  return $merged
 }
