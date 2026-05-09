@@ -9,7 +9,7 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 {
     private readonly IShellSelector _selector = selector ?? DefaultShellSelector.Instance;
     private readonly Dictionary<string, string> _sessionEnvironment = new(StringComparer.Ordinal);
-    private readonly object _envLock = new();
+    private readonly Lock _envLock = new();
     private readonly CancellationTokenSource _cts = new();
 
     private IPty? _pty;

@@ -28,51 +28,17 @@ is already cached.
 
 ## What gets tested
 
-Eight tests in two contexts:
+Eight tests in two groups:
 
-- `set-shell tool command` (3): writes shell+shell-args, writes shell only
-  when no arguments are passed, `--reset` clears both keys. Use
-  `--arguments=-...` (with `=`) — Spectre.Console.Cli treats space-separated
-  `-`-prefixed values as new flags.
-- `shell selection` (5): default → `Windows PowerShell` banner; KVP override
-  → `pwsh` banner; SSH-sent `SHELL` env var → `pwsh`; KVP wins over SSH env;
-  `--reset` returns to default.
+- `set-shell tool command` — writes shell+shell-args, writes shell only,
+  `--reset` clears both keys.
+- `shell selection` — default spawns Windows PowerShell, KVP override
+  spawns `pwsh`, SSH-sent `SHELL` env var spawns `pwsh`, KVP wins over SSH
+  env, `--reset` returns to default.
 
-The shell-selection tests assert on the shell's startup banner
-(`Windows PowerShell` for `powershell.exe`, `PowerShell 7.x` for `pwsh.exe`).
-Banner matching avoids depending on driving input through PSReadLine, which
-is unreliable over a freshly-allocated ConPTY pipe before the shell finishes
-initializing.
+## Troubleshooting
 
-### Why a custom SSH client is required
-
-`ssh.exe -tt` (Win32-OpenSSH) writes channel output to the Windows console
-buffer via `WriteConsole`, not to redirected stdout. Three independent
-capture mechanisms (`Process.Start` redirection, PowerShell pipeline,
-`cmd /c < > 2>&1`) all return empty for an interactive shell session.
-
-`test/e2e/EgsShellProbe/` is a tiny self-contained console app that drives
-`pty-req` + `env` + `shell` directly via `Microsoft.DevTunnels.Ssh` — the
-same client library `egs-tool upload-file` uses — and pumps channel output
-to its stdout, which a script can capture normally. Same server, scriptable
-client.
-
-The selector logic itself is also covered by unit tests
-(`DefaultShellSelectorTests` + `KvpShellSelectorTests`, 13 tests total). The
-e2e suite verifies the wire-level behavior on top.
-
-## How the patch works
-
-`Update-EgsService` (in `Helpers.ps1`):
-
-1. `egs-tool upload-directory` pushes the `publish/` output to `C:\egs-staging`
-   in the VM (works while service is running).
-2. Uploads a `deploy.ps1` script alongside it.
-3. Triggers a one-shot scheduled task that runs the deploy script as `SYSTEM`.
-   The task is detached so the SSH session that triggered it can disconnect
-   when the service stops (the service *is* the SSH server).
-4. `Wait-Assert` polls `egs-tool get-status <vmId>` until `available` returns,
-   then probes `ssh hostname` once to confirm end-to-end.
-
-If a deploy fails, `C:\egs-staging\deploy.log` inside the VM has the timestamps
-of each step.
+- Set `$env:EGS_E2E_KEEP_VM=1` to leave the catlet running after the suite
+  finishes (or fails). Useful for post-mortem inspection via Hyper-V Manager.
+- If the service patch step times out, `C:\egs-staging\deploy.log` inside the
+  VM has timestamps of each deploy step.
