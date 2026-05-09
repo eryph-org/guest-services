@@ -8,6 +8,24 @@ using Microsoft.Extensions.Logging;
 
 Trace.Listeners.Add(new ConsoleTraceListener());
 
+// TEMPORARY: capture every outgoing/incoming SSH message for the cmd.exe
+// post-close-data investigation. Writes to C:\egs-staging\ssh-trace.log.
+var sshTraceFile = OperatingSystem.IsWindows()
+    ? @"C:\egs-staging\ssh-trace.log"
+    : "/tmp/ssh-trace.log";
+try
+{
+    var dir = Path.GetDirectoryName(sshTraceFile);
+    if (dir is not null) Directory.CreateDirectory(dir);
+    var listener = new TextWriterTraceListener(sshTraceFile, "ssh") { TraceOutputOptions = TraceOptions.DateTime };
+    Trace.AutoFlush = true;
+    Trace.Listeners.Add(listener);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"failed to attach ssh trace listener: {ex.Message}");
+}
+
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings()
 {
     ContentRootPath = AppContext.BaseDirectory

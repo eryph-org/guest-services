@@ -50,7 +50,8 @@ internal sealed class SshServerService(
         config.Services.Add(typeof(DownloadFileService), null);
         config.Services.Add(typeof(ListDirectoryService), null);
 
-        _server = new SocketSshServer(config, new TraceSource("SshServer"));
+        var sshTrace = new TraceSource("SshServer", SourceLevels.All);
+        _server = new SocketSshServer(config, sshTrace);
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
         _server.ExceptionRaised += ExceptionRaised;
