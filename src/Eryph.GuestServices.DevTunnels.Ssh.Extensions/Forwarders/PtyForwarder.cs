@@ -63,23 +63,36 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        var outputTask = pty.Output!.CopyToAsync(stream, _cts.Token);
+        // Give the output pump its own cancellation source so we can stop it
+        // before closing the channel without tearing down the rest of the
+        // forwarder.
+        using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        var outputTask = pty.Output!.CopyToAsync(stream, pumpCts.Token);
         _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
 
-        // Give the output pump a brief window to flush any final bytes the PTY
-        // emitted on shell exit (e.g. ConPTY's terminal-reset escape sequence
-        // after `cmd.exe` exits). Without this, the channel-close message can
-        // overtake those bytes on the wire and the client logs
-        // "data packet referred to nonexistent channel". The PTY master never
-        // returns EOF while we hold its handle, so the drain has to be bounded.
+        // Brief natural-drain window for any final bytes the PTY emitted on
+        // shell exit (e.g. ConPTY's terminal-reset escape sequence after
+        // `cmd.exe` exits). The PTY master never returns EOF while we hold
+        // its handle, so this can only time out — the timeout is the budget.
         try
         {
             await outputTask.WaitAsync(TimeSpan.FromMilliseconds(500), _cts.Token);
         }
-        catch (TimeoutException) { /* bounded drain — proceed to close */ }
-        catch (OperationCanceledException) { /* shutting down */ }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) { }
+
+        // Stop the pump and wait for it to actually finish before closing.
+        // Otherwise an in-flight read could deliver bytes *after* the
+        // channel-close message goes out, and the client would log
+        // "data packet referred to nonexistent channel".
+        await pumpCts.CancelAsync();
+        try
+        {
+            await outputTask;
+        }
+        catch (Exception) { /* expected on cancellation / pipe disposal */ }
 
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
