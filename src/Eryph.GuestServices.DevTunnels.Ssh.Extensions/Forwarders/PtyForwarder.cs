@@ -95,6 +95,12 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         }
         catch (Exception) { /* expected on cancellation / pipe disposal */ }
 
+        // The last input-pump read may have triggered an async-void
+        // TrySendAdjustWindowMessage in SshChannel that we cannot await.
+        // Yield briefly so that fire-and-forget SendMessageAsync grabs the
+        // session's outgoing semaphore before our close does.
+        await Task.Delay(50, _cts.Token);
+
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
 
