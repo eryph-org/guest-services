@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Pty;
 using Microsoft.DevTunnels.Ssh;
 
@@ -7,6 +9,7 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 {
     private readonly IShellSelector _selector = selector ?? DefaultShellSelector.Instance;
     private readonly Dictionary<string, string> _sessionEnvironment = new(StringComparer.Ordinal);
+    private readonly object _envLock = new();
     private readonly CancellationTokenSource _cts = new();
 
     private IPty? _pty;
@@ -20,12 +23,22 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     /// <summary>
     /// Records an SSH-sent environment variable that may influence shell
-    /// selection. Call before <see cref="StartAsync"/>; values added later are
-    /// ignored.
+    /// selection. Only the keys this forwarder actually consults are kept;
+    /// arbitrary names are dropped to avoid unbounded growth from a hostile
+    /// client. Calls after <see cref="StartAsync"/> are ignored — by then the
+    /// selector has already snapshotted the dictionary.
     /// </summary>
     public void SetEnvironmentVariable(string name, string value)
     {
-        _sessionEnvironment[name] = value;
+        if (IsRunning)
+            return;
+        if (name != Constants.ShellEnvName && name != Constants.ShellArgsEnvName)
+            return;
+
+        lock (_envLock)
+        {
+            _sessionEnvironment[name] = value;
+        }
     }
 
     public async Task StartAsync(SshStream stream, CancellationToken cancellation)
@@ -33,7 +46,15 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         if (Interlocked.Exchange(ref _isRunning, 1) == 1)
             throw new InvalidOperationException("Pty instance is already running.");
 
-        var selection = await _selector.SelectAsync(_sessionEnvironment, cancellation);
+        // Snapshot the env dict while no further writes can land (IsRunning is
+        // now true, SetEnvironmentVariable early-returns) and hand the
+        // selector an immutable view.
+        FrozenDictionary<string, string> envSnapshot;
+        lock (_envLock)
+        {
+            envSnapshot = _sessionEnvironment.ToFrozenDictionary(StringComparer.Ordinal);
+        }
+        var selection = await _selector.SelectAsync(envSnapshot, cancellation);
 
         _pty = PtyProvider.CreatePty();
         await _pty.StartAsync(_width, _height, selection.Command, selection.Arguments);

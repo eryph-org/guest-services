@@ -28,27 +28,38 @@ is already cached.
 
 ## What gets tested
 
-Three active tests under `set-shell tool command`:
+Eight tests in two contexts:
 
-- Writes shell + shell-args to the External KVP pool (use `--arguments=-...`
-  syntax — Spectre.Console.Cli treats space-separated `-`-prefixed values as
-  new flags)
-- Writes only shell when no arguments are passed
-- `--reset` clears both keys
+- `set-shell tool command` (3): writes shell+shell-args, writes shell only
+  when no arguments are passed, `--reset` clears both keys. Use
+  `--arguments=-...` (with `=`) — Spectre.Console.Cli treats space-separated
+  `-`-prefixed values as new flags.
+- `shell selection` (5): default → `Windows PowerShell` banner; KVP override
+  → `pwsh` banner; SSH-sent `SHELL` env var → `pwsh`; KVP wins over SSH env;
+  `--reset` returns to default.
 
-Five `shell selection` tests are present but **skipped** (`Context ... -Skip`).
-They need to drive an interactive shell session (`pty-req + env + shell` over
-SSH) to verify that the configured executable was actually spawned. Win32-
-OpenSSH's `ssh.exe` with `-tt` and redirected stdin silently refuses to send
-`pty-req` — the channel opens and closes without ever invoking `ShellService`.
-Properly testing this end-to-end requires a custom probe built on
-`Microsoft.DevTunnels.Ssh` (e.g. a small `EgsShellProbe` console app). The
-selector logic itself is covered exhaustively by the unit-test suites:
+The shell-selection tests assert on the shell's startup banner
+(`Windows PowerShell` for `powershell.exe`, `PowerShell 7.x` for `pwsh.exe`).
+Banner matching avoids depending on driving input through PSReadLine, which
+is unreliable over a freshly-allocated ConPTY pipe before the shell finishes
+initializing.
 
-- `Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests/DefaultShellSelectorTests.cs`
-  — env-var honoring + platform default
-- `Eryph.GuestServices.Service.Tests/KvpShellSelectorTests.cs` — full chain
-  (KVP > env > default), KVP-read failure handling, blank-value fall-through
+### Why a custom SSH client is required
+
+`ssh.exe -tt` (Win32-OpenSSH) writes channel output to the Windows console
+buffer via `WriteConsole`, not to redirected stdout. Three independent
+capture mechanisms (`Process.Start` redirection, PowerShell pipeline,
+`cmd /c < > 2>&1`) all return empty for an interactive shell session.
+
+`test/e2e/EgsShellProbe/` is a tiny self-contained console app that drives
+`pty-req` + `env` + `shell` directly via `Microsoft.DevTunnels.Ssh` — the
+same client library `egs-tool upload-file` uses — and pumps channel output
+to its stdout, which a script can capture normally. Same server, scriptable
+client.
+
+The selector logic itself is also covered by unit tests
+(`DefaultShellSelectorTests` + `KvpShellSelectorTests`, 13 tests total). The
+e2e suite verifies the wire-level behavior on top.
 
 ## How the patch works
 

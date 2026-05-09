@@ -30,28 +30,39 @@ string? keyPath = null;
 
 for (var i = 0; i < args.Length; i++)
 {
-    switch (args[i])
+    var flag = args[i];
+    switch (flag)
     {
         case "--vm-id":
-            vmId = Guid.Parse(args[++i]);
+            if (!TryConsumeValue(args, ref i, out var vmIdRaw))
+                return Fail($"{flag} requires a value");
+            vmId = Guid.Parse(vmIdRaw);
             break;
         case "--env":
-            var pair = args[++i].Split('=', 2);
+            if (!TryConsumeValue(args, ref i, out var envRaw))
+                return Fail($"{flag} requires KEY=VAL");
+            var pair = envRaw.Split('=', 2);
             if (pair.Length != 2)
-                return Fail($"--env value must be KEY=VAL, got '{args[i]}'");
+                return Fail($"--env value must be KEY=VAL, got '{envRaw}'");
             envVars.Add((pair[0], pair[1]));
             break;
         case "--input":
-            inputLines.Add(args[++i]);
+            if (!TryConsumeValue(args, ref i, out var inputRaw))
+                return Fail($"{flag} requires a value");
+            inputLines.Add(inputRaw);
             break;
         case "--timeout-ms":
-            timeoutMs = int.Parse(args[++i]);
+            if (!TryConsumeValue(args, ref i, out var timeoutRaw))
+                return Fail($"{flag} requires a value");
+            timeoutMs = int.Parse(timeoutRaw);
             break;
         case "--key-path":
-            keyPath = args[++i];
+            if (!TryConsumeValue(args, ref i, out var keyRaw))
+                return Fail($"{flag} requires a value");
+            keyPath = keyRaw;
             break;
         default:
-            return Fail($"unknown argument: {args[i]}");
+            return Fail($"unknown argument: {flag}");
     }
 }
 
@@ -144,4 +155,15 @@ static int Fail(string message)
 {
     Console.Error.WriteLine($"egs-shell-probe: {message}");
     return 1;
+}
+
+static bool TryConsumeValue(string[] args, ref int index, out string value)
+{
+    if (index + 1 >= args.Length)
+    {
+        value = string.Empty;
+        return false;
+    }
+    value = args[++index];
+    return true;
 }

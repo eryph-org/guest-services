@@ -25,24 +25,30 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
     {
         if (settings.Reset)
         {
-            if (!string.IsNullOrEmpty(settings.Command) || !string.IsNullOrEmpty(settings.Arguments))
+            if (!string.IsNullOrWhiteSpace(settings.Command) || !string.IsNullOrWhiteSpace(settings.Arguments))
             {
                 AnsiConsole.MarkupLineInterpolated(
                     $"[red]--reset cannot be combined with --command or --arguments.[/]");
                 return -1;
             }
         }
-        else if (string.IsNullOrEmpty(settings.Command))
+        else if (string.IsNullOrWhiteSpace(settings.Command))
         {
             AnsiConsole.MarkupLineInterpolated(
                 $"[red]Either --command <CMD> or --reset is required.[/]");
             return -1;
         }
 
+        // Trim so a stray whitespace pad doesn't end up in KVP. The selector
+        // only honors a non-blank shell value anyway; persisting dead data
+        // would be misleading.
+        var command = settings.Command?.Trim();
+        var arguments = settings.Arguments?.Trim();
+
         var values = new Dictionary<string, string?>
         {
-            [Constants.ShellKey] = settings.Reset ? null : settings.Command,
-            [Constants.ShellArgsKey] = settings.Reset ? null : settings.Arguments,
+            [Constants.ShellKey] = settings.Reset ? null : command,
+            [Constants.ShellArgsKey] = settings.Reset ? null : arguments,
         };
 
         var hostDataExchange = new HostDataExchange();
@@ -55,10 +61,10 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
         }
         else
         {
-            var argsDisplay = string.IsNullOrEmpty(settings.Arguments) ? "(none)" : settings.Arguments;
+            var argsDisplay = string.IsNullOrEmpty(arguments) ? "(none)" : arguments;
             AnsiConsole.Write(new Rows(
                 new Markup($"[green]Shell override set for VM {settings.VmId}.[/]"),
-                new Text($"  Command:   {settings.Command}"),
+                new Text($"  Command:   {command}"),
                 new Text($"  Arguments: {argsDisplay}"),
                 new Text(""),
                 new Text("Takes effect on the next SSH session.")));
