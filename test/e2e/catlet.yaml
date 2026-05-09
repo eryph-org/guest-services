@@ -1,0 +1,13 @@
+name: shell-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+fodder:
+  - source: gene:dbosoft/guest-services:win-install
+    variables:
+      - name: sshPublicKey
+        value: <<SSH_PUBLIC_KEY>>
+  # PowerShell 7+ is needed for the pwsh.exe override scenario.
+  - source: gene:dbosoft/powershell/1.2:win-install
