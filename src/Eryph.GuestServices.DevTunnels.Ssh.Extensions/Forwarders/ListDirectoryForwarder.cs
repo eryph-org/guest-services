@@ -71,7 +71,7 @@ public sealed class ListDirectoryForwarder(string path) : IForwarder
             }
 
             // Serialize the file list as JSON
-            var json = JsonSerializer.Serialize(fileInfos, SshExtensionUtils.FileTransferOptions);
+            var json = JsonSerializer.Serialize(fileInfos, FileTransferJsonContext.Default.ListRemoteFileInfo);
             var jsonBytes = Encoding.UTF8.GetBytes(json);
 
             // Send the data

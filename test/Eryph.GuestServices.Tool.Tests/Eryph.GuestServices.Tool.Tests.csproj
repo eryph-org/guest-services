@@ -1,7 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -21,13 +21,10 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
-    <ProjectReference Include="..\..\src\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
-    <ProjectReference Include="..\..\src\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
+    <ProjectReference Include="..\..\src\Eryph.GuestServices.Tool\Eryph.GuestServices.Tool.csproj" />
   </ItemGroup>
 
   <ItemGroup>

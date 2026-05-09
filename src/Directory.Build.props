@@ -20,6 +20,7 @@
   <PropertyGroup>
     <LangVersion>12</LangVersion>
     <NoWarn>CS1591</NoWarn>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
   <PropertyGroup>

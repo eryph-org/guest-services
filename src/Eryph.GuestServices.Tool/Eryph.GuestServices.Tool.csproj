@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <SelfContained>true</SelfContained>
@@ -23,6 +23,10 @@
     <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.HvDataExchange.Host\Eryph.GuestServices.HvDataExchange.Host.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.Tool.Tests" />
   </ItemGroup>
 
 </Project>

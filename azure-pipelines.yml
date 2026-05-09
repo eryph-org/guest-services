@@ -122,7 +122,12 @@ jobs:
     displayName: dotnet test
     inputs:
       command: test
-      projects: '**/test/**/*.csproj'
+      # Tool.Tests targets net10.0-windows because the Tool depends on
+      # HvDataExchange.Host (WMI). It cannot run on Linux; the Windows job
+      # exercises it.
+      projects: |
+        **/test/**/*.csproj
+        !**/Eryph.GuestServices.Tool.Tests.csproj
       arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --collect "Code coverage" --no-build'
 
   - task: DotNetCoreCLI@2

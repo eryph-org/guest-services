@@ -1,5 +1,4 @@
 ﻿using System.Text.Json;
-using System.Text.Json.Serialization;
 using Eryph.GuestServices.HvDataExchange.Host;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -9,13 +8,6 @@ namespace Eryph.GuestServices.Tool.Commands;
 
 public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
 {
-    private static readonly Lazy<JsonSerializerOptions> LazyOptions = new(() =>
-        new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
-        });
-
     public class Settings : CommandSettings
     {
         [CommandArgument(0, "<VmId>")] public Guid VmId { get; set; }
@@ -26,7 +18,7 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
         var hostDataExchange = new HostDataExchange();
-        
+
         var guestData = await hostDataExchange.GetGuestDataAsync(settings.VmId);
         var intrinsicGuestData = await hostDataExchange.GetIntrinsicGuestDataAsync(settings.VmId);
         var externalData = await hostDataExchange.GetExternalDataAsync(settings.VmId);
@@ -34,14 +26,7 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
 
         if (settings.Json)
         {
-            var allData = new Dictionary<string, IDictionary<string, JsonElement>>
-            {
-                ["guest"] = ConvertToJson(guestData),
-                ["guest_intrinsic"] = ConvertToJson(intrinsicGuestData),
-                ["external"] = ConvertToJson(externalData),
-                ["host_only"] = ConvertToJson(hostOnlyData),
-            };
-            var json = JsonSerializer.Serialize(allData, LazyOptions.Value);
+            var json = BuildJson(guestData, intrinsicGuestData, externalData, hostOnlyData);
             // Write directly to the output as AnsiConsole would introduce line breaks
             // into the output and break the JSON.
             await AnsiConsole.Console.Profile.Out.Writer.WriteLineAsync(json);
@@ -56,7 +41,23 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
         return 0;
     }
 
-    private static IDictionary<string, JsonElement> ConvertToJson(
+    internal static string BuildJson(
+        IReadOnlyDictionary<string, string> guest,
+        IReadOnlyDictionary<string, string> guestIntrinsic,
+        IReadOnlyDictionary<string, string> external,
+        IReadOnlyDictionary<string, string> hostOnly)
+    {
+        var allData = new Dictionary<string, Dictionary<string, JsonElement>>
+        {
+            ["guest"] = ConvertToJson(guest),
+            ["guest_intrinsic"] = ConvertToJson(guestIntrinsic),
+            ["external"] = ConvertToJson(external),
+            ["host_only"] = ConvertToJson(hostOnly),
+        };
+        return JsonSerializer.Serialize(allData, GuestDataJsonContext.Default.DictionaryStringDictionaryStringJsonElement);
+    }
+
+    private static Dictionary<string, JsonElement> ConvertToJson(
         IReadOnlyDictionary<string, string> data)
     {
         // Some guest utilities (e.g. cloud-init) use JSON in the values.
@@ -70,11 +71,11 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
     private static JsonElement ConvertToJson(string data)
     {
         if (!data.TrimStart().StartsWith('{'))
-            return JsonSerializer.SerializeToElement(data);
+            return JsonSerializer.SerializeToElement(data, GuestDataJsonContext.Default.String);
 
         try
         {
-            var document = JsonDocument.Parse(data, new JsonDocumentOptions
+            using var document = JsonDocument.Parse(data, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
                 CommentHandling = JsonCommentHandling.Skip,
@@ -85,7 +86,7 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
         catch (JsonException)
         {
             // Return the original string when the JSON cannot be parsed
-            return JsonSerializer.SerializeToElement(data);
+            return JsonSerializer.SerializeToElement(data, GuestDataJsonContext.Default.String);
         }
     }
 

@@ -181,7 +181,7 @@ public static class SshSessionClientExtensions
                     var json = Encoding.UTF8.GetString(jsonBytes);
                     try
                     {
-                        var files = JsonSerializer.Deserialize<List<RemoteFileInfo>>(json, SshExtensionUtils.FileTransferOptions) ?? new List<RemoteFileInfo>();
+                        var files = JsonSerializer.Deserialize(json, FileTransferJsonContext.Default.ListRemoteFileInfo) ?? new List<RemoteFileInfo>();
                         return (result, files);
                     }
                     catch (JsonException ex)
