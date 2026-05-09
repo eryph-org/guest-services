@@ -3,7 +3,8 @@
 # Adapted from MaxBack/test/e2e/Helpers.ps1.
 
 function New-TestProject {
-  $projectName = "egs-shell-e2e-$(Get-Date -Format 'yyyyMMddHHmmss')"
+  # Eryph project names are capped at 20 characters.
+  $projectName = "egs-$(Get-Date -Format 'yyyyMMddHHmmss')"
   New-EryphProject -Name $projectName
 }
 
