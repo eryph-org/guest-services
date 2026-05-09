@@ -63,44 +63,10 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        // Both pumps share a cancellation source so we can stop them together
-        // before closing the channel.
-        using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-        var outputTask = pty.Output!.CopyToAsync(stream, pumpCts.Token);
-        var inputTask = stream.CopyToAsync(pty.Input!, pumpCts.Token);
+        _ = pty.Output!.CopyToAsync(stream, _cts.Token);
+        _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
-
-        // Brief natural-drain window so any final bytes the PTY emitted on
-        // shell exit (e.g. ConPTY's terminal-reset escape sequence after
-        // `cmd.exe` exits) reach the wire. The PTY master never returns EOF
-        // while we hold its handle, so this can only time out.
-        try
-        {
-            await outputTask.WaitAsync(TimeSpan.FromMilliseconds(500), _cts.Token);
-        }
-        catch (TimeoutException) { }
-        catch (OperationCanceledException) { }
-
-        // Stop BOTH pumps and wait for them before closing. The output pump
-        // is the obvious one. The input pump matters too: when it reads from
-        // the SshStream, the underlying channel calls AdjustWindow, which
-        // fires off an async-void CHANNEL_WINDOW_ADJUST message. Without
-        // stopping it, that adjust can race past our channel close and the
-        // client logs "data packet referred to nonexistent channel".
-        await pumpCts.CancelAsync();
-        try
-        {
-            await Task.WhenAll(outputTask, inputTask);
-        }
-        catch (Exception) { /* expected on cancellation / pipe disposal */ }
-
-        // The last input-pump read may have triggered an async-void
-        // TrySendAdjustWindowMessage in SshChannel that we cannot await.
-        // Yield briefly so that fire-and-forget SendMessageAsync grabs the
-        // session's outgoing semaphore before our close does.
-        await Task.Delay(50, _cts.Token);
-
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
 
