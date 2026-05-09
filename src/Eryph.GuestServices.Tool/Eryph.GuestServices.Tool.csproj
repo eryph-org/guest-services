@@ -17,7 +17,7 @@
          .NET 10 line ensures the type forwarders match the host BCL when the
          tool is published self-contained. -->
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.7" />
-    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.29" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
   </ItemGroup>

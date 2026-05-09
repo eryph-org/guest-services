@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.8" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.29" />
   </ItemGroup>
 
   <ItemGroup>
