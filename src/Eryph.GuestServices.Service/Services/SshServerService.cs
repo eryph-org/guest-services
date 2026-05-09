@@ -51,6 +51,23 @@ internal sealed class SshServerService(
         config.Services.Add(typeof(ListDirectoryService), null);
 
         var sshTrace = new TraceSource("SshServer", SourceLevels.All);
+        // TEMPORARY: log every outgoing/incoming SSH message to a file so we
+        // can pin down the post-close-data race observed with cmd.exe.
+        var traceFile = OperatingSystem.IsWindows()
+            ? @"C:\egs-staging\ssh-trace.log"
+            : "/tmp/ssh-trace.log";
+        try
+        {
+            var dir = Path.GetDirectoryName(traceFile);
+            if (dir is not null) Directory.CreateDirectory(dir);
+            var fileListener = new FlushingTraceListener(traceFile);
+            sshTrace.Listeners.Add(fileListener);
+            sshTrace.Switch.Level = SourceLevels.All;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to attach ssh trace listener to {Path}", traceFile);
+        }
         _server = new SocketSshServer(config, sshTrace);
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
@@ -134,5 +151,26 @@ internal sealed class SshServerService(
             [Constants.OperatingSystemKey] = RuntimeInformation.OSDescription,
         };
         await guestDataExchange.SetGuestValuesAsync(values);
+    }
+
+    private sealed class FlushingTraceListener(string fileName) : TextWriterTraceListener(fileName)
+    {
+        public override void TraceEvent(TraceEventCache? eventCache, string source, TraceEventType eventType, int id, string? message)
+        {
+            base.TraceEvent(eventCache, source, eventType, id, message);
+            Flush();
+        }
+
+        public override void TraceEvent(TraceEventCache? eventCache, string source, TraceEventType eventType, int id, string? format, params object?[]? args)
+        {
+            base.TraceEvent(eventCache, source, eventType, id, format, args);
+            Flush();
+        }
+
+        public override void WriteLine(string? message)
+        {
+            base.WriteLine(message);
+            Flush();
+        }
     }
 }
