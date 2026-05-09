@@ -61,11 +61,10 @@ public class ShellService : SshService
         ShellRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        if (!_instances.TryGetValue(channel.ChannelId, out var pty))
-        {
-            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
-            return Task.CompletedTask;
-        }
+        // RFC 4254 §6.5 allows a `shell` request without a prior `pty-req` or
+        // `env`. Lazily create the forwarder so a bare shell request still
+        // works; the PTY backend allocates a default-sized pseudo-console.
+        var pty = GetOrAddForwarder(channel);
 
         if (pty.IsRunning)
         {
