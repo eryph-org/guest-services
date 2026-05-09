@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj" />
   </ItemGroup>
 

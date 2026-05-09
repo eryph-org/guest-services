@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,6 +16,7 @@ builder.Services.AddLogging();
 builder.Services.AddHostedService<SshServerService>();
 builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
 builder.Services.AddSingleton<IClientKeyProvider, ClientKeyProvider>();
+builder.Services.AddSingleton<IShellSelector, KvpShellSelector>();
 
 if (OperatingSystem.IsWindows())
 {

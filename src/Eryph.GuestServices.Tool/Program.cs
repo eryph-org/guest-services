@@ -57,6 +57,10 @@ app.Configure(config =>
     config.AddCommand<UnregisterCommand>("unregister")
         .WithDescription(
             "Unregisters the eryph guest services from Hyper-V.");
+
+    config.AddCommand<SetShellCommand>("set-shell")
+        .WithDescription(
+            "Configures the shell that interactive SSH sessions spawn in the VM.");
 });
 
 

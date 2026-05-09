@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Forwarders;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions.Messages;
 using Eryph.GuestServices.Pty;
@@ -12,9 +12,20 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Shell)]
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Terminal)]
 [ServiceActivation(ChannelRequest = "window-change")]
-public class ShellService(SshSession session) : SshService(session)
+[ServiceActivation(ChannelRequest = "env")]
+public class ShellService : SshService
 {
+    private readonly IShellSelector? _shellSelector;
     private readonly ConcurrentDictionary<uint, PtyForwarder> _instances = new();
+
+    // Microsoft.DevTunnels.Ssh activation will pick the 2-arg ctor when a
+    // config object is present in SshSessionConfiguration.Services.
+    public ShellService(SshSession session) : this(session, null) { }
+
+    public ShellService(SshSession session, IShellSelector? shellSelector) : base(session)
+    {
+        _shellSelector = shellSelector;
+    }
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
@@ -34,6 +45,10 @@ public class ShellService(SshSession session) : SshService(session)
             case "window-change":
                 var windowChangeMessage = request.Request.ConvertTo<WindowChangeRequestMessage>();
                 return OnWindowChangeRequestAsync(channel, request, windowChangeMessage, cancellation);
+
+            case "env":
+                var envMessage = request.Request.ConvertTo<EnvironmentVariableRequestMessage>();
+                return OnEnvironmentRequestAsync(channel, request, envMessage, cancellation);
         }
 
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
@@ -82,20 +97,8 @@ public class ShellService(SshSession session) : SshService(session)
         TerminalRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        var pty = new PtyForwarder();
-        if (!_instances.TryAdd(channel.ChannelId, pty))
-        {
-            pty.Dispose();
-            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
-            return;
-        }
+        var pty = GetOrAddForwarder(channel);
 
-        channel.Closed += (_, _ ) => 
-        {
-            _instances.TryRemove(channel.ChannelId, out _);
-            pty.Dispose();
-        };
-        
         await pty.ResizeAsync(requestMessage.Columns, requestMessage.Rows, request.Cancellation);
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
     }
@@ -119,6 +122,36 @@ public class ShellService(SshSession session) : SshService(session)
         };
 
         return Task.CompletedTask;
+    }
+
+    private Task OnEnvironmentRequestAsync(
+        SshChannel channel,
+        SshRequestEventArgs<ChannelRequestMessage> request,
+        EnvironmentVariableRequestMessage requestMessage,
+        CancellationToken cancellation)
+    {
+        // The env request can arrive before pty-req, so create the forwarder
+        // lazily on first env. Values set after StartAsync are ignored — the
+        // forwarder snapshots the environment at shell selection time.
+        var pty = GetOrAddForwarder(channel);
+        pty.SetEnvironmentVariable(requestMessage.Name, requestMessage.Value);
+
+        request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
+        return Task.CompletedTask;
+    }
+
+    private PtyForwarder GetOrAddForwarder(SshChannel channel)
+    {
+        return _instances.GetOrAdd(channel.ChannelId, id =>
+        {
+            var forwarder = new PtyForwarder(_shellSelector);
+            channel.Closed += (_, _) =>
+            {
+                _instances.TryRemove(id, out _);
+                forwarder.Dispose();
+            };
+            return forwarder;
+        });
     }
 
     protected override void Dispose(bool disposing)
