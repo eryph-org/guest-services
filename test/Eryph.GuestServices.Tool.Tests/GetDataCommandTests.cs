@@ -19,8 +19,10 @@ public class GetDataCommandTests
         var root = doc.RootElement;
 
         root.ValueKind.Should().Be(JsonValueKind.Object);
+        // JSON object member order is not part of the contract — assert set
+        // equivalence so the test does not depend on Dictionary<,> iteration order.
         root.EnumerateObject().Select(p => p.Name).Should()
-            .Equal("guest", "guest_intrinsic", "external", "host_only");
+            .BeEquivalentTo(["guest", "guest_intrinsic", "external", "host_only"]);
     }
 
     [Fact]

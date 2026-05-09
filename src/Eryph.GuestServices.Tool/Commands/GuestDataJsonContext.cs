@@ -12,15 +12,23 @@ namespace Eryph.GuestServices.Tool.Commands;
 //   That converter is reflection-based and not trim-safe; there is no global
 //   trim-safe equivalent in System.Text.Json.
 //
-//   When adding an enum to this JSON surface, annotate the enum type itself
-//   with the trim-safe generic converter to preserve snake_case strings:
+//   The trim-safe substitute is per-enum. The generic
+//   `JsonStringEnumConverter<TEnum>` exists, but the `[JsonConverter]`
+//   attribute can only invoke a parameterless constructor — so applying it
+//   directly produces PascalCase names, not snake_case. Subclass the
+//   generic converter with a parameterless constructor that supplies the
+//   naming policy, then attach the subclass to each enum:
 //
-//       [JsonConverter(typeof(JsonStringEnumConverter<MyEnum>))]
+//       public sealed class SnakeCaseLowerEnumConverter<TEnum>()
+//           : JsonStringEnumConverter<TEnum>(JsonNamingPolicy.SnakeCaseLower)
+//           where TEnum : struct, Enum;
+//
+//       [JsonConverter(typeof(SnakeCaseLowerEnumConverter<MyEnum>))]
 //       public enum MyEnum { ... }
 //
-//   and pass `JsonNamingPolicy.SnakeCaseLower` if the converter ctor is used
-//   directly. Failing to do so will silently emit numeric or PascalCase values
-//   and break external consumers of the `--json` output.
+//   Forgetting to add the converter (or using the bare
+//   `JsonStringEnumConverter<TEnum>`) silently emits PascalCase values and
+//   breaks external consumers of the `--json` output.
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(Dictionary<string, Dictionary<string, JsonElement>>))]
 [JsonSerializable(typeof(string))]
