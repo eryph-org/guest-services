@@ -26,14 +26,7 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
 
         if (settings.Json)
         {
-            var allData = new Dictionary<string, Dictionary<string, JsonElement>>
-            {
-                ["guest"] = ConvertToJson(guestData),
-                ["guest_intrinsic"] = ConvertToJson(intrinsicGuestData),
-                ["external"] = ConvertToJson(externalData),
-                ["host_only"] = ConvertToJson(hostOnlyData),
-            };
-            var json = JsonSerializer.Serialize(allData, GuestDataJsonContext.Default.DictionaryStringDictionaryStringJsonElement);
+            var json = BuildJson(guestData, intrinsicGuestData, externalData, hostOnlyData);
             // Write directly to the output as AnsiConsole would introduce line breaks
             // into the output and break the JSON.
             await AnsiConsole.Console.Profile.Out.Writer.WriteLineAsync(json);
@@ -46,6 +39,22 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
         AnsiConsole.Write(RenderData("Host-only data", hostOnlyData));
 
         return 0;
+    }
+
+    internal static string BuildJson(
+        IReadOnlyDictionary<string, string> guest,
+        IReadOnlyDictionary<string, string> guestIntrinsic,
+        IReadOnlyDictionary<string, string> external,
+        IReadOnlyDictionary<string, string> hostOnly)
+    {
+        var allData = new Dictionary<string, Dictionary<string, JsonElement>>
+        {
+            ["guest"] = ConvertToJson(guest),
+            ["guest_intrinsic"] = ConvertToJson(guestIntrinsic),
+            ["external"] = ConvertToJson(external),
+            ["host_only"] = ConvertToJson(hostOnly),
+        };
+        return JsonSerializer.Serialize(allData, GuestDataJsonContext.Default.DictionaryStringDictionaryStringJsonElement);
     }
 
     private static Dictionary<string, JsonElement> ConvertToJson(
