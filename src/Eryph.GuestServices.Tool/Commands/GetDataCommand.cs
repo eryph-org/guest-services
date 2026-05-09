@@ -75,7 +75,7 @@ public class GetDataCommand : AsyncCommand<GetDataCommand.Settings>
 
         try
         {
-            var document = JsonDocument.Parse(data, new JsonDocumentOptions
+            using var document = JsonDocument.Parse(data, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
                 CommentHandling = JsonCommentHandling.Skip,
