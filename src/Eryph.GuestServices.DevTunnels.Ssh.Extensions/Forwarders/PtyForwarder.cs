@@ -63,10 +63,24 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        _ = pty.Output!.CopyToAsync(stream, _cts.Token);
+        var outputTask = pty.Output!.CopyToAsync(stream, _cts.Token);
         _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
+
+        // Give the output pump a brief window to flush any final bytes the PTY
+        // emitted on shell exit (e.g. ConPTY's terminal-reset escape sequence
+        // after `cmd.exe` exits). Without this, the channel-close message can
+        // overtake those bytes on the wire and the client logs
+        // "data packet referred to nonexistent channel". The PTY master never
+        // returns EOF while we hold its handle, so the drain has to be bounded.
+        try
+        {
+            await outputTask.WaitAsync(TimeSpan.FromMilliseconds(500), _cts.Token);
+        }
+        catch (TimeoutException) { /* bounded drain — proceed to close */ }
+        catch (OperationCanceledException) { /* shutting down */ }
+
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
 
