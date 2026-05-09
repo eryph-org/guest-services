@@ -103,7 +103,10 @@ var channel = await session.OpenChannelAsync();
 // AdjustWindow plumbing automatically.
 var stream = new SshStream(channel);
 
-// pty-req — required by ShellService to allocate a PtyForwarder.
+// pty-req — gives the server a sized PTY so the shell renders normally.
+// (ShellService also creates the forwarder lazily on the first env or shell
+// request, so pty-req is not strictly required, but providing realistic
+// terminal dimensions matches what an interactive client would send.)
 var ptyOk = await channel.RequestAsync(
     new TerminalRequestMessage
     {

@@ -22,14 +22,14 @@ public class EnvironmentVariableRequestMessage : ChannelRequestMessage
     protected override void OnRead(ref SshDataReader reader)
     {
         base.OnRead(ref reader);
-        Name = reader.ReadString(Encoding.ASCII);
+        Name = reader.ReadString(Encoding.UTF8);
         Value = reader.ReadString(Encoding.UTF8);
     }
 
     protected override void OnWrite(ref SshDataWriter writer)
     {
         base.OnWrite(ref writer);
-        writer.Write(Name, Encoding.ASCII);
+        writer.Write(Name, Encoding.UTF8);
         writer.Write(Value, Encoding.UTF8);
     }
 }
