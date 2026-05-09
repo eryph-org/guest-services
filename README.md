@@ -19,6 +19,7 @@ While Windows Server 2025 ships with OpenSSH by default, native Hyper-V socket s
 - **SSH-based access**: Standard SSH protocol over Hyper-V transport
 - **File transfer capabilities**: Upload/download files and directories to/from VMs
 - **Pseudo-terminal support**: Interactive shell sessions
+- **Configurable shell**: Override the shell spawned for SSH sessions per VM (e.g. `pwsh.exe` instead of Windows PowerShell)
 - **Public key authentication**: Secure key-based authentication
 - **Easy installation**: Simple installer scripts for both platforms
 
@@ -167,6 +168,28 @@ egs-tool download-directory <VM-ID> <remote-directory> <local-directory> --recur
 egs-tool upload-file <VM-ID> <local-file> <remote-file> --overwrite
 ```
 
+#### 5. Configure the Shell
+
+By default, interactive SSH sessions land in `powershell.exe` on Windows VMs
+and the user's `$SHELL` (or `/bin/bash`) on Linux VMs. The default can be
+overridden per VM:
+
+```powershell
+# Use PowerShell 7 instead of Windows PowerShell
+egs-tool set-shell <VM-ID> --command pwsh.exe
+
+# With arguments (note the '=' — Spectre.Console.Cli treats space-separated
+# '-'-prefixed values as new flags)
+egs-tool set-shell <VM-ID> --command pwsh.exe --arguments="-NoLogo -NoProfile"
+
+# Clear the override and return to the default
+egs-tool set-shell <VM-ID> --reset
+```
+
+The override takes effect on the next SSH session. SSH clients can also
+send the `SHELL` / `SHELL_ARGS` environment variables per-session (e.g.
+`ssh -o "SetEnv=SHELL=pwsh.exe" …`); the per-VM override always wins.
+
 ### Eryph Platform Usage
 
 When used with eryph, the guest services are typically installed via genes:
@@ -256,6 +279,7 @@ The guest services use SSH public key authentication:
 | `upload-directory <VM-ID> <local> <remote>` | Upload directory to VM | VM GUID, local dir, remote dir |
 | `download-file <VM-ID> <remote> <local>` | Download single file from VM | VM GUID, remote file, local file |
 | `download-directory <VM-ID> <remote> <local>` | Download directory from VM | VM GUID, remote dir, local dir |
+| `set-shell <VM-ID>` | Configure the shell spawned for SSH sessions | VM GUID, `--command`/`--arguments` or `--reset` |
 
 **Flags for file/directory commands:**
 - `--overwrite`: Overwrite existing files/directories
