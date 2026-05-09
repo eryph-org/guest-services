@@ -7,7 +7,10 @@ param (
     [string] $OSVersion = 'winsrv2022',
 
     [Parameter()]
-    [string] $PublishPath
+    [string] $PublishPath,
+
+    [Parameter()]
+    [string] $ProbePath
 )
 
 BeforeAll {
@@ -24,6 +27,11 @@ BeforeAll {
     $PublishPath = "$PSScriptRoot/../../src/Eryph.GuestServices.Service/bin/Release/net10.0/win-x64/publish"
   }
   $resolvedPublishPath = (Resolve-Path -LiteralPath $PublishPath).Path
+
+  if (-not $ProbePath) {
+    $ProbePath = "$PSScriptRoot/EgsShellProbe/bin/Release/net10.0-windows/win-x64/publish/egs-shell-probe.exe"
+  }
+  $resolvedProbePath = (Resolve-Path -LiteralPath $ProbePath).Path
 
   $project = New-TestProject
   $catletName = New-CatletName
@@ -89,60 +97,64 @@ Describe 'Configurable shell' {
     }
   }
 
-  # The shell-selection tests below need to drive an interactive shell session
-  # (channel: pty-req + env + shell). Win32-OpenSSH's ssh.exe with `-tt` and
-  # redirected stdin silently refuses to send pty-req — the channel opens and
-  # closes immediately without ever invoking ShellService. Properly testing
-  # this end-to-end requires a custom probe built on Microsoft.DevTunnels.Ssh
-  # (e.g. a small `EgsShellProbe` console app). The selector logic itself is
-  # covered exhaustively by the unit tests in
-  # `Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests` and
-  # `Eryph.GuestServices.Service.Tests`.
-  Context 'shell selection' -Skip {
+  # The shell-selection tests use the EgsShellProbe instead of ssh.exe. ssh
+  # in Win32-OpenSSH writes channel output to the Windows console buffer, not
+  # stdout, so a redirected ssh.exe captures nothing. The probe drives the
+  # SSH protocol directly via Microsoft.DevTunnels.Ssh and pumps channel
+  # output to its stdout, which a script can capture normally.
+  # Shell-selection assertions match against the shell's startup banner:
+  #   - powershell.exe (Windows PowerShell 5.1) prints "Windows PowerShell"
+  #   - pwsh.exe       (PowerShell 7+)          prints "PowerShell 7."
+  # This avoids depending on driving input through PSReadLine over a
+  # freshly-allocated ConPTY pipe, which is unreliable. Patterns are
+  # inlined per test because Pester v5 doesn't propagate variables defined
+  # in a Context body to the run-phase It blocks.
+  Context 'shell selection' {
 
     It 'spawns Windows PowerShell when no override is set' {
-      $output = Invoke-InteractiveShell -HostName $hostName `
-        -InputLines @('"EGS-MARKER-START:" + (Get-Process -Id $PID).ProcessName + ":EGS-MARKER-END"')
+      $output = Invoke-EgsShellProbe -ProbePath $resolvedProbePath -VmId $catlet.VmId `
+        -TimeoutMs 6000
 
-      $output | Should -Match 'EGS-MARKER-START:powershell:EGS-MARKER-END'
+      $output | Should -Match 'Windows PowerShell'
+      $output | Should -Not -Match 'PowerShell 7\.'
     }
 
     It 'spawns pwsh when KVP override is set' {
       egs-tool set-shell $catlet.VmId --command 'pwsh.exe' | Out-Null
 
-      $output = Invoke-InteractiveShell -HostName $hostName `
-        -InputLines @('"EGS-MARKER-START:" + (Get-Process -Id $PID).ProcessName + ":EGS-MARKER-END"')
+      $output = Invoke-EgsShellProbe -ProbePath $resolvedProbePath -VmId $catlet.VmId `
+        -TimeoutMs 6000
 
-      $output | Should -Match 'EGS-MARKER-START:pwsh:EGS-MARKER-END'
+      $output | Should -Match 'PowerShell 7\.'
     }
 
     It 'spawns pwsh when SSH-sent SHELL env var is set (no KVP override)' {
-      $output = Invoke-InteractiveShell -HostName $hostName `
+      $output = Invoke-EgsShellProbe -ProbePath $resolvedProbePath -VmId $catlet.VmId `
         -SetEnv @{ SHELL = 'pwsh.exe' } `
-        -InputLines @('"EGS-MARKER-START:" + (Get-Process -Id $PID).ProcessName + ":EGS-MARKER-END"')
+        -TimeoutMs 6000
 
-      $output | Should -Match 'EGS-MARKER-START:pwsh:EGS-MARKER-END'
+      $output | Should -Match 'PowerShell 7\.'
     }
 
     It 'KVP override wins over SSH-sent SHELL env' {
       egs-tool set-shell $catlet.VmId --command 'pwsh.exe' | Out-Null
 
-      # Try to override with a different shell via env — KVP must win.
-      $output = Invoke-InteractiveShell -HostName $hostName `
+      $output = Invoke-EgsShellProbe -ProbePath $resolvedProbePath -VmId $catlet.VmId `
         -SetEnv @{ SHELL = 'powershell.exe' } `
-        -InputLines @('"EGS-MARKER-START:" + (Get-Process -Id $PID).ProcessName + ":EGS-MARKER-END"')
+        -TimeoutMs 6000
 
-      $output | Should -Match 'EGS-MARKER-START:pwsh:EGS-MARKER-END'
+      $output | Should -Match 'PowerShell 7\.'
     }
 
     It 'returns to default after --reset' {
       egs-tool set-shell $catlet.VmId --command 'pwsh.exe' | Out-Null
       egs-tool set-shell $catlet.VmId --reset | Out-Null
 
-      $output = Invoke-InteractiveShell -HostName $hostName `
-        -InputLines @('"EGS-MARKER-START:" + (Get-Process -Id $PID).ProcessName + ":EGS-MARKER-END"')
+      $output = Invoke-EgsShellProbe -ProbePath $resolvedProbePath -VmId $catlet.VmId `
+        -TimeoutMs 6000
 
-      $output | Should -Match 'EGS-MARKER-START:powershell:EGS-MARKER-END'
+      $output | Should -Match 'Windows PowerShell'
+      $output | Should -Not -Match 'PowerShell 7\.'
     }
   }
 }

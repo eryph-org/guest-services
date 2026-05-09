@@ -190,74 +190,43 @@ try {
   }
 }
 
-function Invoke-InteractiveShell {
+function Invoke-EgsShellProbe {
   <#
   .SYNOPSIS
-    Opens an interactive SSH shell session and feeds the supplied PowerShell
-    snippets into stdin. Returns the captured output (stdout + stderr).
+    Drives a shell channel against the egs SSH server using the
+    `egs-shell-probe` tool and returns the captured output.
 
   .DESCRIPTION
-    Uses `ssh.exe -tt` to force PTY allocation even with redirected stdio, so
-    the server-side ShellService is exercised (not CommandService). On
-    failure or empty output, the captured stdout+stderr are written to host
-    so the test diagnostics show what happened.
+    `ssh.exe -tt` cannot be redirected/captured from a script — Win32-OpenSSH
+    writes channel output to the Windows console buffer, not stdout. The
+    probe uses Microsoft.DevTunnels.Ssh directly (the same library the
+    egs SSH server itself uses) to send pty-req, optional env requests, and
+    shell, then pumps channel output to stdout. This bypasses the ssh.exe
+    capture quirk while still exercising the full server-side path
+    (ShellService -> PtyForwarder -> IShellSelector).
   #>
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory = $true)] [string] $HostName,
-    [Parameter(Mandatory = $true)] [string[]] $InputLines,
+    [Parameter(Mandatory = $true)] [string] $ProbePath,
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter()] [string[]] $InputLines = @(),
     [Parameter()] [hashtable] $SetEnv,
-    [Parameter()] [int] $TimeoutSeconds = 60
+    [Parameter()] [int] $TimeoutMs = 3000
   )
 
-  $psi = [System.Diagnostics.ProcessStartInfo]::new()
-  $psi.FileName = 'ssh.exe'
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardInput = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  $psi.CreateNoWindow = $true
-
-  $sshArgs = @('-tt', '-o', 'StrictHostKeyChecking=no')
+  $probeArgs = @('--vm-id', $VmId.ToString(), '--timeout-ms', $TimeoutMs.ToString())
   if ($SetEnv) {
     foreach ($k in $SetEnv.Keys) {
-      $sshArgs += @('-o', "SetEnv=$k=$($SetEnv[$k])")
+      $probeArgs += @('--env', "$k=$($SetEnv[$k])")
     }
   }
-  $sshArgs += $HostName
-
-  foreach ($a in $sshArgs) { $psi.ArgumentList.Add($a) }
-
-  $proc = [System.Diagnostics.Process]::Start($psi)
-
-  # Buffer the stdin payload, then close so the shell sees EOF and exits.
-  # A short pause before 'exit' lets PowerShell flush its prompt + banner +
-  # the marker output before the channel closes.
-  $payload = (($InputLines + @('Start-Sleep -Milliseconds 500', 'exit')) -join "`r`n") + "`r`n"
-  $proc.StandardInput.Write($payload)
-  $proc.StandardInput.Flush()
-  $proc.StandardInput.Close()
-
-  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-  $stderrTask = $proc.StandardError.ReadToEndAsync()
-
-  if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
-    $proc.Kill($true)
-    Write-Host "ssh -tt timed out after ${TimeoutSeconds}s. Captured so far:"
-    Write-Host "STDOUT: $($stdoutTask.Result)"
-    Write-Host "STDERR: $($stderrTask.Result)"
-    throw "ssh interactive session timed out"
+  foreach ($line in $InputLines) {
+    $probeArgs += @('--input', $line)
   }
 
-  $stdout = $stdoutTask.Result
-  $stderr = $stderrTask.Result
-  $merged = "$stdout$stderr"
-
-  if ([string]::IsNullOrWhiteSpace($merged)) {
-    Write-Host "ssh -tt produced no output. exit=$($proc.ExitCode)"
-    Write-Host "STDOUT bytes: $([Text.Encoding]::UTF8.GetByteCount($stdout))"
-    Write-Host "STDERR bytes: $([Text.Encoding]::UTF8.GetByteCount($stderr))"
-  }
-
-  return $merged
+  $raw = & $ProbePath @probeArgs 2>&1 | Out-String
+  # Strip ANSI escape sequences. The captured stream is ConPTY-encoded
+  # (CSI / OSC), which is unreadable in test diagnostics and also chokes
+  # Pester's NUnit3 XML serializer (ESC = 0x1B is invalid in XML 1.0).
+  return $raw -replace "`e\[[0-?]*[ -/]*[@-~]", '' -replace "`e\][^`a]*`a", ''
 }
