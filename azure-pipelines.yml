@@ -40,7 +40,11 @@ jobs:
     displayName: dotnet test
     inputs:
       command: test
-      projects: '**/test/**/*.csproj'
+      # The test/e2e/ tree is for the Pester-driven flow that needs an eryph
+      # host. CI doesn't have one, so skip it.
+      projects: |
+        **/test/**/*.csproj
+        !**/test/e2e/**/*.csproj
       arguments: '--configuration $(buildConfiguration) --runtime win-x64 --collect "Code coverage" --no-build'
 
   - task: DotNetCoreCLI@2
@@ -124,10 +128,12 @@ jobs:
       command: test
       # Tool.Tests targets net10.0-windows because the Tool depends on
       # HvDataExchange.Host (WMI). It cannot run on Linux; the Windows job
-      # exercises it.
+      # exercises it. The test/e2e/ tree is the Pester-driven flow that
+      # needs an eryph host — not a CI fit.
       projects: |
         **/test/**/*.csproj
         !**/Eryph.GuestServices.Tool.Tests.csproj
+        !**/test/e2e/**/*.csproj
       arguments: '--configuration $(buildConfiguration) --runtime linux-x64 --collect "Code coverage" --no-build'
 
   - task: DotNetCoreCLI@2
