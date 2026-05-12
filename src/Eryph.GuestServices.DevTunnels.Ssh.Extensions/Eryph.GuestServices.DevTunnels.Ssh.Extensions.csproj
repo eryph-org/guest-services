@@ -7,10 +7,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.8" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.29" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj" />
   </ItemGroup>
 

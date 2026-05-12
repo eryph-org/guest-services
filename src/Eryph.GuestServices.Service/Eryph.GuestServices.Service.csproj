@@ -17,11 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.29" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,6 +29,10 @@
     <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.HvDataExchange.Guest\Eryph.GuestServices.HvDataExchange.Guest.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.Service.Tests" />
   </ItemGroup>
 
 </Project>

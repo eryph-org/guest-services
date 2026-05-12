@@ -20,6 +20,7 @@ internal sealed class SshServerService(
     IHostKeyGenerator hostKeyGenerator,
     IGuestDataExchange guestDataExchange,
     IClientKeyProvider clientKeyProvider,
+    IShellSelector shellSelector,
     ILogger<SshServerService> logger) : IHostedService, IAsyncDisposable
 {
     private Socket? _socket;
@@ -42,7 +43,9 @@ internal sealed class SshServerService(
 
         config.Services.Add(typeof(SubsystemService), null);
         config.Services.Add(typeof(CommandService), null);
-        config.Services.Add(typeof(ShellService), null);
+        // The shell selector is passed as the service activation config object.
+        // DevTunnels.Ssh activates the matching 2-arg ctor on ShellService.
+        config.Services.Add(typeof(ShellService), shellSelector);
         config.Services.Add(typeof(UploadFileService), null);
         config.Services.Add(typeof(DownloadFileService), null);
         config.Services.Add(typeof(ListDirectoryService), null);

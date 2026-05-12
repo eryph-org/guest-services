@@ -12,8 +12,12 @@
 
   <ItemGroup>
     <PackageReference Include="Eryph.ComputeClient" Version="0.13.0" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
-    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.8" />
+    <!-- Eryph.ComputeClient (built for older TFMs) compiles against
+         Microsoft.Bcl.AsyncInterfaces 8.0.0. Bumping the explicit ref to the
+         .NET 10 line ensures the type forwarders match the host BCL when the
+         tool is published self-contained. -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.7" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.29" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
   </ItemGroup>
