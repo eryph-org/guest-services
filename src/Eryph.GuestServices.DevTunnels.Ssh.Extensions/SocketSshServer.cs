@@ -29,8 +29,17 @@ public sealed class SocketSshServer(SshSessionConfiguration config, TraceSource 
     {
         while (!_disposeCancellationTokenSource.IsCancellationRequested)
         {
-            var socket = await serverSocket.AcceptAsync(_disposeCancellationTokenSource.Token)
-                .ConfigureAwait(false);
+            Socket socket;
+            try
+            {
+                socket = await serverSocket.AcceptAsync(_disposeCancellationTokenSource.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+                when (_disposeCancellationTokenSource.IsCancellationRequested)
+            {
+                return;
+            }
             ConfigureSocketOptionsForSsh(socket);
             var session = new SshServerSession(config, trace);
             
