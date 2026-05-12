@@ -45,13 +45,25 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
         var command = string.IsNullOrWhiteSpace(settings.Command) ? null : settings.Command.Trim();
         var arguments = string.IsNullOrWhiteSpace(settings.Arguments) ? null : settings.Arguments.Trim();
 
+        var hostDataExchange = new HostDataExchange();
+
+        var guestData = await hostDataExchange.GetGuestDataAsync(settings.VmId);
+        guestData.TryGetValue(Constants.FeaturesKey, out var features);
+        if (!HasFeature(features, Constants.ShellOverrideFeature))
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]The guest service in VM {settings.VmId} does not support the '{Constants.ShellOverrideFeature}' feature.[/]");
+            AnsiConsole.MarkupLine(
+                "[red]Ensure the VM is running and the installed eryph guest services version supports configurable shells.[/]");
+            return -1;
+        }
+
         var values = new Dictionary<string, string?>
         {
             [Constants.ShellKey] = settings.Reset ? null : command,
             [Constants.ShellArgsKey] = settings.Reset ? null : arguments,
         };
 
-        var hostDataExchange = new HostDataExchange();
         await hostDataExchange.SetExternalValuesAsync(settings.VmId, values);
 
         if (settings.Reset)
@@ -71,5 +83,18 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
         }
 
         return 0;
+    }
+
+    private static bool HasFeature(string? featureList, string feature)
+    {
+        if (string.IsNullOrWhiteSpace(featureList))
+            return false;
+
+        foreach (var entry in featureList.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (string.Equals(entry, feature, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
     }
 }

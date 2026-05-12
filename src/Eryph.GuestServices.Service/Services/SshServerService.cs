@@ -131,7 +131,13 @@ internal sealed class SshServerService(
             [Constants.StatusKey] = status,
             [Constants.VersionKey] = GitVersionInformation.SemVer,
             [Constants.OperatingSystemKey] = RuntimeInformation.OSDescription,
+            [Constants.FeaturesKey] = string.Join(' ', SupportedFeatures),
         };
         await guestDataExchange.SetGuestValuesAsync(values);
     }
+
+    private static readonly string[] SupportedFeatures =
+    [
+        Constants.ShellOverrideFeature,
+    ];
 }
