@@ -22,7 +22,7 @@ public class KvpShellSelectorTests
         };
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(EmptyEnv(), CancellationToken.None);
+        var selection = await selector.SelectAsync(ShellOverride.Empty, CancellationToken.None);
 
         selection.Should().Be(new ShellSelection("pwsh.exe", "-NoLogo -NoProfile"));
     }
@@ -36,7 +36,7 @@ public class KvpShellSelectorTests
         };
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(EmptyEnv(), CancellationToken.None);
+        var selection = await selector.SelectAsync(ShellOverride.Empty, CancellationToken.None);
 
         selection.Should().Be(new ShellSelection("pwsh.exe", string.Empty));
     }
@@ -48,13 +48,10 @@ public class KvpShellSelectorTests
         {
             External = { [Constants.ShellKey] = "kvp-shell.exe" },
         };
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "env-shell.exe",
-        };
+        var sshOverride = new ShellOverride("env-shell.exe", null);
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(env, CancellationToken.None);
+        var selection = await selector.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Command.Should().Be("kvp-shell.exe");
     }
@@ -63,14 +60,10 @@ public class KvpShellSelectorTests
     public async Task SelectAsync_NoKvp_FallsBackToSshEnv()
     {
         var dataExchange = new StubDataExchange();
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "env-shell.exe",
-            [Constants.ShellArgsEnvName] = "-i",
-        };
+        var sshOverride = new ShellOverride("env-shell.exe", "-i");
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(env, CancellationToken.None);
+        var selection = await selector.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Should().Be(new ShellSelection("env-shell.exe", "-i"));
     }
@@ -81,7 +74,7 @@ public class KvpShellSelectorTests
         var dataExchange = new StubDataExchange();
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(EmptyEnv(), CancellationToken.None);
+        var selection = await selector.SelectAsync(ShellOverride.Empty, CancellationToken.None);
 
         selection.Should().Be(DefaultShellSelector.PlatformDefault());
     }
@@ -90,13 +83,10 @@ public class KvpShellSelectorTests
     public async Task SelectAsync_KvpReadFails_FallsBackInsteadOfThrowing()
     {
         var dataExchange = new ThrowingDataExchange();
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "fallback.exe",
-        };
+        var sshOverride = new ShellOverride("fallback.exe", null);
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(env, CancellationToken.None);
+        var selection = await selector.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Command.Should().Be("fallback.exe");
     }
@@ -108,19 +98,13 @@ public class KvpShellSelectorTests
         {
             External = { [Constants.ShellKey] = "   " },
         };
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "env-shell.exe",
-        };
+        var sshOverride = new ShellOverride("env-shell.exe", null);
         var selector = new KvpShellSelector(dataExchange, NullLogger<KvpShellSelector>.Instance);
 
-        var selection = await selector.SelectAsync(env, CancellationToken.None);
+        var selection = await selector.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Command.Should().Be("env-shell.exe");
     }
-
-    private static IReadOnlyDictionary<string, string> EmptyEnv() =>
-        new Dictionary<string, string>();
 
     private sealed class StubDataExchange : IGuestDataExchange
     {

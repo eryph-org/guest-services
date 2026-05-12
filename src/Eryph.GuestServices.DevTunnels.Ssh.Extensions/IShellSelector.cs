@@ -6,12 +6,12 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 public interface IShellSelector
 {
     /// <summary>
-    /// Selects the shell for one session. The <paramref name="sessionEnvironment"/>
-    /// contains environment variables sent by the SSH client via <c>env</c>
-    /// channel requests on the same channel.
+    /// Selects the shell for one session. The <paramref name="sshOverride"/>
+    /// carries any per-session preferences that were sent by the client via
+    /// SSH <c>env</c> channel requests.
     /// </summary>
     Task<ShellSelection> SelectAsync(
-        IReadOnlyDictionary<string, string> sessionEnvironment,
+        ShellOverride sshOverride,
         CancellationToken cancellation);
 }
 
@@ -22,3 +22,14 @@ public interface IShellSelector
 /// resolved via <c>PATH</c>.</param>
 /// <param name="Arguments">Argument string passed to the shell, may be empty.</param>
 public sealed record ShellSelection(string Command, string Arguments);
+
+/// <summary>
+/// Per-session shell preference conveyed by the SSH client via <c>env</c>
+/// channel requests. Either field may be <see langword="null"/> if the client
+/// did not set the corresponding env var. A blank <see cref="Command"/> means
+/// "no preference" and the selector should fall back.
+/// </summary>
+public readonly record struct ShellOverride(string? Command, string? Arguments)
+{
+    public static ShellOverride Empty => default;
+}

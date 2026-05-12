@@ -13,7 +13,7 @@ internal sealed class KvpShellSelector(
     ILogger<KvpShellSelector> logger) : IShellSelector
 {
     public async Task<ShellSelection> SelectAsync(
-        IReadOnlyDictionary<string, string> sessionEnvironment,
+        ShellOverride sshOverride,
         CancellationToken cancellation)
     {
         try
@@ -34,7 +34,7 @@ internal sealed class KvpShellSelector(
             logger.LogWarning(ex, "Failed to read shell configuration from Hyper-V data exchange.");
         }
 
-        var fallback = DefaultShellSelector.SelectFromEnvOrDefault(sessionEnvironment);
+        var fallback = DefaultShellSelector.SelectFromEnvOrDefault(sshOverride);
         logger.LogDebug("Using shell from env/default: {Command}", fallback.Command);
         return fallback;
     }

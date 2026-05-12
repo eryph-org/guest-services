@@ -1,37 +1,31 @@
-using Eryph.GuestServices.Core;
-
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 /// <summary>
 /// Selector that does not consult Hyper-V KVP state. Used when the Extensions
-/// library is consumed without the guest service (e.g. tests). Honors SSH-sent
-/// <c>SHELL</c>/<c>SHELL_ARGS</c> env vars and falls back to platform defaults.
+/// library is consumed without the guest service (e.g. tests). Honors the
+/// SSH-sent <c>SHELL</c>/<c>SHELL_ARGS</c> env vars and falls back to platform
+/// defaults.
 /// </summary>
 public sealed class DefaultShellSelector : IShellSelector
 {
     public static DefaultShellSelector Instance { get; } = new();
 
     public Task<ShellSelection> SelectAsync(
-        IReadOnlyDictionary<string, string> sessionEnvironment,
+        ShellOverride sshOverride,
         CancellationToken cancellation)
     {
-        return Task.FromResult(SelectFromEnvOrDefault(sessionEnvironment));
+        return Task.FromResult(SelectFromEnvOrDefault(sshOverride));
     }
 
     /// <summary>
-    /// Picks a shell from the SSH-sent environment, falling back to the
-    /// platform default. Exposed so service-side selectors can reuse the
-    /// fallback chain after their own KVP lookup misses.
+    /// Picks a shell from the SSH-sent override, falling back to the platform
+    /// default. Exposed so service-side selectors can reuse the fallback chain
+    /// after their own KVP lookup misses.
     /// </summary>
-    public static ShellSelection SelectFromEnvOrDefault(
-        IReadOnlyDictionary<string, string> sessionEnvironment)
+    public static ShellSelection SelectFromEnvOrDefault(ShellOverride sshOverride)
     {
-        if (sessionEnvironment.TryGetValue(Constants.ShellEnvName, out var sshShell)
-            && !string.IsNullOrWhiteSpace(sshShell))
-        {
-            sessionEnvironment.TryGetValue(Constants.ShellArgsEnvName, out var sshArgs);
-            return new ShellSelection(sshShell, sshArgs ?? string.Empty);
-        }
+        if (!string.IsNullOrWhiteSpace(sshOverride.Command))
+            return new ShellSelection(sshOverride.Command, sshOverride.Arguments ?? string.Empty);
 
         return PlatformDefault();
     }

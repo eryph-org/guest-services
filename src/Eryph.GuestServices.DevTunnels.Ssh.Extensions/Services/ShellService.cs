@@ -131,18 +131,15 @@ public class ShellService : SshService
         CancellationToken cancellation)
     {
         // The env request can arrive before pty-req, so create the forwarder
-        // lazily on first env. Values set after StartAsync are ignored — the
-        // forwarder snapshots the environment at shell selection time, so we
-        // also fail the request to avoid telling the client we honored it.
+        // lazily on first env. The forwarder reports back whether it actually
+        // stored the value (recognized name + forwarder not yet started); we
+        // mirror that into the SSH channel response so clients don't think an
+        // unhonored env var was applied.
         var pty = GetOrAddForwarder(channel);
-        if (pty.IsRunning)
-        {
-            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
-            return Task.CompletedTask;
-        }
+        var accepted = pty.TrySetEnvironmentVariable(requestMessage.Name, requestMessage.Value);
 
-        pty.SetEnvironmentVariable(requestMessage.Name, requestMessage.Value);
-        request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
+        request.ResponseTask = Task.FromResult<SshMessage>(
+            accepted ? new ChannelSuccessMessage() : new ChannelFailureMessage());
         return Task.CompletedTask;
     }
 

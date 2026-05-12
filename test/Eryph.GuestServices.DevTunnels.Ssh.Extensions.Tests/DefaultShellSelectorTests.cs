@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Eryph.GuestServices.Core;
 
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 
@@ -8,13 +7,9 @@ public class DefaultShellSelectorTests
     [Fact]
     public async Task SelectAsync_WithSshShellEnv_UsesIt()
     {
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "pwsh.exe",
-            [Constants.ShellArgsEnvName] = "-NoLogo",
-        };
+        var sshOverride = new ShellOverride("pwsh.exe", "-NoLogo");
 
-        var selection = await DefaultShellSelector.Instance.SelectAsync(env, CancellationToken.None);
+        var selection = await DefaultShellSelector.Instance.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Command.Should().Be("pwsh.exe");
         selection.Arguments.Should().Be("-NoLogo");
@@ -23,12 +18,9 @@ public class DefaultShellSelectorTests
     [Fact]
     public async Task SelectAsync_WithShellEnvButNoArgs_UsesEmptyArgs()
     {
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "pwsh.exe",
-        };
+        var sshOverride = new ShellOverride("pwsh.exe", null);
 
-        var selection = await DefaultShellSelector.Instance.SelectAsync(env, CancellationToken.None);
+        var selection = await DefaultShellSelector.Instance.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Command.Should().Be("pwsh.exe");
         selection.Arguments.Should().BeEmpty();
@@ -37,22 +29,17 @@ public class DefaultShellSelectorTests
     [Fact]
     public async Task SelectAsync_WithBlankShellEnv_FallsBackToPlatformDefault()
     {
-        var env = new Dictionary<string, string>
-        {
-            [Constants.ShellEnvName] = "   ",
-        };
+        var sshOverride = new ShellOverride("   ", null);
 
-        var selection = await DefaultShellSelector.Instance.SelectAsync(env, CancellationToken.None);
+        var selection = await DefaultShellSelector.Instance.SelectAsync(sshOverride, CancellationToken.None);
 
         selection.Should().Be(DefaultShellSelector.PlatformDefault());
     }
 
     [Fact]
-    public async Task SelectAsync_WithEmptyEnv_ReturnsPlatformDefault()
+    public async Task SelectAsync_WithEmptyOverride_ReturnsPlatformDefault()
     {
-        var env = new Dictionary<string, string>();
-
-        var selection = await DefaultShellSelector.Instance.SelectAsync(env, CancellationToken.None);
+        var selection = await DefaultShellSelector.Instance.SelectAsync(ShellOverride.Empty, CancellationToken.None);
 
         selection.Should().Be(DefaultShellSelector.PlatformDefault());
     }
