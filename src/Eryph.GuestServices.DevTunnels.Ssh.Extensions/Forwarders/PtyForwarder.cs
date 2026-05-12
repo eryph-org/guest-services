@@ -63,10 +63,19 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        _ = pty.Output!.CopyToAsync(stream, _cts.Token);
+        // ConPTY emits final reset sequences asynchronously after the child exits.
+        // Drain them before CHANNEL_CLOSE — otherwise they ship as CHANNEL_DATA
+        // after close and strict SSH clients (OpenSSH) disconnect.
+        using var outputDrainCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        var outputTask = pty.Output!.CopyToAsync(stream, outputDrainCts.Token);
         _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
+
+        outputDrainCts.CancelAfter(TimeSpan.FromSeconds(1));
+        try { await outputTask; }
+        catch (OperationCanceledException) { }
+
         await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
     }
 
