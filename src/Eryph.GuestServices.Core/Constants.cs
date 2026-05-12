@@ -23,6 +23,19 @@ public static class Constants
 
     public static readonly string VersionKey = "eryph:guest-services:version";
 
+    /// <summary>
+    /// The KVP key (Guest pool) where the service advertises supported optional
+    /// features as a space-separated list. Hosts/tools should check this before
+    /// using a feature that may be missing on older services.
+    /// </summary>
+    public static readonly string FeaturesKey = "eryph:guest-services:features";
+
+    /// <summary>
+    /// Feature flag advertised by services that honor the shell override KVP
+    /// keys (<see cref="ShellKey"/>, <see cref="ShellArgsKey"/>).
+    /// </summary>
+    public static readonly string ShellOverrideFeature = "shell-override";
+
     public static readonly string ClientAuthKey = "eryph:guest-services:client-public-key";
 
     /// <summary>
