@@ -64,7 +64,7 @@ public class ServerTests
         var serviceId = PortNumberConverter.ToIntegrationId(42425);
         var config = new SshSessionConfiguration();
 
-        var server = new SocketSshServer(config, new TraceSource("Server"));
+        using var server = new SocketSshServer(config, new TraceSource("Server"));
         using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
         var listenTask = server.AcceptSessionsAsync(serverSocket);
 
