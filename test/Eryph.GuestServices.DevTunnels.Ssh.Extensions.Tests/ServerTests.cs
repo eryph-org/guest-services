@@ -57,4 +57,20 @@ public class ServerTests
         var isAuthenticated = await clientSession.AuthenticateAsync(new SshClientCredentials("egs-test", clientKeyPair));
         isAuthenticated.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task AcceptSessionsAsync_CompletesGracefully_WhenServerDisposed()
+    {
+        var serviceId = PortNumberConverter.ToIntegrationId(42425);
+        var config = new SshSessionConfiguration();
+
+        var server = new SocketSshServer(config, new TraceSource("Server"));
+        using var serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, serviceId, 1);
+        var listenTask = server.AcceptSessionsAsync(serverSocket);
+
+        server.Dispose();
+
+        await listenTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listenTask.IsCompletedSuccessfully.Should().BeTrue();
+    }
 }
