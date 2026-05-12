@@ -24,8 +24,12 @@ public sealed class DefaultShellSelector : IShellSelector
     /// </summary>
     public static ShellSelection SelectFromEnvOrDefault(ShellOverride sshOverride)
     {
-        if (!string.IsNullOrWhiteSpace(sshOverride.Command))
-            return new ShellSelection(sshOverride.Command, sshOverride.Arguments ?? string.Empty);
+        // Trim defensively — SSH env values come from a client we authenticate
+        // but don't otherwise constrain. A stray trailing space would silently
+        // fail process-start with a path-not-found-style error.
+        var command = sshOverride.Command?.Trim();
+        if (!string.IsNullOrEmpty(command))
+            return new ShellSelection(command, sshOverride.Arguments?.Trim() ?? string.Empty);
 
         return PlatformDefault();
     }

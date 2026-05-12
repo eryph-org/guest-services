@@ -19,12 +19,17 @@ internal sealed class KvpShellSelector(
         try
         {
             var external = await dataExchange.GetExternalDataAsync();
-            if (external.TryGetValue(Constants.ShellKey, out var kvpShell)
-                && !string.IsNullOrWhiteSpace(kvpShell))
+            if (external.TryGetValue(Constants.ShellKey, out var kvpShell))
             {
-                external.TryGetValue(Constants.ShellArgsKey, out var kvpArgs);
-                logger.LogDebug("Using shell from KVP: {Command}", kvpShell);
-                return new ShellSelection(kvpShell, kvpArgs ?? string.Empty);
+                // Trim — KVP can be written by anything on the host side, not
+                // just egs-tool, so we can't trust the value to be clean.
+                var command = kvpShell?.Trim();
+                if (!string.IsNullOrEmpty(command))
+                {
+                    external.TryGetValue(Constants.ShellArgsKey, out var kvpArgs);
+                    logger.LogDebug("Using shell from KVP: {Command}", command);
+                    return new ShellSelection(command, kvpArgs?.Trim() ?? string.Empty);
+                }
             }
         }
         catch (Exception ex)

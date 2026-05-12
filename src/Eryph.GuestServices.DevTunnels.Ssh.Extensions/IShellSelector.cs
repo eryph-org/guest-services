@@ -18,8 +18,9 @@ public interface IShellSelector
 /// <summary>
 /// The command and arguments to spawn as the interactive shell.
 /// </summary>
-/// <param name="Command">Executable name or absolute path. Bare names are
-/// resolved via <c>PATH</c>.</param>
+/// <param name="Command">On Windows, an executable name or an absolute path —
+/// bare names are resolved via <c>PATH</c> by <c>CreateProcess</c>. On Linux,
+/// must be an absolute path; bare names will fail at PTY start.</param>
 /// <param name="Arguments">Argument string passed to the shell, may be empty.</param>
 public sealed record ShellSelection(string Command, string Arguments);
 
