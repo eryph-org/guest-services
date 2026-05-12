@@ -98,6 +98,9 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
+        // Cancel before disposing so both copy pumps observe cancellation and stop
+        // instead of lingering until the underlying pipes happen to close.
+        try { _cts.Cancel(); } catch (ObjectDisposedException) { }
         _cts.Dispose();
         _pty?.Dispose();
     }

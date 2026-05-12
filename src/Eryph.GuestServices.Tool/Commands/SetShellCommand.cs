@@ -39,11 +39,11 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
             return -1;
         }
 
-        // Trim so a stray whitespace pad doesn't end up in KVP. The selector
-        // only honors a non-blank shell value anyway; persisting dead data
-        // would be misleading.
-        var command = settings.Command?.Trim();
-        var arguments = settings.Arguments?.Trim();
+        // Collapse blanks to null so a stray whitespace pad (or an explicit
+        // empty value) doesn't end up persisted as dead data in KVP. The
+        // selector only honors a non-blank value anyway.
+        var command = string.IsNullOrWhiteSpace(settings.Command) ? null : settings.Command.Trim();
+        var arguments = string.IsNullOrWhiteSpace(settings.Arguments) ? null : settings.Arguments.Trim();
 
         var values = new Dictionary<string, string?>
         {

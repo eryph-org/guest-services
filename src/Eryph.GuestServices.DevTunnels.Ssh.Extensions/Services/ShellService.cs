@@ -16,7 +16,7 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 public class ShellService : SshService
 {
     private readonly IShellSelector? _shellSelector;
-    private readonly ConcurrentDictionary<uint, PtyForwarder> _instances = new();
+    private readonly ConcurrentDictionary<uint, Lazy<PtyForwarder>> _instances = new();
 
     // Microsoft.DevTunnels.Ssh activation will pick the 2-arg ctor when a
     // config object is present in SshSessionConfiguration.Services.
@@ -108,12 +108,13 @@ public class ShellService : SshService
         WindowChangeRequestMessage requestMessage,
         CancellationToken cancellation)
     {
-        if (!_instances.TryGetValue(channel.ChannelId, out var pty))
+        if (!_instances.TryGetValue(channel.ChannelId, out var lazyPty))
         {
             request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
             return Task.CompletedTask;
         }
 
+        var pty = lazyPty.Value;
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
         request.ResponseContinuation = async (_) =>
         {
@@ -131,17 +132,27 @@ public class ShellService : SshService
     {
         // The env request can arrive before pty-req, so create the forwarder
         // lazily on first env. Values set after StartAsync are ignored — the
-        // forwarder snapshots the environment at shell selection time.
+        // forwarder snapshots the environment at shell selection time, so we
+        // also fail the request to avoid telling the client we honored it.
         var pty = GetOrAddForwarder(channel);
-        pty.SetEnvironmentVariable(requestMessage.Name, requestMessage.Value);
+        if (pty.IsRunning)
+        {
+            request.ResponseTask = Task.FromResult<SshMessage>(new ChannelFailureMessage());
+            return Task.CompletedTask;
+        }
 
+        pty.SetEnvironmentVariable(requestMessage.Name, requestMessage.Value);
         request.ResponseTask = Task.FromResult<SshMessage>(new ChannelSuccessMessage());
         return Task.CompletedTask;
     }
 
     private PtyForwarder GetOrAddForwarder(SshChannel channel)
     {
-        return _instances.GetOrAdd(channel.ChannelId, id =>
+        // Lazy<T> with default (ExecutionAndPublication) mode guarantees the
+        // factory runs at most once even if GetOrAdd's outer factory races —
+        // otherwise we could end up with multiple PtyForwarders and duplicate
+        // channel.Closed subscriptions.
+        var lazy = _instances.GetOrAdd(channel.ChannelId, id => new Lazy<PtyForwarder>(() =>
         {
             var forwarder = new PtyForwarder(_shellSelector);
             channel.Closed += (_, _) =>
@@ -150,14 +161,16 @@ public class ShellService : SshService
                 forwarder.Dispose();
             };
             return forwarder;
-        });
+        }));
+        return lazy.Value;
     }
 
     protected override void Dispose(bool disposing)
     {
-        foreach (var instance in _instances.Values.ToArray())
+        foreach (var lazy in _instances.Values.ToArray())
         {
-            instance.Dispose();
+            if (lazy.IsValueCreated)
+                lazy.Value.Dispose();
         }
 
         base.Dispose(disposing);
