@@ -47,15 +47,21 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
 
         var hostDataExchange = new HostDataExchange();
 
-        var guestData = await hostDataExchange.GetGuestDataAsync(settings.VmId);
-        guestData.TryGetValue(Constants.FeaturesKey, out var features);
-        if (!HasFeature(features, Constants.ShellOverrideFeature))
+        // The feature gate only applies to setting an override. Clearing is
+        // always safe — it may be needed to remove stale keys left over from
+        // a downgrade, when the current service does not advertise the feature.
+        if (!settings.Reset)
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]The guest service in VM {settings.VmId} does not support the '{Constants.ShellOverrideFeature}' feature.[/]");
-            AnsiConsole.MarkupLine(
-                "[red]Ensure the VM is running and the installed eryph guest services version supports configurable shells.[/]");
-            return -1;
+            var guestData = await hostDataExchange.GetGuestDataAsync(settings.VmId);
+            guestData.TryGetValue(Constants.FeaturesKey, out var features);
+            if (!HasFeature(features, Constants.ShellOverrideFeature))
+            {
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[red]The guest service in VM {settings.VmId} does not support the '{Constants.ShellOverrideFeature}' feature.[/]");
+                AnsiConsole.MarkupLine(
+                    "[red]Ensure the VM is running and the installed eryph guest services version supports configurable shells.[/]");
+                return -1;
+            }
         }
 
         var values = new Dictionary<string, string?>
@@ -85,7 +91,7 @@ public class SetShellCommand : AsyncCommand<SetShellCommand.Settings>
         return 0;
     }
 
-    private static bool HasFeature(string? featureList, string feature)
+    internal static bool HasFeature(string? featureList, string feature)
     {
         if (string.IsNullOrWhiteSpace(featureList))
             return false;
