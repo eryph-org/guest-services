@@ -126,12 +126,17 @@ internal sealed class SshServerService(
 
     private async Task SetStatusAsync(string? status)
     {
+        // FeaturesKey is cleared on shutdown so capability discovery stays
+        // honest after a downgrade. A pre-features service does not write
+        // this key, so without explicit removal the previous version's
+        // feature list would remain visible to the host and make tools
+        // think a feature is supported when it isn't.
         var values = new Dictionary<string, string?>
         {
             [Constants.StatusKey] = status,
             [Constants.VersionKey] = GitVersionInformation.SemVer,
             [Constants.OperatingSystemKey] = RuntimeInformation.OSDescription,
-            [Constants.FeaturesKey] = string.Join(' ', SupportedFeatures),
+            [Constants.FeaturesKey] = status is null ? null : string.Join(' ', SupportedFeatures),
         };
         await guestDataExchange.SetGuestValuesAsync(values);
     }
