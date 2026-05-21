@@ -219,12 +219,16 @@ function Mount-CatletVhd {
     letter (e.g. 'E') that contains the guest's C:\.
 
   .DESCRIPTION
-    The catlet must NOT be running (otherwise Hyper-V holds the disk lock).
-    This function intentionally returns the OS-partition drive letter rather
-    than the disk number so callers can use straight Win32 paths to mutate
-    the offline guest.
+    Mounts the catlet's CHILD differencing VHD (returned by Get-VMHardDiskDrive).
+    Hyper-V resolves the chain automatically so the joined parent + child view
+    is what we read/write; copy-on-write keeps the parent intact.
 
-    Requires administrator (Mount-VHD needs HyperV management rights).
+    Returns the volume root as a Volume GUID path (e.g. \\?\Volume{<guid>}\)
+    rather than a drive letter — no Add-PartitionAccessPath / drive-letter
+    assignment, no host registry mutation, nothing to clean up. The catlet
+    must NOT be running (Hyper-V holds the lock otherwise).
+
+    Requires administrator (Mount-VHD needs Hyper-V management rights).
   #>
   [CmdletBinding()]
   param(
@@ -237,32 +241,21 @@ function Mount-CatletVhd {
   $disk = Get-Disk -Number $disk.Number
 
   try {
-    # Eryph catlets use VHDx differencing disks. Mount-VHD presents the joined
-    # parent + child filesystem, but it doesn't auto-assign drive letters to
-    # partitions on differencing chains. Walk the partitions and assign a
-    # letter to any NTFS/ReFS volume that doesn't have one.
+    # Walk the partitions and find the one whose volume root contains
+    # \Windows. Volume.Path is the \\?\Volume{GUID}\ form, always populated
+    # for a mounted NTFS/ReFS volume even without a drive letter.
     foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
-      if ($p.DriveLetter) { continue }
-      try {
-        $vol = $p | Get-Volume -ErrorAction SilentlyContinue
-        if ($vol -and ($vol.FileSystem -in 'NTFS', 'ReFS')) {
-          Write-Verbose "Assigning drive letter to partition #$($p.PartitionNumber) (FS=$($vol.FileSystem))"
-          $p | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
-        }
-      } catch {
-        Write-Verbose "Could not assign drive letter to partition #$($p.PartitionNumber): $_"
-      }
-    }
+      $vol = $p | Get-Volume -ErrorAction SilentlyContinue
+      if (-not $vol) { continue }
+      if ($vol.FileSystem -notin 'NTFS', 'ReFS') { continue }
+      if (-not $vol.Path) { continue }
 
-    # Re-read partitions after letter assignment and look for the OS root.
-    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
-      if (-not $p.DriveLetter) { continue }
-      $letter = "$($p.DriveLetter)"
-      if (Test-Path -LiteralPath "${letter}:\Windows") {
-        Write-Verbose "Found OS partition at ${letter}:"
+      $volumeRoot = $vol.Path
+      if (Test-Path -LiteralPath (Join-Path $volumeRoot 'Windows')) {
+        Write-Verbose "Found OS partition at $volumeRoot"
         return [pscustomobject]@{
-          VhdPath     = $vhdPath
-          DriveLetter = $letter
+          VhdPath    = $vhdPath
+          VolumeRoot = $volumeRoot
         }
       }
     }
@@ -270,7 +263,7 @@ function Mount-CatletVhd {
     # No match — dump partition state so the failure is debuggable.
     $summary = (Get-Partition -DiskNumber $disk.Number) | ForEach-Object {
       $vol = $_ | Get-Volume -ErrorAction SilentlyContinue
-      "  #$($_.PartitionNumber) Size=$($_.Size) Letter=$($_.DriveLetter) FS=$($vol.FileSystem) Type=$($_.Type)"
+      "  #$($_.PartitionNumber) Size=$($_.Size) FS=$($vol.FileSystem) VolumePath=$($vol.Path) Type=$($_.Type)"
     }
     throw "Could not find a Windows OS partition on $vhdPath. Partitions:`n$($summary -join "`n")"
   }
@@ -331,7 +324,7 @@ function Update-EgsServiceBinariesOffline {
 
   $mount = Mount-CatletVhd -VmId $VmId
   try {
-    $root = "$($mount.DriveLetter):"
+    $root = $mount.VolumeRoot
     $binDir = Join-Path $root 'Program Files\eryph\guest-services\bin'
     $cbiDir = Join-Path $root 'Program Files\Cloudbase Solutions\Cloudbase-Init'
 
@@ -368,13 +361,13 @@ function Update-EgsServiceBinariesOffline {
       Write-Verbose "Disabling cloudbase-init: $cbiDir -> $disabledName"
       Move-Item -LiteralPath $cbiDir -Destination $disabledName -Force
 
-      Set-OfflineServiceStartType -DriveLetter $mount.DriveLetter `
+      Set-OfflineServiceStartType -VolumeRoot $mount.VolumeRoot `
         -ServiceName 'cloudbase-init' -StartType 4   # 4 = Disabled
     } else {
       Write-Verbose "cloudbase-init not present at $cbiDir; skipping dir rename"
     }
 
-    Disable-CloudbaseInitUnattend -DriveLetter $mount.DriveLetter
+    Disable-CloudbaseInitUnattend -VolumeRoot $mount.VolumeRoot
   }
   finally {
     Dismount-CatletVhd -VhdPath $mount.VhdPath
@@ -404,14 +397,14 @@ function Disable-CloudbaseInitUnattend {
   #>
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory = $true)] [string] $DriveLetter
+    [Parameter(Mandatory = $true)] [string] $VolumeRoot
   )
 
   $candidates = @(
-    "$DriveLetter`:\Windows\System32\Sysprep\unattend.xml",
-    "$DriveLetter`:\Windows\Panther\unattend.xml",
-    "$DriveLetter`:\Windows\Panther\unattend\unattend.xml",
-    "$DriveLetter`:\unattend.xml"
+    (Join-Path $VolumeRoot 'Windows\System32\Sysprep\unattend.xml'),
+    (Join-Path $VolumeRoot 'Windows\Panther\unattend.xml'),
+    (Join-Path $VolumeRoot 'Windows\Panther\unattend\unattend.xml'),
+    (Join-Path $VolumeRoot 'unattend.xml')
   )
 
   foreach ($path in $candidates) {
@@ -461,12 +454,12 @@ function Set-OfflineServiceStartType {
   #>
   [CmdletBinding()]
   param(
-    [Parameter(Mandatory = $true)] [string] $DriveLetter,
+    [Parameter(Mandatory = $true)] [string] $VolumeRoot,
     [Parameter(Mandatory = $true)] [string] $ServiceName,
     [Parameter(Mandatory = $true)] [int] $StartType
   )
 
-  $hivePath = "$DriveLetter`:\Windows\System32\config\SYSTEM"
+  $hivePath = Join-Path $VolumeRoot 'Windows\System32\config\SYSTEM'
   $tempHive = "HKLM\OfflineSystem_$([guid]::NewGuid().ToString('N'))"
   $regExe = "$env:WINDIR\System32\reg.exe"
 
