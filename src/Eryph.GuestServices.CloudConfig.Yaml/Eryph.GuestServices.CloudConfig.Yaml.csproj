@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Eryph.GuestServices.CloudConfig.Yaml</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Eryph.ConfigModel.Yaml" Version="0.10.0" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.CloudConfig\Eryph.GuestServices.CloudConfig.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.CloudConfig.Yaml.Tests" />
+    <InternalsVisibleTo Include="Eryph.GuestServices.Provisioning" />
+    <InternalsVisibleTo Include="Eryph.GuestServices.Provisioning.Tests" />
+  </ItemGroup>
+
+</Project>
