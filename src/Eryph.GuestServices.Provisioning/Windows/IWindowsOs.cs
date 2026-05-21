@@ -52,6 +52,19 @@ public interface IWindowsOs
     /// </summary>
     Task SetFileOwnerAsync(string windowsPath, string owner, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Translates a POSIX octal permission string (e.g. <c>"0644"</c>) into
+    /// NTFS ACEs for owner / group / Everyone and applies them to the file.
+    /// SYSTEM and Administrators retain FullControl (they're added/preserved
+    /// in the DACL) so the agent and system processes can always read the
+    /// file regardless of the POSIX bits. Cloudbase-init does the same.
+    /// </summary>
+    Task SetPosixPermissionsAsync(
+        string windowsPath,
+        string permissions,
+        string? owner,
+        CancellationToken cancellationToken);
+
     // SSH authorized keys
 
     /// <summary>

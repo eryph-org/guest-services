@@ -103,6 +103,18 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.CompletedTask;
     }
 
+    public Task SetPosixPermissionsAsync(
+        string windowsPath,
+        string permissions,
+        string? owner,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would apply POSIX permissions {Perms} to {Path} (owner={Owner})",
+            permissions, windowsPath, owner ?? "<none>");
+        return Task.CompletedTask;
+    }
+
     public Task SetUserSshAuthorizedKeysAsync(
         string userName,
         IReadOnlyList<string> keys,

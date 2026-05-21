@@ -181,6 +181,66 @@ internal sealed class WindowsOs : IWindowsOs
         }, cancellationToken);
     }
 
+    public Task SetPosixPermissionsAsync(
+        string windowsPath,
+        string permissions,
+        string? owner,
+        CancellationToken cancellationToken)
+    {
+        return Task.Run(() =>
+        {
+            var (ownerBits, groupBits, otherBits) = PosixPermissions.Parse(permissions);
+
+            var fileInfo = new FileInfo(windowsPath);
+            var security = fileInfo.GetAccessControl();
+
+            // Disable inheritance and copy existing rules so we start from a
+            // known state — mirrors cloudbase-init's approach (otherwise the
+            // POSIX intent is silently overridden by inherited perms).
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
+            // Drop any existing explicit ACEs so the POSIX bits are authoritative.
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                security.RemoveAccessRuleSpecific(rule);
+
+            // SYSTEM and Administrators always keep FullControl — without them
+            // the agent itself, defender, etc. cannot read or back up the file.
+            var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+            var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, AccessControlType.Allow));
+
+            // Owner ACE: resolved from the cloud-config `owner` field if present,
+            // otherwise from the current NTFS file owner.
+            IdentityReference ownerIdentity = !string.IsNullOrWhiteSpace(owner)
+                ? new NTAccount(owner!.Split(':', 2)[0])
+                : security.GetOwner(typeof(NTAccount))
+                  ?? new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+
+            var ownerRights = PosixPermissions.TripletToRights(ownerBits);
+            if (ownerRights != 0)
+                security.AddAccessRule(new FileSystemAccessRule(ownerIdentity, ownerRights, AccessControlType.Allow));
+
+            // No POSIX group on Windows; map the "group" triplet to Users when
+            // any rights are granted. This matches cloudbase-init's compromise.
+            var groupRights = PosixPermissions.TripletToRights(groupBits);
+            if (groupRights != 0)
+            {
+                var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+                security.AddAccessRule(new FileSystemAccessRule(users, groupRights, AccessControlType.Allow));
+            }
+
+            var otherRights = PosixPermissions.TripletToRights(otherBits);
+            if (otherRights != 0)
+            {
+                var everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+                security.AddAccessRule(new FileSystemAccessRule(everyone, otherRights, AccessControlType.Allow));
+            }
+
+            fileInfo.SetAccessControl(security);
+        }, cancellationToken);
+    }
+
     public Task SetUserSshAuthorizedKeysAsync(
         string userName,
         IReadOnlyList<string> keys,
