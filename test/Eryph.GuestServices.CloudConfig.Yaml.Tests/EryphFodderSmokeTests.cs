@@ -11,7 +11,9 @@ public partial class EryphFodderSmokeTests
     private const string GenesRootEnvVar = "ERYPH_GENES_ROOT";
     private const string DefaultGenesRoot = @"S:\eryph\eryph-genes\src";
 
-    [SkippableTheory]
+    // The theory yields zero data rows if the genes root is not present on this machine,
+    // so xunit treats the whole theory as a no-op rather than a failure. No `Skip` marker needed.
+    [Theory]
     [MemberData(nameof(CloudConfigFodderSnippets))]
     public void Parse_AllCloudConfigFodderInGenes_Succeeds(FodderSnippet snippet)
     {
@@ -128,4 +130,3 @@ public partial class EryphFodderSmokeTests
     }
 }
 
-public sealed class SkippableTheoryAttribute : TheoryAttribute;

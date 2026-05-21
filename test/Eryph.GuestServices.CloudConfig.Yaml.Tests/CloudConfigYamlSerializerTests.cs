@@ -153,6 +153,21 @@ public class CloudConfigYamlSerializerTests
     }
 
     [Fact]
+    public void Deserialize_UserWithPlainTextPasswd_MapsField()
+    {
+        const string yaml = """
+                            users:
+                              - name: admin
+                                plain_text_passwd: secret
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.Should().Match<UserConfig>(
+            u => u.Name == "admin" && u.PlainTextPasswd == "secret" && u.Passwd == null);
+    }
+
+    [Fact]
     public void Deserialize_WriteFilePermissionsAsUnquotedOctal_NormalizesToFourDigitString()
     {
         const string yaml = """
