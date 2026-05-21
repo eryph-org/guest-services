@@ -1,22 +1,24 @@
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Users, Order = 0)]
-internal sealed class UsersGroupsHandler(ILogger<UsersGroupsHandler> logger) : IHandler
+[Stage(Stage.Config, Order = 0)]
+internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IModule
 {
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         await ProcessGroupsAsync(config, context.Os, cancellationToken).ConfigureAwait(false);
         await ProcessUsersAsync(config, context.Os, cancellationToken).ConfigureAwait(false);
 
-        return HandlerOutcome.Ok();
+        return ModuleOutcome.Ok();
     }
 
     private async Task ProcessGroupsAsync(CloudConfigModel config, IWindowsOs os, CancellationToken cancellationToken)

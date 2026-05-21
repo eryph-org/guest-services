@@ -1,9 +1,9 @@
 using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Windows;
 
-namespace Eryph.GuestServices.Provisioning.Stages;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-internal sealed class HandlerContext(IWindowsOs os, DataSourceResult dataSource) : IHandlerContext
+internal sealed class ModuleContext(IWindowsOs os, DataSourceResult dataSource) : IModuleContext
 {
     public IWindowsOs Os { get; } = os;
 

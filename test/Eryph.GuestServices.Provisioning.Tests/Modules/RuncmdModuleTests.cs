@@ -1,15 +1,15 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
-using Eryph.GuestServices.Provisioning.Handlers;
-using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Tests.Handlers;
+namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-public sealed class RuncmdHandlerTests
+public sealed class RuncmdModuleTests
 {
     [Fact]
     public async Task Runs_shell_commands_through_RunShellCommandAsync()
@@ -18,18 +18,18 @@ public sealed class RuncmdHandlerTests
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
-        var handler = new RuncmdHandler(NullLogger<RuncmdHandler>.Instance);
-        var config = new CloudConfigModel
+        var module = new RuncmdModule(NullLogger<RuncmdModule>.Instance);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
             Runcmd =
             [
                 new RuncmdEntry { IsShellCommand = true, Command = "echo hi" },
             ],
-        };
+        });
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().RunShellCommandAsync("echo hi", Arg.Any<CancellationToken>());
     }
 
@@ -40,16 +40,16 @@ public sealed class RuncmdHandlerTests
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
-        var handler = new RuncmdHandler(NullLogger<RuncmdHandler>.Instance);
-        var config = new CloudConfigModel
+        var module = new RuncmdModule(NullLogger<RuncmdModule>.Instance);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
             Runcmd =
             [
                 new RuncmdEntry { IsShellCommand = false, Argv = ["whoami"] },
             ],
-        };
+        });
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "whoami"),
@@ -61,23 +61,23 @@ public sealed class RuncmdHandlerTests
     {
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync("first", Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdHandler.RebootRequestedExitCode, "", ""));
+            .Returns(new RunCommandResult(RuncmdModule.RebootRequestedExitCode, "", ""));
         os.RunShellCommandAsync("second", Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
-        var handler = new RuncmdHandler(NullLogger<RuncmdHandler>.Instance);
-        var config = new CloudConfigModel
+        var module = new RuncmdModule(NullLogger<RuncmdModule>.Instance);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
             Runcmd =
             [
                 new RuncmdEntry { IsShellCommand = true, Command = "first" },
                 new RuncmdEntry { IsShellCommand = true, Command = "second" },
             ],
-        };
+        });
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.RebootRequested>();
+        result.Should().BeOfType<ModuleOutcome.RebootRequested>();
         // Second command must NOT be executed after the reboot signal.
         await os.DidNotReceive().RunShellCommandAsync("second", Arg.Any<CancellationToken>());
     }
@@ -91,19 +91,19 @@ public sealed class RuncmdHandlerTests
         os.RunShellCommandAsync("second", Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
-        var handler = new RuncmdHandler(NullLogger<RuncmdHandler>.Instance);
-        var config = new CloudConfigModel
+        var module = new RuncmdModule(NullLogger<RuncmdModule>.Instance);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
             Runcmd =
             [
                 new RuncmdEntry { IsShellCommand = true, Command = "first" },
                 new RuncmdEntry { IsShellCommand = true, Command = "second" },
             ],
-        };
+        });
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().RunShellCommandAsync("second", Arg.Any<CancellationToken>());
     }
 
@@ -111,11 +111,12 @@ public sealed class RuncmdHandlerTests
     public async Task Returns_completed_when_runcmd_is_empty()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new RuncmdHandler(NullLogger<RuncmdHandler>.Instance);
+        var module = new RuncmdModule(NullLogger<RuncmdModule>.Instance);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel());
 
-        var result = await handler.ApplyAsync(new CloudConfigModel(), new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().RunShellCommandAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
         await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
     }

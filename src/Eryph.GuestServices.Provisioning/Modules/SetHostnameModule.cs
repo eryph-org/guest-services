@@ -1,29 +1,31 @@
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Hostname)]
-internal sealed class SetHostnameHandler(ILogger<SetHostnameHandler> logger) : IHandler
+[Stage(Stage.Network)]
+internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IModule
 {
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         if (config.PreserveHostname == true)
         {
             logger.LogInformation("preserve_hostname is set; skipping hostname configuration.");
-            return HandlerOutcome.Ok();
+            return ModuleOutcome.Ok();
         }
 
         var desired = PickName(config);
         if (desired is null)
         {
             logger.LogDebug("No hostname or fqdn specified; nothing to do.");
-            return HandlerOutcome.Ok();
+            return ModuleOutcome.Ok();
         }
 
         var result = await context.Os.SetComputerNameAsync(desired, cancellationToken).ConfigureAwait(false);
@@ -31,10 +33,10 @@ internal sealed class SetHostnameHandler(ILogger<SetHostnameHandler> logger) : I
         {
             case SetComputerNameResult.AlreadySet:
                 logger.LogInformation("Computer name is already '{Name}'.", desired);
-                return HandlerOutcome.Ok();
+                return ModuleOutcome.Ok();
             case SetComputerNameResult.SetWithRebootPending:
                 logger.LogInformation("Computer name change to '{Name}' is pending reboot.", desired);
-                return HandlerOutcome.Reboot($"Hostname change to '{desired}' requires reboot.");
+                return ModuleOutcome.Reboot($"Hostname change to '{desired}' requires reboot.");
             default:
                 throw new InvalidOperationException($"Unexpected SetComputerNameResult: {result}");
         }

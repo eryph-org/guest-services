@@ -1,25 +1,28 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
-using Eryph.GuestServices.Provisioning.Handlers;
-using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Tests.Handlers;
+namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-public sealed class SshAuthorizedKeysHandlerTests
+public sealed class SshAuthorizedKeysModuleTests
 {
     [Fact]
     public async Task Writes_top_level_keys_to_Administrator_by_default()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SshAuthorizedKeysHandler(NullLogger<SshAuthorizedKeysHandler>.Instance);
+        var module = new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance);
 
         var config = new CloudConfigModel { SshAuthorizedKeys = ["ssh-rsa AAA"] };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetUserSshAuthorizedKeysAsync(
             "Administrator",
@@ -31,7 +34,7 @@ public sealed class SshAuthorizedKeysHandlerTests
     public async Task Prefers_sudo_user_for_top_level_keys()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SshAuthorizedKeysHandler(NullLogger<SshAuthorizedKeysHandler>.Instance);
+        var module = new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -39,7 +42,10 @@ public sealed class SshAuthorizedKeysHandlerTests
             Users = [new UserConfig { Name = "alice", Sudo = "ALL" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetUserSshAuthorizedKeysAsync(
             "alice",
@@ -51,7 +57,7 @@ public sealed class SshAuthorizedKeysHandlerTests
     public async Task Writes_per_user_keys_to_each_user()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SshAuthorizedKeysHandler(NullLogger<SshAuthorizedKeysHandler>.Instance);
+        var module = new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -62,7 +68,10 @@ public sealed class SshAuthorizedKeysHandlerTests
             ],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetUserSshAuthorizedKeysAsync(
             "alice",
@@ -78,14 +87,17 @@ public sealed class SshAuthorizedKeysHandlerTests
     public async Task Skips_users_without_keys()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SshAuthorizedKeysHandler(NullLogger<SshAuthorizedKeysHandler>.Instance);
+        var module = new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance);
 
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.DidNotReceive().SetUserSshAuthorizedKeysAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());

@@ -1,14 +1,16 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.DataSources;
+using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
-using Eryph.GuestServices.Provisioning.Serialization;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
-using CloudConfig = global::Eryph.GuestServices.CloudConfig.CloudConfig;
+using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Stages;
 
@@ -27,45 +29,47 @@ public sealed class StageRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_runs_handlers_in_stage_order_and_reports_completed()
+    public async Task RunAsync_runs_modules_in_stage_order_and_reports_completed()
     {
         var data = MakeData("i-1");
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var reporter = Substitute.For<IReportingDispatcher>();
         var stateStore = new InMemoryStateStore();
 
         var trace = new List<string>();
-        var handlers = new IHandler[]
+        var modules = new IModule[]
         {
-            new HostnameRecordingHandler(trace),
-            new FilesRecordingHandler(trace),
-            new UsersRecordingHandler(trace),
+            new NetworkRecordingModule(trace),
+            new ConfigRecordingAModule(trace),
+            new ConfigRecordingBModule(trace),
         };
 
         var runner = BuildRunner(
             locator: LocatorReturning(data),
             stateStore: stateStore,
-            handlers: handlers,
+            modules: modules,
             reporter: reporter);
 
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.Success>();
-        trace.Should().Equal("hostname", "users", "files");
+        trace.Should().Equal("network", "config-a", "config-b");
 
-        await reporter.Received().ReportStartedAsync("i-1", Arg.Any<CancellationToken>());
-        await reporter.Received().ReportCompletedAsync(Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Is<ReportingEvent.ProvisioningStarted>(e => e.InstanceId == "i-1"),
+            Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Any<ReportingEvent.ProvisioningCompleted>(),
+            Arg.Any<CancellationToken>());
 
-        stateStore.Current!.CompletedStages.Should().Contain("Discovery");
-        stateStore.Current.CompletedStages.Should().Contain("Hostname");
-        stateStore.Current.CompletedStages.Should().Contain("Users");
-        stateStore.Current.CompletedStages.Should().Contain("Files");
-        stateStore.Current.CompletedStages.Should().Contain("Commands");
-        stateStore.Current.CompletedStages.Should().Contain("Finalize");
+        stateStore.Current!.CompletedStages.Should().Contain("Local");
+        stateStore.Current.CompletedStages.Should().Contain("Network");
+        stateStore.Current.CompletedStages.Should().Contain("Config");
+        stateStore.Current.CompletedStages.Should().Contain("Final");
         stateStore.Current.CompletedHandlers.Should().HaveCount(3);
     }
 
     [Fact]
-    public async Task RunAsync_skips_handlers_already_completed()
+    public async Task RunAsync_skips_modules_already_completed()
     {
         var data = MakeData("i-1");
         var stateStore = new InMemoryStateStore
@@ -73,39 +77,39 @@ public sealed class StageRunnerTests
             Current = new ProvisioningState
             {
                 InstanceId = "i-1",
-                CompletedHandlers = [typeof(HostnameRecordingHandler).FullName!],
+                CompletedHandlers = [typeof(NetworkRecordingModule).FullName!],
             },
         };
 
         var trace = new List<string>();
-        var handlers = new IHandler[]
+        var modules = new IModule[]
         {
-            new HostnameRecordingHandler(trace),
-            new UsersRecordingHandler(trace),
+            new NetworkRecordingModule(trace),
+            new ConfigRecordingAModule(trace),
         };
 
-        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers);
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules);
         await runner.RunAsync(CancellationToken.None);
 
-        trace.Should().Equal("users");
+        trace.Should().Equal("config-a");
     }
 
     [Fact]
-    public async Task RunAsync_completed_instance_resumes_without_running_handlers_and_still_reports_completed()
+    public async Task RunAsync_completed_instance_resumes_without_running_modules_and_still_reports_completed()
     {
         var data = MakeData("i-1");
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var reporter = Substitute.For<IReportingDispatcher>();
 
         var trace = new List<string>();
-        var handlers = new IHandler[]
+        var modules = new IModule[]
         {
-            new HostnameRecordingHandler(trace),
-            new UsersRecordingHandler(trace),
-            new FilesRecordingHandler(trace),
+            new NetworkRecordingModule(trace),
+            new ConfigRecordingAModule(trace),
+            new ConfigRecordingBModule(trace),
         };
 
         var allStageNames = Enum.GetNames(typeof(Stage));
-        var allHandlerKeys = handlers.Select(h => h.GetType().FullName!);
+        var allModuleKeys = modules.Select(m => m.GetType().FullName!);
 
         var stateStore = new InMemoryStateStore
         {
@@ -113,16 +117,18 @@ public sealed class StageRunnerTests
             {
                 InstanceId = "i-1",
                 CompletedStages = new HashSet<string>(allStageNames, StringComparer.Ordinal),
-                CompletedHandlers = new HashSet<string>(allHandlerKeys, StringComparer.Ordinal),
+                CompletedHandlers = new HashSet<string>(allModuleKeys, StringComparer.Ordinal),
             },
         };
 
-        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers, reporter: reporter);
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules, reporter: reporter);
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.Success>();
-        trace.Should().BeEmpty("all handlers were already completed in a prior run");
-        await reporter.Received().ReportCompletedAsync(Arg.Any<CancellationToken>());
+        trace.Should().BeEmpty("all modules were already completed in a prior run");
+        await reporter.Received().EmitAsync(
+            Arg.Any<ReportingEvent.ProvisioningCompleted>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -134,89 +140,98 @@ public sealed class StageRunnerTests
             Current = new ProvisioningState
             {
                 InstanceId = "old-instance",
-                CompletedHandlers = [typeof(HostnameRecordingHandler).FullName!],
+                CompletedHandlers = [typeof(NetworkRecordingModule).FullName!],
             },
         };
 
         var trace = new List<string>();
-        var handlers = new IHandler[] { new HostnameRecordingHandler(trace) };
+        var modules = new IModule[] { new NetworkRecordingModule(trace) };
 
-        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers);
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules);
         await runner.RunAsync(CancellationToken.None);
 
-        trace.Should().Equal("hostname");
+        trace.Should().Equal("network");
         stateStore.Resets.Should().Be(1);
         stateStore.Current!.InstanceId.Should().Be("new-instance");
     }
 
     [Fact]
-    public async Task RunAsync_returns_RebootRequested_and_records_handler_completed()
+    public async Task RunAsync_returns_RebootRequested_and_records_module_completed()
     {
         var data = MakeData("i-1");
         var stateStore = new InMemoryStateStore();
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var reporter = Substitute.For<IReportingDispatcher>();
 
         var trace = new List<string>();
-        var handlers = new IHandler[]
+        var modules = new IModule[]
         {
-            new RebootingHandler("needs-reboot"),
-            new UsersRecordingHandler(trace),
+            new RebootingModule("needs-reboot"),
+            new ConfigRecordingAModule(trace),
         };
 
-        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers, reporter: reporter);
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules, reporter: reporter);
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.RebootRequested>()
             .Which.Reason.Should().Be("needs-reboot");
         trace.Should().BeEmpty();
-        stateStore.Current!.CompletedHandlers.Should().Contain(typeof(RebootingHandler).FullName!);
+        stateStore.Current!.CompletedHandlers.Should().Contain(typeof(RebootingModule).FullName!);
         stateStore.Current.RebootCount.Should().Be(1);
-        await reporter.Received().ReportRebootPendingAsync("needs-reboot", Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Is<ReportingEvent.RebootRequested>(e => e.Reason == "needs-reboot"),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task RunAsync_returns_Failed_when_handler_returns_failed()
+    public async Task RunAsync_returns_Failed_when_module_returns_failed()
     {
         var data = MakeData("i-1");
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var reporter = Substitute.For<IReportingDispatcher>();
         var stateStore = new InMemoryStateStore();
 
-        var handlers = new IHandler[] { new FailingHandler("boom") };
+        var modules = new IModule[] { new FailingModule("boom") };
 
-        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers, reporter: reporter);
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules, reporter: reporter);
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.Failed>().Which.Reason.Should().Be("boom");
-        await reporter.Received().ReportFailedAsync(Arg.Is<string>(s => s.Contains("boom")), Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Is<ReportingEvent.ProvisioningFailed>(e => e.Reason.Contains("boom")),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task RunAsync_returns_Failed_when_handler_throws()
+    public async Task RunAsync_returns_Failed_when_module_throws()
     {
         var data = MakeData("i-1");
-        var reporter = Substitute.For<IHostStatusReporter>();
-        var handlers = new IHandler[] { new ThrowingHandler() };
+        var reporter = Substitute.For<IReportingDispatcher>();
+        var modules = new IModule[] { new ThrowingModule() };
 
-        var runner = BuildRunner(LocatorReturning(data), handlers: handlers, reporter: reporter);
+        var runner = BuildRunner(LocatorReturning(data), modules: modules, reporter: reporter);
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.Failed>();
-        await reporter.Received().ReportFailedAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Any<ReportingEvent.ProvisioningFailed>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task RunAsync_returns_Failed_when_userdata_cannot_be_parsed()
     {
         var data = MakeData("i-1", userData: "not valid yaml maybe");
-        var serializer = Substitute.For<ICloudConfigSerializer>();
-        serializer.Deserialize(Arg.Any<string>()).Throws(new InvalidOperationException("bad yaml"));
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var pipeline = Substitute.For<IUserDataPipeline>();
+        pipeline.ResolveAsync(Arg.Any<byte[]?>(), Arg.Any<CancellationToken>())
+            .Throws(new InvalidOperationException("bad yaml"));
+        var reporter = Substitute.For<IReportingDispatcher>();
 
-        var runner = BuildRunner(LocatorReturning(data), serializer: serializer, reporter: reporter);
+        var runner = BuildRunner(LocatorReturning(data), pipeline: pipeline, reporter: reporter);
         var result = await runner.RunAsync(CancellationToken.None);
 
         result.Should().BeOfType<StageRunOutcome.Failed>();
-        await reporter.Received().ReportFailedAsync(Arg.Is<string>(s => s.StartsWith("userdata-parse")), Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Is<ReportingEvent.ProvisioningFailed>(e => e.Reason.StartsWith("userdata-parse")),
+            Arg.Any<CancellationToken>());
     }
 
     private static IDataSourceLocator LocatorReturning(DataSourceResult result)
@@ -235,29 +250,29 @@ public sealed class StageRunnerTests
 
     private static StageRunner BuildRunner(
         IDataSourceLocator? locator = null,
-        ICloudConfigSerializer? serializer = null,
+        IUserDataPipeline? pipeline = null,
         IStateStore? stateStore = null,
-        IHandler[]? handlers = null,
-        IHostStatusReporter? reporter = null)
+        IModule[]? modules = null,
+        IReportingDispatcher? reporter = null)
     {
         locator ??= Substitute.For<IDataSourceLocator>();
-        serializer ??= new FakeSerializer();
+        if (pipeline is null)
+        {
+            pipeline = Substitute.For<IUserDataPipeline>();
+            pipeline.ResolveAsync(Arg.Any<byte[]?>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(ResolvedUserData.Empty(new CloudConfigModel())));
+        }
         stateStore ??= new InMemoryStateStore();
-        reporter ??= Substitute.For<IHostStatusReporter>();
+        reporter ??= Substitute.For<IReportingDispatcher>();
 
         return new StageRunner(
             locator,
-            serializer,
+            pipeline,
             stateStore,
-            handlers ?? [],
+            modules ?? [],
             reporter,
             Substitute.For<IWindowsOs>(),
             NullLogger<StageRunner>.Instance);
-    }
-
-    private sealed class FakeSerializer : ICloudConfigSerializer
-    {
-        public global::Eryph.GuestServices.CloudConfig.CloudConfig Deserialize(string yaml) => new();
     }
 
     private sealed class InMemoryStateStore : IStateStore
@@ -282,54 +297,54 @@ public sealed class StageRunnerTests
         }
     }
 
-    [Stage(Stage.Hostname)]
-    internal sealed class HostnameRecordingHandler(List<string> trace) : IHandler
+    [Stage(Stage.Network)]
+    internal sealed class NetworkRecordingModule(List<string> trace) : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken)
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken)
         {
-            trace.Add("hostname");
-            return Task.FromResult(HandlerOutcome.Ok());
+            trace.Add("network");
+            return Task.FromResult(ModuleOutcome.Ok());
         }
     }
 
-    [Stage(Stage.Users)]
-    internal sealed class UsersRecordingHandler(List<string> trace) : IHandler
+    [Stage(Stage.Config, Order = 0)]
+    internal sealed class ConfigRecordingAModule(List<string> trace) : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken)
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken)
         {
-            trace.Add("users");
-            return Task.FromResult(HandlerOutcome.Ok());
+            trace.Add("config-a");
+            return Task.FromResult(ModuleOutcome.Ok());
         }
     }
 
-    [Stage(Stage.Files)]
-    internal sealed class FilesRecordingHandler(List<string> trace) : IHandler
+    [Stage(Stage.Config, Order = 1)]
+    internal sealed class ConfigRecordingBModule(List<string> trace) : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken)
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken)
         {
-            trace.Add("files");
-            return Task.FromResult(HandlerOutcome.Ok());
+            trace.Add("config-b");
+            return Task.FromResult(ModuleOutcome.Ok());
         }
     }
 
-    [Stage(Stage.Hostname)]
-    private sealed class RebootingHandler(string reason) : IHandler
+    [Stage(Stage.Network)]
+    private sealed class RebootingModule(string reason) : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken) =>
-            Task.FromResult(HandlerOutcome.Reboot(reason));
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken) =>
+            Task.FromResult(ModuleOutcome.Reboot(reason));
     }
 
-    [Stage(Stage.Hostname)]
-    private sealed class FailingHandler(string reason) : IHandler
+    [Stage(Stage.Network)]
+    private sealed class FailingModule(string reason) : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken) =>
-            Task.FromResult(HandlerOutcome.Fail(reason));
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken) =>
+            Task.FromResult(ModuleOutcome.Fail(reason));
     }
 
-    [Stage(Stage.Hostname)]
-    private sealed class ThrowingHandler : IHandler
+    [Stage(Stage.Network)]
+    private sealed class ThrowingModule : IModule
     {
-        public Task<HandlerOutcome> ApplyAsync(global::Eryph.GuestServices.CloudConfig.CloudConfig config, IHandlerContext context, CancellationToken cancellationToken) =>
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("boom");
     }
 }

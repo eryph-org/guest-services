@@ -1,33 +1,35 @@
 using Eryph.GuestServices.Provisioning.DataSources;
+using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
-using Eryph.GuestServices.Provisioning.Serialization;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
+using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
 namespace Eryph.GuestServices.Provisioning.Stages;
 
 public sealed class StageRunner(
     IDataSourceLocator dataSourceLocator,
-    ICloudConfigSerializer serializer,
+    IUserDataPipeline userDataPipeline,
     IStateStore stateStore,
-    IEnumerable<IHandler> handlers,
-    IHostStatusReporter reporter,
+    IEnumerable<IModule> modules,
+    IReportingDispatcher reporter,
     IWindowsOs os,
     ILogger<StageRunner> logger) : IStageRunner
 {
     private static readonly Stage[] StageOrder =
     [
-        Stage.Discovery,
-        Stage.Hostname,
-        Stage.Users,
-        Stage.Files,
-        Stage.Commands,
-        Stage.Finalize,
+        Stage.Local,
+        Stage.Network,
+        Stage.Config,
+        Stage.Final,
     ];
 
     public async Task<StageRunOutcome> RunAsync(CancellationToken cancellationToken)
     {
+        // Pre-step: discover the datasource before any stage runs.
         var data = await dataSourceLocator.LocateAsync(cancellationToken).ConfigureAwait(false);
         if (data is null)
         {
@@ -36,82 +38,150 @@ public sealed class StageRunner(
         }
 
         var state = await LoadOrResetStateAsync(data.InstanceId, cancellationToken).ConfigureAwait(false);
-        await reporter.ReportStartedAsync(data.InstanceId, cancellationToken).ConfigureAwait(false);
+        await reporter.EmitAsync(
+            new ReportingEvent.ProvisioningStarted(data.InstanceId) { Origin = "stage-runner" },
+            cancellationToken).ConfigureAwait(false);
 
-        global::Eryph.GuestServices.CloudConfig.CloudConfig config;
-        try
-        {
-            config = string.IsNullOrWhiteSpace(data.UserData)
-                ? new global::Eryph.GuestServices.CloudConfig.CloudConfig()
-                : serializer.Deserialize(data.UserData!);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to deserialize cloud-config userdata");
-            await reporter.ReportFailedAsync($"userdata-parse: {ex.Message}", cancellationToken).ConfigureAwait(false);
-            return new StageRunOutcome.Failed("Failed to parse cloud-config userdata", ex);
-        }
+        var context = new ModuleContext(os, data);
+        var buckets = BuildStageBuckets(modules);
 
-        var context = new HandlerContext(os, data);
-        var buckets = BuildStageBuckets(handlers);
+        // userData is resolved lazily at the start of the Network stage so that
+        // any platform setup done in Local (e.g. raising the network) can
+        // influence subsequent stages without paying the parse cost up front.
+        ResolvedUserData? resolvedUserData = null;
 
         foreach (var stage in StageOrder)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var stageName = stage.ToString();
 
-            if (!buckets.TryGetValue(stage, out var stageHandlers))
-                stageHandlers = [];
+            if (!buckets.TryGetValue(stage, out var stageModules))
+                stageModules = [];
 
-            logger.LogInformation("Running stage {Stage} ({Count} handler(s))", stageName, stageHandlers.Count);
+            await reporter.EmitAsync(
+                new ReportingEvent.StageStarted(stage) { Origin = $"stage:{stageName}" },
+                cancellationToken).ConfigureAwait(false);
 
-            foreach (var handler in stageHandlers)
+            logger.LogInformation("Running stage {Stage} ({Count} module(s))", stageName, stageModules.Count);
+
+            // Resolve user-data once, at the start of the Network stage.
+            if (stage == Stage.Network && resolvedUserData is null)
             {
-                var handlerKey = handler.GetType().FullName ?? handler.GetType().Name;
-                if (state.CompletedHandlers.Contains(handlerKey))
-                {
-                    logger.LogDebug("Skipping already-completed handler {Handler}", handlerKey);
-                    continue;
-                }
-
-                HandlerOutcome outcome;
                 try
                 {
-                    outcome = await handler.ApplyAsync(config, context, cancellationToken).ConfigureAwait(false);
+                    resolvedUserData = await userDataPipeline
+                        .ResolveAsync(data.GetUserDataBytes(), cancellationToken)
+                        .ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Handler {Handler} threw", handlerKey);
-                    await reporter.ReportFailedAsync($"{handlerKey}: {ex.Message}", cancellationToken).ConfigureAwait(false);
-                    return new StageRunOutcome.Failed($"Handler {handlerKey} threw", ex);
+                    logger.LogError(ex, "Failed to resolve user-data");
+                    await reporter.EmitAsync(
+                        new ReportingEvent.ProvisioningFailed($"userdata-parse: {ex.Message}", ex)
+                        {
+                            Origin = "stage-runner",
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                    return new StageRunOutcome.Failed("Failed to parse cloud-config userdata", ex);
+                }
+            }
+
+            // v1 has no Local-stage modules; this placeholder lets modules that
+            // happen to be tagged Local still execute, even though we have no
+            // resolved user-data yet.
+            var userDataForStage = resolvedUserData ?? ResolvedUserData.Empty(new CloudConfigModel());
+
+            foreach (var module in stageModules)
+            {
+                var moduleKey = module.GetType().FullName ?? module.GetType().Name;
+                var moduleName = module.GetType().Name;
+                if (state.CompletedHandlers.Contains(moduleKey))
+                {
+                    logger.LogDebug("Skipping already-completed module {Module}", moduleKey);
+                    continue;
+                }
+
+                await reporter.EmitAsync(
+                    new ReportingEvent.ModuleStarted(moduleName) { Origin = $"module:{moduleName}" },
+                    cancellationToken).ConfigureAwait(false);
+
+                ModuleOutcome outcome;
+                try
+                {
+                    outcome = await module.ApplyAsync(userDataForStage, context, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Module {Module} threw", moduleKey);
+                    await reporter.EmitAsync(
+                        new ReportingEvent.ModuleFailed(moduleName, ex.Message, ex)
+                        {
+                            Origin = $"module:{moduleName}",
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                    await reporter.EmitAsync(
+                        new ReportingEvent.ProvisioningFailed($"{moduleKey}: {ex.Message}", ex)
+                        {
+                            Origin = "stage-runner",
+                        },
+                        cancellationToken).ConfigureAwait(false);
+                    return new StageRunOutcome.Failed($"Module {moduleKey} threw", ex);
                 }
 
                 switch (outcome)
                 {
-                    case HandlerOutcome.Completed:
+                    case ModuleOutcome.Completed:
                         state = state with
                         {
-                            CompletedHandlers = AddTo(state.CompletedHandlers, handlerKey),
+                            CompletedHandlers = AddTo(state.CompletedHandlers, moduleKey),
                             LastUpdated = DateTimeOffset.UtcNow,
                         };
                         await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.ModuleFinished(moduleName, nameof(ModuleOutcome.Completed))
+                            {
+                                Origin = $"module:{moduleName}",
+                            },
+                            cancellationToken).ConfigureAwait(false);
                         break;
 
-                    case HandlerOutcome.RebootRequested reboot:
+                    case ModuleOutcome.RebootRequested reboot:
                         state = state with
                         {
-                            CompletedHandlers = AddTo(state.CompletedHandlers, handlerKey),
+                            CompletedHandlers = AddTo(state.CompletedHandlers, moduleKey),
                             RebootCount = state.RebootCount + 1,
                             LastUpdated = DateTimeOffset.UtcNow,
                         };
                         await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
-                        await reporter.ReportRebootPendingAsync(reboot.Reason, cancellationToken).ConfigureAwait(false);
-                        logger.LogInformation("Handler {Handler} requested reboot: {Reason}", handlerKey, reboot.Reason);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.ModuleFinished(moduleName, nameof(ModuleOutcome.RebootRequested))
+                            {
+                                Origin = $"module:{moduleName}",
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.RebootRequested(reboot.Reason)
+                            {
+                                Origin = $"module:{moduleName}",
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                        logger.LogInformation("Module {Module} requested reboot: {Reason}", moduleKey, reboot.Reason);
                         return new StageRunOutcome.RebootRequested(reboot.Reason);
 
-                    case HandlerOutcome.Failed failed:
-                        logger.LogError("Handler {Handler} failed: {Reason}", handlerKey, failed.Reason);
-                        await reporter.ReportFailedAsync($"{handlerKey}: {failed.Reason}", cancellationToken).ConfigureAwait(false);
+                    case ModuleOutcome.Failed failed:
+                        logger.LogError("Module {Module} failed: {Reason}", moduleKey, failed.Reason);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.ModuleFailed(moduleName, failed.Reason, failed.Exception)
+                            {
+                                Origin = $"module:{moduleName}",
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.ProvisioningFailed($"{moduleKey}: {failed.Reason}", failed.Exception)
+                            {
+                                Origin = "stage-runner",
+                            },
+                            cancellationToken).ConfigureAwait(false);
                         return new StageRunOutcome.Failed(failed.Reason, failed.Exception);
                 }
             }
@@ -122,10 +192,14 @@ public sealed class StageRunner(
                 LastUpdated = DateTimeOffset.UtcNow,
             };
             await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
-            await reporter.ReportStageCompletedAsync(stageName, cancellationToken).ConfigureAwait(false);
+            await reporter.EmitAsync(
+                new ReportingEvent.StageFinished(stage) { Origin = $"stage:{stageName}" },
+                cancellationToken).ConfigureAwait(false);
         }
 
-        await reporter.ReportCompletedAsync(cancellationToken).ConfigureAwait(false);
+        await reporter.EmitAsync(
+            new ReportingEvent.ProvisioningCompleted { Origin = "stage-runner" },
+            cancellationToken).ConfigureAwait(false);
         logger.LogInformation("Provisioning completed for instance {InstanceId}", data.InstanceId);
         return StageRunOutcome.Success.Instance;
     }
@@ -162,15 +236,15 @@ public sealed class StageRunner(
         return next;
     }
 
-    // Reflect over each handler once, group by stage, and sort by (Order, FullName).
+    // Reflect over each module once, group by stage, and sort by (Order, FullName).
     // The result is reused for every stage in StageOrder.
-    private static Dictionary<Stage, List<IHandler>> BuildStageBuckets(IEnumerable<IHandler> handlers)
+    private static Dictionary<Stage, List<IModule>> BuildStageBuckets(IEnumerable<IModule> modules)
     {
-        var entries = handlers
-            .Select(h => new
+        var entries = modules
+            .Select(m => new
             {
-                Handler = h,
-                Attribute = h.GetType()
+                Module = m,
+                Attribute = m.GetType()
                     .GetCustomAttributes(typeof(StageAttribute), inherit: false)
                     .OfType<StageAttribute>()
                     .FirstOrDefault(),
@@ -184,8 +258,8 @@ public sealed class StageRunner(
                 g => g.Key,
                 g => g
                     .OrderBy(t => t.Attribute!.Order)
-                    .ThenBy(t => t.Handler.GetType().FullName, StringComparer.Ordinal)
-                    .Select(t => t.Handler)
+                    .ThenBy(t => t.Module.GetType().FullName, StringComparer.Ordinal)
+                    .Select(t => t.Module)
                     .ToList());
     }
 }

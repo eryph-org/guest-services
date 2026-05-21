@@ -1,10 +1,12 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.DataSources;
-using Eryph.GuestServices.Provisioning.Handlers;
+using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -24,7 +26,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
     }
 
     [Fact]
-    public async Task RunAsync_RealisticCloudConfig_AppliesAllHandlers()
+    public async Task RunAsync_RealisticCloudConfig_AppliesAllModules()
     {
         const string yaml =
             """
@@ -72,23 +74,24 @@ public sealed class EndToEndProvisioningTests : IDisposable
 
         var stateStore = new FileStateStore(NullLogger<FileStateStore>.Instance, _stateDirectory);
         var serializer = new CloudConfigSerializer();
-        var reporter = Substitute.For<IHostStatusReporter>();
+        var pipeline = new PassthroughUserDataPipeline(serializer);
+        var reporter = Substitute.For<IReportingDispatcher>();
 
-        var handlers = new IHandler[]
+        var modules = new IModule[]
         {
-            new SetHostnameHandler(NullLogger<SetHostnameHandler>.Instance),
-            new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance),
-            new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance),
-            new SshAuthorizedKeysHandler(NullLogger<SshAuthorizedKeysHandler>.Instance),
-            new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance),
-            new RuncmdHandler(NullLogger<RuncmdHandler>.Instance),
+            new SetHostnameModule(NullLogger<SetHostnameModule>.Instance),
+            new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance),
+            new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance),
+            new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance),
+            new WriteFilesModule(NullLogger<WriteFilesModule>.Instance),
+            new RuncmdModule(NullLogger<RuncmdModule>.Instance),
         };
 
         var runner = new StageRunner(
             locator,
-            serializer,
+            pipeline,
             stateStore,
-            handlers,
+            modules,
             reporter,
             windowsOs,
             NullLogger<StageRunner>.Instance);
@@ -101,12 +104,12 @@ public sealed class EndToEndProvisioningTests : IDisposable
         var state = await stateStore.LoadAsync(CancellationToken.None);
         state.Should().NotBeNull();
         state!.InstanceId.Should().Be("instance-1");
-        state.CompletedHandlers.Should().Contain(typeof(SetHostnameHandler).FullName!);
+        state.CompletedHandlers.Should().Contain(typeof(SetHostnameModule).FullName!);
 
         await windowsOs.Received(1).SetComputerNameAsync("testhost", Arg.Any<CancellationToken>());
 
-        // Second run after the (simulated) reboot — hostname handler is already completed,
-        // remaining handlers should run.
+        // Second run after the (simulated) reboot — hostname module is already completed,
+        // remaining modules should run.
         windowsOs.ClearReceivedCalls();
         windowsOs.SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(SetComputerNameResult.AlreadySet);
@@ -136,6 +139,8 @@ public sealed class EndToEndProvisioningTests : IDisposable
             Arg.Is<IReadOnlyList<string>>(a => a.Count == 2 && a[0] == "echo" && a[1] == "argv-form"),
             Arg.Any<CancellationToken>());
 
-        await reporter.Received().ReportCompletedAsync(Arg.Any<CancellationToken>());
+        await reporter.Received().EmitAsync(
+            Arg.Any<ReportingEvent.ProvisioningCompleted>(),
+            Arg.Any<CancellationToken>());
     }
 }

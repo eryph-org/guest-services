@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -8,7 +9,7 @@ namespace Eryph.GuestServices.Provisioning.Hosting;
 
 internal sealed class ProvisioningWorker(
     IStageRunner stageRunner,
-    IHostStatusReporter reporter,
+    IReportingDispatcher reporter,
     IHostApplicationLifetime lifetime,
     ILogger<ProvisioningWorker> logger) : BackgroundService
 {
@@ -28,7 +29,9 @@ internal sealed class ProvisioningWorker(
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled exception in stage runner");
-            await reporter.ReportFailedAsync(ex.Message, CancellationToken.None).ConfigureAwait(false);
+            await reporter.EmitAsync(
+                new ReportingEvent.ProvisioningFailed(ex.Message, ex) { Origin = "provisioning-worker" },
+                CancellationToken.None).ConfigureAwait(false);
             SetExitCode(1);
             lifetime.StopApplication();
             return;

@@ -2,16 +2,16 @@ using System.IO.Compression;
 using System.Text;
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
-using Eryph.GuestServices.Provisioning.Handlers;
-using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Tests.Handlers;
+namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-public sealed class WriteFilesHandlerTests
+public sealed class WriteFilesModuleTests
 {
     [Fact]
     public async Task Writes_plain_text_content()
@@ -19,15 +19,18 @@ public sealed class WriteFilesHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "hello" }],
         };
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().EnsureDirectoryAsync(@"C:\etc", Arg.Any<CancellationToken>());
         await os.Received().WriteFileAsync(
             @"C:\etc\foo",
@@ -43,13 +46,16 @@ public sealed class WriteFilesHandlerTests
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
         var b64 = Convert.ToBase64String("hello"u8.ToArray());
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = b64, Encoding = "b64" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().WriteFileAsync(
             @"C:\etc\foo",
@@ -70,13 +76,16 @@ public sealed class WriteFilesHandlerTests
             gzip.Write(raw, 0, raw.Length);
         var encoded = Convert.ToBase64String(compressed.ToArray());
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = encoded, Encoding = "gz+b64" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().WriteFileAsync(
             @"C:\etc\foo",
@@ -91,13 +100,16 @@ public sealed class WriteFilesHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "x", Append = true }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().WriteFileAsync(
             @"C:\etc\foo", Arg.Any<byte[]>(), true, Arg.Any<CancellationToken>());
@@ -109,13 +121,16 @@ public sealed class WriteFilesHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "x", Owner = "alice:devs" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetFileOwnerAsync(@"C:\etc\foo", "alice:devs", Arg.Any<CancellationToken>());
     }
@@ -126,13 +141,16 @@ public sealed class WriteFilesHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "x" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.DidNotReceive().SetFileOwnerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
@@ -144,15 +162,18 @@ public sealed class WriteFilesHandlerTests
         os.TranslateUnixPath("/../../Windows/notepad.exe")
             .Returns(_ => throw new ArgumentException("path contains '..'"));
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/../../Windows/notepad.exe", Content = "evil" }],
         };
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Failed>()
+        result.Should().BeOfType<ModuleOutcome.Failed>()
             .Which.Reason.Should().Contain("path traversal");
         await os.DidNotReceive().WriteFileAsync(
             Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
@@ -165,15 +186,18 @@ public sealed class WriteFilesHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
 
-        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
         var config = new CloudConfigModel
         {
             WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "x", Encoding = "rot13" }],
         };
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().WriteFileAsync(
             Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }

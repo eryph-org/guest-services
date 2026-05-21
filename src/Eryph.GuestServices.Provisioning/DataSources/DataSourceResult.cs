@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Eryph.GuestServices.Provisioning.DataSources;
 
 public sealed record DataSourceResult
@@ -14,4 +16,7 @@ public sealed record DataSourceResult
         new Dictionary<string, string>(StringComparer.Ordinal);
 
     public string? NetworkConfig { get; init; }
+
+    public byte[] GetUserDataBytes() =>
+        string.IsNullOrEmpty(UserData) ? [] : Encoding.UTF8.GetBytes(UserData);
 }

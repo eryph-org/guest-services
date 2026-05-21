@@ -1,16 +1,17 @@
 using System.Security.Cryptography;
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Microsoft.Extensions.Logging;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-// Ordering note: this handler runs at Stage.Users Order=1, *after* UsersGroupsHandler
+// Ordering note: this module runs at Stage.Config Order=1, *after* UsersGroupsModule
 // (Order=0). If a user is named in both `users[].passwd`/`plain_text_passwd` and in
 // `chpasswd.users`, the chpasswd entry takes effect because it runs later and
-// overwrites the password set by UsersGroupsHandler. This matches cloud-init.
-[Stage(Stage.Users, Order = 1)]
-internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) : IHandler
+// overwrites the password set by UsersGroupsModule. This matches cloud-init.
+[Stage(Stage.Config, Order = 1)]
+internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : IModule
 {
     private const string RandomType = "RANDOM";
     private const int RandomPasswordLength = 16;
@@ -21,21 +22,22 @@ internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) :
     private const string PasswordAlphabet =
         "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%^&*-_=+";
 
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         await ProcessChpasswdUsersAsync(config, context, cancellationToken).ConfigureAwait(false);
         await ProcessChpasswdListAsync(config, context, cancellationToken).ConfigureAwait(false);
         await ProcessPasswordShorthandAsync(config, context, cancellationToken).ConfigureAwait(false);
 
-        return HandlerOutcome.Ok();
+        return ModuleOutcome.Ok();
     }
 
     private async Task ProcessChpasswdUsersAsync(
         CloudConfigModel config,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (config.Chpasswd?.Users is null)
@@ -53,8 +55,8 @@ internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) :
                 // SECURITY: do not log the password value. It must never appear in
                 // event log, file sinks, or aggregators. The generated value is
                 // surfaced to the host out-of-band.
-                // TODO(C-fix): once IHostStatusReporter exposes a secret-reporting
-                // channel (e.g. ReportGeneratedCredentialAsync), pipe `password`
+                // TODO(C-fix): once IReportingDispatcher exposes a secret-reporting
+                // channel (e.g. a GeneratedCredential event), pipe `password`
                 // through it here so the orchestrator can retrieve it.
                 logger.LogInformation("Generated random password for '{User}'.", entry.Name);
             }
@@ -71,7 +73,7 @@ internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) :
 
     private async Task ProcessChpasswdListAsync(
         CloudConfigModel config,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(config.Chpasswd?.List))
@@ -101,7 +103,7 @@ internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) :
 
     private async Task ProcessPasswordShorthandAsync(
         CloudConfigModel config,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(config.Password))
@@ -114,7 +116,7 @@ internal sealed class SetPasswordsHandler(ILogger<SetPasswordsHandler> logger) :
     }
 
     private async Task SetPasswordAsync(
-        IHandlerContext context,
+        IModuleContext context,
         string user,
         string password,
         CancellationToken cancellationToken)

@@ -1,15 +1,15 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
-using Eryph.GuestServices.Provisioning.Handlers;
-using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Tests.Handlers;
+namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-public sealed class UsersGroupsHandlerTests
+public sealed class UsersGroupsModuleTests
 {
     [Fact]
     public async Task Creates_missing_groups_and_skips_existing()
@@ -18,7 +18,7 @@ public sealed class UsersGroupsHandlerTests
         os.LocalGroupExistsAsync("devs", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalGroupExistsAsync("ops", Arg.Any<CancellationToken>()).Returns(true);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Groups =
@@ -28,9 +28,12 @@ public sealed class UsersGroupsHandlerTests
             ],
         };
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().CreateLocalGroupAsync("devs", Arg.Any<CancellationToken>());
         await os.DidNotReceive().CreateLocalGroupAsync("ops", Arg.Any<CancellationToken>());
         await os.Received().AddUserToGroupAsync("alice", "devs", Arg.Any<CancellationToken>());
@@ -43,7 +46,7 @@ public sealed class UsersGroupsHandlerTests
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalUserExistsAsync("bob", Arg.Any<CancellationToken>()).Returns(true);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users =
@@ -53,7 +56,10 @@ public sealed class UsersGroupsHandlerTests
             ],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().CreateLocalUserAsync(
             Arg.Is<LocalUserSpec>(s => s.Name == "alice"), Arg.Any<CancellationToken>());
@@ -70,13 +76,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Passwd = "secret" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "secret", false, Arg.Any<CancellationToken>());
     }
@@ -87,13 +96,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", PlainTextPasswd = "plain-secret" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "plain-secret", false, Arg.Any<CancellationToken>());
     }
@@ -104,13 +116,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Passwd = "hashed", PlainTextPasswd = "plain" }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "plain", false, Arg.Any<CancellationToken>());
         await os.DidNotReceive().SetLocalUserPasswordAsync(
@@ -124,13 +139,16 @@ public sealed class UsersGroupsHandlerTests
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalGroupExistsAsync("devs", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Groups = ["devs"] }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().CreateLocalGroupAsync("devs", Arg.Any<CancellationToken>());
         await os.Received().AddUserToGroupAsync("alice", "devs", Arg.Any<CancellationToken>());
@@ -145,13 +163,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Sudo = sudo }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().EnsureUserInAdministratorsAsync("alice", Arg.Any<CancellationToken>());
     }
@@ -165,13 +186,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Sudo = sudo }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.DidNotReceive().EnsureUserInAdministratorsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
@@ -182,13 +206,16 @@ public sealed class UsersGroupsHandlerTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", LockPasswd = true }],
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().CreateLocalUserAsync(
             Arg.Is<LocalUserSpec>(s => s.Name == "alice" && s.Disabled == true),

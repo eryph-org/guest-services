@@ -1,13 +1,13 @@
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
-using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 using RuncmdEntryModel = Eryph.GuestServices.CloudConfig.RuncmdEntry;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Commands)]
-internal sealed class RuncmdHandler(ILogger<RuncmdHandler> logger) : IHandler
+[Stage(Stage.Config, Order = 4)]
+internal sealed class RuncmdModule(ILogger<RuncmdModule> logger) : IModule
 {
     /// <summary>
     /// Exit code reserved by the cloudbase-init "reboot and continue"
@@ -15,13 +15,14 @@ internal sealed class RuncmdHandler(ILogger<RuncmdHandler> logger) : IHandler
     /// </summary>
     public const int RebootRequestedExitCode = 1003;
 
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         if (config.Runcmd is null || config.Runcmd.Count == 0)
-            return HandlerOutcome.Ok();
+            return ModuleOutcome.Ok();
 
         for (var i = 0; i < config.Runcmd.Count; i++)
         {
@@ -45,7 +46,7 @@ internal sealed class RuncmdHandler(ILogger<RuncmdHandler> logger) : IHandler
                 logger.LogInformation(
                     "runcmd entry #{Index} returned {Code}; requesting reboot-and-continue.",
                     i + 1, RebootRequestedExitCode);
-                return HandlerOutcome.Reboot($"runcmd entry #{i + 1} requested reboot (exit {RebootRequestedExitCode}).");
+                return ModuleOutcome.Reboot($"runcmd entry #{i + 1} requested reboot (exit {RebootRequestedExitCode}).");
             }
 
             if (result.ExitCode != 0)
@@ -54,12 +55,12 @@ internal sealed class RuncmdHandler(ILogger<RuncmdHandler> logger) : IHandler
                     i + 1, result.ExitCode);
         }
 
-        return HandlerOutcome.Ok();
+        return ModuleOutcome.Ok();
     }
 
     private static async Task<RunCommandResult> ExecuteAsync(
         RuncmdEntryModel entry,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (entry.IsShellCommand)

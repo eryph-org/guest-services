@@ -1,26 +1,28 @@
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Microsoft.Extensions.Logging;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Users, Order = 2)]
-internal sealed class SshAuthorizedKeysHandler(ILogger<SshAuthorizedKeysHandler> logger) : IHandler
+[Stage(Stage.Config, Order = 2)]
+internal sealed class SshAuthorizedKeysModule(ILogger<SshAuthorizedKeysModule> logger) : IModule
 {
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         await ProcessTopLevelKeysAsync(config, context, cancellationToken).ConfigureAwait(false);
         await ProcessPerUserKeysAsync(config, context, cancellationToken).ConfigureAwait(false);
 
-        return HandlerOutcome.Ok();
+        return ModuleOutcome.Ok();
     }
 
     private async Task ProcessTopLevelKeysAsync(
         CloudConfigModel config,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (config.SshAuthorizedKeys is null || config.SshAuthorizedKeys.Count == 0)
@@ -40,7 +42,7 @@ internal sealed class SshAuthorizedKeysHandler(ILogger<SshAuthorizedKeysHandler>
 
     private async Task ProcessPerUserKeysAsync(
         CloudConfigModel config,
-        IHandlerContext context,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
         if (config.Users is null)

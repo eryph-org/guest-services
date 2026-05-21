@@ -1,21 +1,21 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
-using Eryph.GuestServices.Provisioning.Handlers;
-using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Tests.Handlers;
+namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-public sealed class SetPasswordsHandlerTests
+public sealed class SetPasswordsModuleTests
 {
     [Fact]
     public async Task Sets_passwords_from_chpasswd_users()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -29,9 +29,12 @@ public sealed class SetPasswordsHandlerTests
             },
         };
 
-        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().SetLocalUserPasswordAsync("alice", "secret", false, Arg.Any<CancellationToken>());
         await os.Received().SetLocalUserPasswordAsync("bob", "other", false, Arg.Any<CancellationToken>());
     }
@@ -40,7 +43,7 @@ public sealed class SetPasswordsHandlerTests
     public async Task Generates_random_password_when_type_is_RANDOM()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -50,7 +53,10 @@ public sealed class SetPasswordsHandlerTests
             },
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync(
             "alice",
@@ -63,7 +69,7 @@ public sealed class SetPasswordsHandlerTests
     public async Task Parses_legacy_list_form_user_colon_password()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -73,7 +79,10 @@ public sealed class SetPasswordsHandlerTests
             },
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "secret", false, Arg.Any<CancellationToken>());
         await os.Received().SetLocalUserPasswordAsync("bob", "other", false, Arg.Any<CancellationToken>());
@@ -83,14 +92,17 @@ public sealed class SetPasswordsHandlerTests
     public async Task Preserves_colons_inside_password_when_parsing_list()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel
         {
             Chpasswd = new ChpasswdConfig { List = "alice:has:colons" },
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "has:colons", false, Arg.Any<CancellationToken>());
     }
@@ -99,7 +111,7 @@ public sealed class SetPasswordsHandlerTests
     public async Task Applies_password_shorthand_to_first_user()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel
         {
@@ -107,7 +119,10 @@ public sealed class SetPasswordsHandlerTests
             Password = "topsecret",
         };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("alice", "topsecret", false, Arg.Any<CancellationToken>());
     }
@@ -116,11 +131,14 @@ public sealed class SetPasswordsHandlerTests
     public async Task Falls_back_to_Administrator_when_no_users_configured()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
         var config = new CloudConfigModel { Password = "topsecret" };
 
-        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
         await os.Received().SetLocalUserPasswordAsync("Administrator", "topsecret", false, Arg.Any<CancellationToken>());
     }
@@ -129,11 +147,14 @@ public sealed class SetPasswordsHandlerTests
     public async Task Returns_completed_when_no_passwords_configured()
     {
         var os = Substitute.For<IWindowsOs>();
-        var handler = new SetPasswordsHandler(NullLogger<SetPasswordsHandler>.Instance);
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
 
-        var result = await handler.ApplyAsync(new CloudConfigModel(), new TestHandlerContext(os), CancellationToken.None);
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            new TestModuleContext(os),
+            CancellationToken.None);
 
-        result.Should().BeOfType<HandlerOutcome.Completed>();
+        result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().SetLocalUserPasswordAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }

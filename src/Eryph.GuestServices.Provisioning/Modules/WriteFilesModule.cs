@@ -1,21 +1,22 @@
 using System.IO.Compression;
 using System.Text;
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
 using Microsoft.Extensions.Logging;
-using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
-namespace Eryph.GuestServices.Provisioning.Handlers;
+namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Files)]
-internal sealed class WriteFilesHandler(ILogger<WriteFilesHandler> logger) : IHandler
+[Stage(Stage.Config, Order = 3)]
+internal sealed class WriteFilesModule(ILogger<WriteFilesModule> logger) : IModule
 {
-    public async Task<HandlerOutcome> ApplyAsync(
-        CloudConfigModel config,
-        IHandlerContext context,
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
         CancellationToken cancellationToken)
     {
+        var config = userData.CloudConfig;
         if (config.WriteFiles is null || config.WriteFiles.Count == 0)
-            return HandlerOutcome.Ok();
+            return ModuleOutcome.Ok();
 
         foreach (var entry in config.WriteFiles)
         {
@@ -47,10 +48,10 @@ internal sealed class WriteFilesHandler(ILogger<WriteFilesHandler> logger) : IHa
             {
                 // TranslateUnixPath rejects ".." segments and paths that escape
                 // the C:\ root after canonicalization. We surface that as a
-                // handler failure rather than continuing — silently skipping
+                // module failure rather than continuing — silently skipping
                 // hostile input would hide configuration errors.
                 logger.LogError(ex, "Rejecting write_files entry with unsafe path '{Path}'.", entry.Path);
-                return HandlerOutcome.Fail($"path traversal: {entry.Path}");
+                return ModuleOutcome.Fail($"path traversal: {entry.Path}");
             }
 
             var parent = Path.GetDirectoryName(windowsPath);
@@ -82,7 +83,7 @@ internal sealed class WriteFilesHandler(ILogger<WriteFilesHandler> logger) : IHa
             }
         }
 
-        return HandlerOutcome.Ok();
+        return ModuleOutcome.Ok();
     }
 
     private static byte[] DecodeContent(string? content, string? encoding)
