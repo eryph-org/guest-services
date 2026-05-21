@@ -234,23 +234,50 @@ function Mount-CatletVhd {
   $vhdPath = Get-CatletVhdPath -VmId $VmId
   Write-Verbose "Mounting catlet VHD: $vhdPath"
   $disk = Mount-VHD -Path $vhdPath -PassThru -ErrorAction Stop
-  # Mount-VHD doesn't always populate the partition info synchronously; refresh.
   $disk = Get-Disk -Number $disk.Number
 
-  $partitions = Get-Partition -DiskNumber $disk.Number
-  foreach ($p in $partitions) {
-    if (-not $p.DriveLetter) { continue }
-    if (Test-Path -LiteralPath "$($p.DriveLetter):\Windows") {
-      Write-Verbose "Found OS partition at $($p.DriveLetter):"
-      return [pscustomobject]@{
-        VhdPath     = $vhdPath
-        DriveLetter = "$($p.DriveLetter)"
+  try {
+    # Eryph catlets use VHDx differencing disks. Mount-VHD presents the joined
+    # parent + child filesystem, but it doesn't auto-assign drive letters to
+    # partitions on differencing chains. Walk the partitions and assign a
+    # letter to any NTFS/ReFS volume that doesn't have one.
+    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
+      if ($p.DriveLetter) { continue }
+      try {
+        $vol = $p | Get-Volume -ErrorAction SilentlyContinue
+        if ($vol -and ($vol.FileSystem -in 'NTFS', 'ReFS')) {
+          Write-Verbose "Assigning drive letter to partition #$($p.PartitionNumber) (FS=$($vol.FileSystem))"
+          $p | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
+        }
+      } catch {
+        Write-Verbose "Could not assign drive letter to partition #$($p.PartitionNumber): $_"
       }
     }
-  }
 
-  Dismount-VHD -Path $vhdPath -ErrorAction SilentlyContinue
-  throw "Could not find a Windows OS partition on $vhdPath"
+    # Re-read partitions after letter assignment and look for the OS root.
+    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
+      if (-not $p.DriveLetter) { continue }
+      $letter = "$($p.DriveLetter)"
+      if (Test-Path -LiteralPath "${letter}:\Windows") {
+        Write-Verbose "Found OS partition at ${letter}:"
+        return [pscustomobject]@{
+          VhdPath     = $vhdPath
+          DriveLetter = $letter
+        }
+      }
+    }
+
+    # No match — dump partition state so the failure is debuggable.
+    $summary = (Get-Partition -DiskNumber $disk.Number) | ForEach-Object {
+      $vol = $_ | Get-Volume -ErrorAction SilentlyContinue
+      "  #$($_.PartitionNumber) Size=$($_.Size) Letter=$($_.DriveLetter) FS=$($vol.FileSystem) Type=$($_.Type)"
+    }
+    throw "Could not find a Windows OS partition on $vhdPath. Partitions:`n$($summary -join "`n")"
+  }
+  catch {
+    Dismount-VHD -Path $vhdPath -ErrorAction SilentlyContinue
+    throw
+  }
 }
 
 function Dismount-CatletVhd {
