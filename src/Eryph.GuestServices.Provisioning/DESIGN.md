@@ -52,12 +52,28 @@ Stages run in order. Each stage runs all its handlers; a handler can declare `Re
 
 ```
 Discovery   → bring up the datasource, parse metadata + userdata
+SystemInit  → platform-level setup that runs regardless of userdata (v2+; no v1 handlers)
 Hostname    → set_hostname (may reboot)
 Users       → users, set_passwords, ssh_authorized_keys
 Files       → write_files
 Commands    → runcmd
 Finalize    → mark complete, report to host via KVP
 ```
+
+**Two-stage execution philosophy (cloudbase-init parity).** Cloudbase-init separates platform-level setup (driven by its own conf file, runs regardless of userdata) from userdata processing. We adopt the same split:
+
+- **`SystemInit` stage** holds handlers that the eryph platform always runs. They are NOT activated by cloud-config keys — their behavior is parameterized by an agent-side config file (`egs-provisioning.json` next to the binary) or sensible defaults. State-store idempotency still applies: each handler runs once per instance, with reboot-and-continue semantics.
+- **`Hostname` through `Commands` stages** are userdata-driven — handlers activate based on what `#cloud-config` declares.
+
+v1 ships zero `SystemInit` handlers; the stage is in the enum and the runner iterates it as a no-op. v2 candidates (one handler each, plus matching `IWindowsOs` surface):
+
+| Handler | Purpose | `IWindowsOs` additions |
+|---|---|---|
+| `ExtendVolumesHandler` | Grow C: (and other partitions) to fill the physical disk eryph allocated | `ExtendVolumeAsync(driveLetter)` — `Resize-Partition` via PowerShell/CIM |
+| `PageFileHandler` | Configure pagefile size/location based on RAM and the agent config | `SetPageFileAsync(spec)` — WMI `Win32_PageFileSetting` |
+| `NetworkConfigHandler` | Apply network-config v2 from the datasource (static IPs, DNS, MTU, routes) | `ApplyNetworkConfigAsync(...)` — netsh + WMI |
+| `LicensingHandler` *(optional)* | KMS / AVMA activation | `SetProductKeyAsync`, `ActivateAsync` |
+| `MtuHandler` | Per-NIC MTU | `SetMtuAsync(adapterId, mtu)` |
 
 State is JSON in `%ProgramData%\eryph\provisioning\state.json`. Schema:
 
