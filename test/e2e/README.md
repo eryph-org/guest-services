@@ -1,4 +1,25 @@
-# Configurable-shell e2e tests
+# e2e tests against a real eryph catlet
+
+Two suites:
+
+- `Shell.E2E.Tests.ps1` — configurable-shell tests; spins up a winsrv VM with
+  the dbosoft/guest-services gene, post-boot patches the gene-installed
+  egs-service, and exercises the SHELL selection chain (KVP > SSH env > defaults).
+- `Provisioning.E2E.Tests.ps1` — embedded-provisioning tests; creates a BASE
+  catlet (no fodder), mounts its VHD BEFORE first start, bakes our egs-service
+  binary in, disables cloudbase-init, and asserts the embedded provisioning
+  lifecycle runs cleanly at first boot via KVP and state.json.
+
+The two suites have different goals so they're separate runners:
+
+```powershell
+pwsh ./Run-E2ETests.ps1                       # Shell suite, winsrv2022
+pwsh ./Run-E2ETests.ps1 -OSVersion winsrv2025
+pwsh ./Run-E2ETests.ps1 -SkipBuild            # reuse existing publish output
+pwsh ./Run-ProvisioningE2ETests.ps1           # Provisioning suite — REQUIRES ADMIN
+```
+
+## Shell suite
 
 End-to-end tests for the `set-shell` feature. They spin up a real Windows VM
 via eryph, replace the gene-installed `egs-service` with the locally-built
@@ -77,7 +98,60 @@ e2e suite verifies the wire-level behavior on top.
 If a deploy fails, `C:\egs-staging\deploy.log` inside the VM has the timestamps
 of each step.
 
+## Provisioning suite
+
+End-to-end tests for the embedded ProvisioningHostedService. Different shape
+from the Shell suite:
+
+1. Creates a base catlet (`provisioning-catlet.yaml`) — no fodder. The parent
+   gene gives Windows + cloudbase-init; nothing else.
+2. The catlet is NOT started yet. We mount its VHD on the host
+   (`Mount-CatletVhd`).
+3. We copy the locally-built `egs-service` publish output into
+   `<vol>:\Program Files\eryph\guest-services\bin\`.
+4. We disable cloudbase-init: rename its install dir to `.disabled-<ts>` AND
+   set its service `Start=Disabled` in the offline `SYSTEM` hive.
+5. We register `egs-service` as a Windows service (Start=Automatic,
+   Type=OwnProcess) by writing into the offline `SYSTEM` hive at
+   `ControlSet001\Services\eryph-guest-services`.
+6. Dismount, start the catlet.
+7. On first boot, only `egs-service` runs. The embedded
+   `ProvisioningHostedService` discovers a data source, runs the stages, and
+   reports state via KVP.
+8. Tests assert KVP reads `eryph.provisioning.state = completed`, the on-disk
+   `state.json` includes the `Final` stage, the running binary is our build,
+   and cloudbase-init never started.
+
+```powershell
+pwsh ./Run-ProvisioningE2ETests.ps1            # default winsrv2022
+pwsh ./Run-ProvisioningE2ETests.ps1 -OSVersion winsrv2025
+pwsh ./Run-ProvisioningE2ETests.ps1 -SkipBuild
+```
+
+**Requires Administrator** — `Mount-VHD` + offline `reg load` need elevated
+rights. The Shell suite doesn't.
+
+### Why VHD-mount + offline service registration (instead of post-boot patch)
+
+The Shell suite patches AFTER first boot because its gene's first-boot fodder
+*installs* `egs-service`. That's fine for testing shell behavior, but it
+means cbi has already done first-boot provisioning by the time the patched
+binary runs — we'd be testing a *second-boot* code path, not first-boot.
+
+Our embedded `ProvisioningHostedService` lives or dies at first boot:
+discovers a datasource, runs the stages, reports via KVP. Testing it
+meaningfully requires the new binary to be the one Windows starts during its
+very first SCM cycle. VHD-mount + offline service registration achieves
+that without touching the host's running services or any post-OOBE state.
+
 ## Troubleshooting
 
 - Set `$env:EGS_E2E_KEEP_VM=1` to leave the catlet running after the suite
   finishes (or fails). Useful for post-mortem inspection via Hyper-V Manager.
+- Provisioning suite mount/dismount failures usually mean the catlet was
+  still in `Saved` state from a previous run — `Get-VM -Id <vmid> | Remove-VM`
+  manually or use `Remove-Catlet`. The suite checks `State -eq 'Off'` before
+  mounting and aborts with a clear error otherwise.
+- `reg load` failures: another `reg.exe` may have the hive loaded under a
+  different mount point. List with `reg query HKLM | findstr Offline` and
+  unload manually.

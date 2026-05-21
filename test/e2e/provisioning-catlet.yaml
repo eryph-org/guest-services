@@ -1,0 +1,10 @@
+name: provisioning-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# Intentionally minimal: no fodder. We bake egs-service into the VHD
+# offline (Install-EgsServiceOffline), disable cbi, and let our embedded
+# ProvisioningHostedService own the first-boot lifecycle.
