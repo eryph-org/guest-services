@@ -28,7 +28,6 @@ internal static class ProvisioningContainerBuilder
     public static Container Build(ProvisioningContainerOptions? options = null)
     {
         var container = new Container();
-        container.Options.DefaultScopedLifestyle = new AsyncScopedLifestyle();
         // Spectre.Console.Cli resolves the command instance itself (a concrete
         // class) via ITypeResolver. Allow SimpleInjector to construct those
         // concrete classes on demand so we don't have to enumerate every
@@ -50,6 +49,16 @@ internal static class ProvisioningContainerBuilder
     public static void RegisterInto(Container container, ProvisioningContainerOptions? options = null)
     {
         options ??= new ProvisioningContainerOptions();
+
+        // SimpleInjector's AddSimpleInjector + AddHostedService integration
+        // resolves hosted services from a scope, so the container needs a
+        // default scoped lifestyle. Without this, the host crashes with
+        // InvalidOperationException at startup ("The DefaultScopedLifestyle
+        // property can not be changed after a lock..." etc.). The check makes
+        // RegisterInto idempotent — callers that already configured a scoped
+        // lifestyle keep theirs.
+        if (container.Options.DefaultScopedLifestyle is null)
+            container.Options.DefaultScopedLifestyle = new AsyncScopedLifestyle();
 
         // Settings: loaded from disk if present, otherwise defaults. Modules and
         // helpers depend on ProvisioningSettings directly; tunables that were
