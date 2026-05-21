@@ -91,6 +91,41 @@ public sealed class StageRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_completed_instance_resumes_without_running_handlers_and_still_reports_completed()
+    {
+        var data = MakeData("i-1");
+        var reporter = Substitute.For<IHostStatusReporter>();
+
+        var trace = new List<string>();
+        var handlers = new IHandler[]
+        {
+            new HostnameRecordingHandler(trace),
+            new UsersRecordingHandler(trace),
+            new FilesRecordingHandler(trace),
+        };
+
+        var allStageNames = Enum.GetNames(typeof(Stage));
+        var allHandlerKeys = handlers.Select(h => h.GetType().FullName!);
+
+        var stateStore = new InMemoryStateStore
+        {
+            Current = new ProvisioningState
+            {
+                InstanceId = "i-1",
+                CompletedStages = new HashSet<string>(allStageNames, StringComparer.Ordinal),
+                CompletedHandlers = new HashSet<string>(allHandlerKeys, StringComparer.Ordinal),
+            },
+        };
+
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, handlers: handlers, reporter: reporter);
+        var result = await runner.RunAsync(CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Success>();
+        trace.Should().BeEmpty("all handlers were already completed in a prior run");
+        await reporter.Received().ReportCompletedAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task RunAsync_resets_state_when_instance_id_changes()
     {
         var data = MakeData("new-instance");

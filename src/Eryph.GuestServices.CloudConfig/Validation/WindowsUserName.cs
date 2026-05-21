@@ -12,7 +12,7 @@ public class WindowsUserName : ValidatingNewType<WindowsUserName, string, OrdStr
 {
     public WindowsUserName(string value) : base(Normalize(value))
     {
-        ValidOrThrow(Validate(value));
+        ValidOrThrow(Validate(Normalize(value)));
     }
 
     private static string Normalize(string? value) => value?.ToLowerInvariant() ?? string.Empty;

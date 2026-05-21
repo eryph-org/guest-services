@@ -31,6 +31,10 @@ public static class CloudConfigYamlSerializer
         return builder
             .WithTypeConverter(new UserConfigYamlTypeConverter(typeInspector))
             .WithTypeConverter(new RuncmdEntryYamlTypeConverter())
+            // The following converters return Accepts(_) => false because they are
+            // attached via WithAttributeOverride above. They must still be registered
+            // here so YamlDotNet can resolve them through its TypeConverterCache when
+            // the attribute override is applied.
             .WithTypeConverter(new StringListYamlConverter())
             .WithTypeConverter(new RuncmdListYamlConverter())
             .WithTypeConverter(new WriteFilePermissionsYamlConverter())
@@ -43,6 +47,12 @@ public static class CloudConfigYamlSerializer
     public static CloudConfig Deserialize(string yaml)
     {
         var stripped = StripCloudConfigHeader(yaml);
+        // An empty document (e.g. just the "#cloud-config" header or fully blank input)
+        // is valid and represents a CloudConfig with all-null fields. YamlDotNet would
+        // otherwise throw on empty input.
+        if (string.IsNullOrWhiteSpace(stripped))
+            return new CloudConfig();
+
         try
         {
             return Deserializer.Value.Deserialize<CloudConfig>(new StringParser(stripped));

@@ -82,6 +82,42 @@ public sealed class UsersGroupsHandlerTests
     }
 
     [Fact]
+    public async Task Sets_user_password_from_plain_text_passwd()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
+
+        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var config = new CloudConfigModel
+        {
+            Users = [new UserConfig { Name = "alice", PlainTextPasswd = "plain-secret" }],
+        };
+
+        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync("alice", "plain-secret", false, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Plain_text_passwd_wins_over_passwd_when_both_are_set()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
+
+        var handler = new UsersGroupsHandler(NullLogger<UsersGroupsHandler>.Instance);
+        var config = new CloudConfigModel
+        {
+            Users = [new UserConfig { Name = "alice", Passwd = "hashed", PlainTextPasswd = "plain" }],
+        };
+
+        await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync("alice", "plain", false, Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetLocalUserPasswordAsync(
+            "alice", "hashed", Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Adds_user_to_groups_and_creates_missing_groups_on_the_fly()
     {
         var os = Substitute.For<IWindowsOs>();

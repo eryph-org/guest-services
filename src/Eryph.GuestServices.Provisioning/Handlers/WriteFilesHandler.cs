@@ -38,7 +38,21 @@ internal sealed class WriteFilesHandler(ILogger<WriteFilesHandler> logger) : IHa
                 continue;
             }
 
-            var windowsPath = context.Os.TranslateUnixPath(entry.Path);
+            string windowsPath;
+            try
+            {
+                windowsPath = context.Os.TranslateUnixPath(entry.Path);
+            }
+            catch (ArgumentException ex)
+            {
+                // TranslateUnixPath rejects ".." segments and paths that escape
+                // the C:\ root after canonicalization. We surface that as a
+                // handler failure rather than continuing — silently skipping
+                // hostile input would hide configuration errors.
+                logger.LogError(ex, "Rejecting write_files entry with unsafe path '{Path}'.", entry.Path);
+                return HandlerOutcome.Fail($"path traversal: {entry.Path}");
+            }
+
             var parent = Path.GetDirectoryName(windowsPath);
             if (!string.IsNullOrEmpty(parent))
                 await context.Os.EnsureDirectoryAsync(parent, cancellationToken).ConfigureAwait(false);

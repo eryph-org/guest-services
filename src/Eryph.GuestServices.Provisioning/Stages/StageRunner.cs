@@ -53,22 +53,15 @@ public sealed class StageRunner(
         }
 
         var context = new HandlerContext(os, data);
-        var handlerList = handlers.ToList();
+        var buckets = BuildStageBuckets(handlers);
 
         foreach (var stage in StageOrder)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var stageName = stage.ToString();
 
-            var stageHandlers = handlerList
-                .Select(h => (Handler: h, Attribute: h.GetType().GetCustomAttributes(typeof(StageAttribute), inherit: false)
-                    .OfType<StageAttribute>()
-                    .FirstOrDefault()))
-                .Where(t => t.Attribute is not null && t.Attribute.Stage == stage)
-                .OrderBy(t => t.Attribute!.Order)
-                .ThenBy(t => t.Handler.GetType().FullName, StringComparer.Ordinal)
-                .Select(t => t.Handler)
-                .ToList();
+            if (!buckets.TryGetValue(stage, out var stageHandlers))
+                stageHandlers = [];
 
             logger.LogInformation("Running stage {Stage} ({Count} handler(s))", stageName, stageHandlers.Count);
 
@@ -167,5 +160,32 @@ public sealed class StageRunner(
     {
         var next = new HashSet<string>(source, source.Comparer) { value };
         return next;
+    }
+
+    // Reflect over each handler once, group by stage, and sort by (Order, FullName).
+    // The result is reused for every stage in StageOrder.
+    private static Dictionary<Stage, List<IHandler>> BuildStageBuckets(IEnumerable<IHandler> handlers)
+    {
+        var entries = handlers
+            .Select(h => new
+            {
+                Handler = h,
+                Attribute = h.GetType()
+                    .GetCustomAttributes(typeof(StageAttribute), inherit: false)
+                    .OfType<StageAttribute>()
+                    .FirstOrDefault(),
+            })
+            .Where(t => t.Attribute is not null)
+            .ToList();
+
+        return entries
+            .GroupBy(t => t.Attribute!.Stage)
+            .ToDictionary(
+                g => g.Key,
+                g => g
+                    .OrderBy(t => t.Attribute!.Order)
+                    .ThenBy(t => t.Handler.GetType().FullName, StringComparer.Ordinal)
+                    .Select(t => t.Handler)
+                    .ToList());
     }
 }

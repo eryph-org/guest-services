@@ -230,6 +230,22 @@ public class CloudConfigYamlSerializerTests
     }
 
     [Fact]
+    public void Deserialize_WriteFilePermissionsWithHexPrefix_Throws()
+    {
+        const string yaml = """
+                            write_files:
+                            - path: /tmp/x
+                              content: hi
+                              permissions: "0x644"
+                            """;
+
+        var act = () => CloudConfigYamlSerializer.Deserialize(yaml);
+
+        act.Should().Throw<InvalidConfigException>()
+            .WithInnerException<YamlException>();
+    }
+
+    [Fact]
     public void Deserialize_WriteFilePermissionsWithDigit9_Throws()
     {
         const string yaml = """
@@ -266,6 +282,49 @@ public class CloudConfigYamlSerializerTests
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
         config.Hostname.Should().Be("my-host");
+    }
+
+    [Fact]
+    public void Deserialize_OnlyHeader_ReturnsEmpty()
+    {
+        const string yaml = "#cloud-config\n";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Should().NotBeNull();
+        config.Hostname.Should().BeNull();
+        config.Users.Should().BeNull();
+        config.WriteFiles.Should().BeNull();
+        config.Runcmd.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_EmptyString_ReturnsEmpty()
+    {
+        var config = CloudConfigYamlSerializer.Deserialize(string.Empty);
+
+        config.Should().NotBeNull();
+        config.Hostname.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_WriteFilesExplicitNull_ReturnsNullProperty()
+    {
+        const string yaml = "write_files: ~";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.WriteFiles.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_UsersWithEmptyValue_ReturnsNullProperty()
+    {
+        const string yaml = "users:";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().BeNull();
     }
 
     [Fact]

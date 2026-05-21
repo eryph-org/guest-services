@@ -32,6 +32,10 @@ public sealed class KvpHostStatusReporter(
         {
             [StateKey] = "running",
             [StageKey] = stage,
+            // Clear any stale failure/reboot markers from a previous run so the host
+            // doesn't see error/reboot_reason values that no longer apply.
+            [ErrorKey] = null,
+            [RebootReasonKey] = null,
             [UpdatedKey] = Timestamp(),
         });
 

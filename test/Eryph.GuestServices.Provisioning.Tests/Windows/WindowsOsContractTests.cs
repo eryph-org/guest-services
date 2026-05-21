@@ -68,6 +68,17 @@ public sealed class WindowsOsContractTests
         CreateOs().TranslateUnixPath("/").Should().Be("C:\\");
     }
 
+    [Theory]
+    [InlineData("/../../Windows/notepad.exe")]
+    [InlineData("/etc/../../foo")]
+    [InlineData("/home/alice/../../bob")]
+    [InlineData(@"C:\foo\..\Windows\System32")]
+    public void TranslateUnixPath_rejects_parent_traversal(string input)
+    {
+        var act = () => CreateOs().TranslateUnixPath(input);
+        act.Should().Throw<ArgumentException>();
+    }
+
     // The following tests genuinely mutate the host and need a live Windows
     // instance with admin privileges. We keep them around as a manual smoke
     // suite — they are not run by default.

@@ -29,7 +29,7 @@ internal sealed class ProvisioningWorker(
         {
             logger.LogError(ex, "Unhandled exception in stage runner");
             await reporter.ReportFailedAsync(ex.Message, CancellationToken.None).ConfigureAwait(false);
-            ExitCode = 1;
+            SetExitCode(1);
             lifetime.StopApplication();
             return;
         }
@@ -38,21 +38,41 @@ internal sealed class ProvisioningWorker(
         {
             case StageRunOutcome.Success:
             case StageRunOutcome.NoDataSource:
+                SetExitCode(0);
                 lifetime.StopApplication();
                 return;
 
             case StageRunOutcome.RebootRequested reboot:
                 logger.LogInformation("Reboot requested: {Reason}", reboot.Reason);
                 TriggerReboot();
-                Environment.Exit(0);
+                // Give shutdown.exe a brief moment to dispatch before we stop the host,
+                // then exit through the normal host lifecycle so finalizers run.
+                SetExitCode(0);
+                try
+                {
+                    await Task.Delay(500, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Shutdown already in progress — fall through and stop.
+                }
+                lifetime.StopApplication();
                 return;
 
             case StageRunOutcome.Failed failed:
                 logger.LogError("Provisioning failed: {Reason}", failed.Reason);
-                ExitCode = 1;
+                SetExitCode(1);
                 lifetime.StopApplication();
                 return;
         }
+    }
+
+    private void SetExitCode(int code)
+    {
+        ExitCode = code;
+        // Surface to the process so the service manager observes the right code
+        // even if a later stage of host shutdown overwrites Environment.ExitCode.
+        Environment.ExitCode = code;
     }
 
     private static void TriggerReboot()

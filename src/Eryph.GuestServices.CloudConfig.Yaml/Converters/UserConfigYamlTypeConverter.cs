@@ -61,6 +61,7 @@ internal class UserConfigYamlTypeConverter(
     public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer) =>
         serializer(value, type);
 
+    // keep in sync with UserConfig string-list properties
     private static bool IsStringListShorthandProperty(string descriptorName) =>
         // The type inspector applies UnderscoredNamingConvention, so the descriptor name
         // for SshAuthorizedKeys is "ssh_authorized_keys" and for Groups is "groups".

@@ -30,6 +30,7 @@ internal static class NetApi32
     public const uint UF_PASSWORD_EXPIRED = 0x800000;
 
     public const int USER_INFO_LEVEL_1 = 1;
+    public const int USER_INFO_LEVEL_2 = 2;
     public const int USER_INFO_LEVEL_4 = 4;
     public const int USER_INFO_LEVEL_1003 = 1003; // password
     public const int USER_INFO_LEVEL_1008 = 1008; // flags
@@ -49,6 +50,38 @@ internal static class NetApi32
         [MarshalAs(UnmanagedType.LPWStr)] public string? usri1_comment;
         public uint usri1_flags;
         [MarshalAs(UnmanagedType.LPWStr)] public string? usri1_script_path;
+    }
+
+    // Read-only level used to fetch a few extra fields not present in USER_INFO_1
+    // (notably usri2_full_name). We never write through this level — writes go via
+    // the dedicated per-field setters (1011 for full name, etc.).
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct USER_INFO_2
+    {
+        [MarshalAs(UnmanagedType.LPWStr)] public string usri2_name;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_password;
+        public uint usri2_password_age;
+        public uint usri2_priv;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_home_dir;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_comment;
+        public uint usri2_flags;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_script_path;
+        public uint usri2_auth_flags;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_full_name;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_usr_comment;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_parms;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_workstations;
+        public uint usri2_last_logon;
+        public uint usri2_last_logoff;
+        public uint usri2_acct_expires;
+        public uint usri2_max_storage;
+        public uint usri2_units_per_week;
+        public IntPtr usri2_logon_hours;
+        public uint usri2_bad_pw_count;
+        public uint usri2_num_logons;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri2_logon_server;
+        public uint usri2_country_code;
+        public uint usri2_code_page;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -189,6 +222,9 @@ internal static class NetApi32
         [In] LOCALGROUP_MEMBERS_INFO_3[] buf,
         int totalentries);
 
+    // `resumehandle` is IN/OUT per the Win32 documentation. Passing it by ref is
+    // necessary for multi-page enumeration; the callee writes the next cursor
+    // into the same location when the buffer fills up (`ERROR_MORE_DATA`).
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
     public static extern int NetLocalGroupGetMembers(
         string? servername,
@@ -198,7 +234,7 @@ internal static class NetApi32
         int prefmaxlen,
         out int entriesread,
         out int totalentries,
-        IntPtr resumehandle);
+        ref IntPtr resumehandle);
 
     [DllImport("netapi32.dll")]
     public static extern int NetApiBufferFree(IntPtr buffer);

@@ -20,12 +20,14 @@ internal class WriteFilePermissionsYamlConverter : IYamlTypeConverter
                 scalar.Start, scalar.End,
                 "File permissions must not be empty.");
 
+        if (raw.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            throw new YamlException(
+                scalar.Start, scalar.End,
+                "Hex prefix is not valid for octal file permissions");
+
         var digits = raw;
-        if (digits.StartsWith("0o", StringComparison.OrdinalIgnoreCase)
-            || digits.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-        {
+        if (digits.StartsWith("0o", StringComparison.OrdinalIgnoreCase))
             digits = digits[2..];
-        }
 
         foreach (var c in digits)
         {

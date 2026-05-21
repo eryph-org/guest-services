@@ -70,4 +70,18 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
 
         await act.Should().ThrowAsync<InvalidDataException>();
     }
+
+    [Fact]
+    public async Task ReadAsync_throws_descriptive_InvalidDataException_when_meta_data_json_is_malformed()
+    {
+        var metaDataPath = Path.Combine(_openstackDir, "meta_data.json");
+        await File.WriteAllTextAsync(metaDataPath, "{ this is not valid json ");
+
+        var act = async () => await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<InvalidDataException>();
+        assertion.Which.Message.Should().Contain("meta_data.json");
+        assertion.Which.Message.Should().Contain(metaDataPath);
+        assertion.Which.InnerException.Should().BeAssignableTo<System.Text.Json.JsonException>();
+    }
 }

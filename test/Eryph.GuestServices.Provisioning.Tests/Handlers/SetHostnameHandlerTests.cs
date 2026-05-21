@@ -55,7 +55,7 @@ public sealed class SetHostnameHandlerTests
     {
         var os = Substitute.For<IWindowsOs>();
         os.SetComputerNameAsync("box", Arg.Any<CancellationToken>())
-            .Returns(SetComputerNameResult.Set);
+            .Returns(SetComputerNameResult.AlreadySet);
         var handler = new SetHostnameHandler(NullLogger<SetHostnameHandler>.Instance);
 
         var result = await handler.ApplyAsync(

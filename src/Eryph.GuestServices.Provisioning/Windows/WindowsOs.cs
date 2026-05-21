@@ -20,8 +20,18 @@ using Microsoft.Extensions.Logging;
 namespace Eryph.GuestServices.Provisioning.Windows;
 
 [SupportedOSPlatform("windows")]
-internal sealed class WindowsOs(ILogger<WindowsOs> logger) : IWindowsOs
+internal sealed class WindowsOs : IWindowsOs
 {
+    private readonly ILogger<WindowsOs> logger;
+
+    public WindowsOs(ILogger<WindowsOs> logger)
+    {
+        this.logger = logger;
+        // WellKnownGroups is a static helper and can't take its own logger via DI;
+        // hand it one so its one-shot fallback warning is observable.
+        WellKnownGroups.SetLogger(logger);
+    }
+
     // Win32_ComputerSystem.Rename success codes:
     //   0 = success
     //   anything else = failure (see WMI docs)
@@ -65,26 +75,28 @@ internal sealed class WindowsOs(ILogger<WindowsOs> logger) : IWindowsOs
     {
         return Task.Run(() =>
         {
-            var current = NetUserHelpers.TryGetUserInfo1(spec.Name)
+            // We use level 2 here (instead of level 1) because we need
+            // usri2_full_name to detect whether the full name actually changed.
+            var current = NetUserHelpers.TryGetUserInfo2(spec.Name)
                 ?? throw new InvalidOperationException($"User '{spec.Name}' does not exist.");
 
-            if (spec.Comment is not null && !string.Equals(current.usri1_comment, spec.Comment, StringComparison.Ordinal))
+            if (spec.Comment is not null && !string.Equals(current.usri2_comment, spec.Comment, StringComparison.Ordinal))
                 NetUserHelpers.SetComment(spec.Name, spec.Comment);
 
-            if (spec.HomeDir is not null && !string.Equals(current.usri1_home_dir, spec.HomeDir, StringComparison.Ordinal))
+            if (spec.HomeDir is not null && !string.Equals(current.usri2_home_dir, spec.HomeDir, StringComparison.Ordinal))
                 NetUserHelpers.SetHomeDir(spec.Name, spec.HomeDir);
 
-            if (spec.FullName is not null)
+            if (spec.FullName is not null && !string.Equals(current.usri2_full_name, spec.FullName, StringComparison.Ordinal))
                 NetUserHelpers.SetFullName(spec.Name, spec.FullName);
 
             if (spec.Disabled.HasValue)
             {
-                var isDisabled = (current.usri1_flags & NetApi32.UF_ACCOUNTDISABLE) != 0;
+                var isDisabled = (current.usri2_flags & NetApi32.UF_ACCOUNTDISABLE) != 0;
                 if (isDisabled != spec.Disabled.Value)
                 {
                     var newFlags = spec.Disabled.Value
-                        ? current.usri1_flags | NetApi32.UF_ACCOUNTDISABLE
-                        : current.usri1_flags & ~NetApi32.UF_ACCOUNTDISABLE;
+                        ? current.usri2_flags | NetApi32.UF_ACCOUNTDISABLE
+                        : current.usri2_flags & ~NetApi32.UF_ACCOUNTDISABLE;
                     NetUserHelpers.SetFlags(spec.Name, newFlags);
                 }
             }
@@ -133,7 +145,7 @@ internal sealed class WindowsOs(ILogger<WindowsOs> logger) : IWindowsOs
         return Task.Run(() => Directory.CreateDirectory(windowsPath), cancellationToken);
     }
 
-    public Task WriteFileAsync(string windowsPath, byte[] content, bool append, CancellationToken cancellationToken)
+    public async Task WriteFileAsync(string windowsPath, byte[] content, bool append, CancellationToken cancellationToken)
     {
         var parent = Path.GetDirectoryName(windowsPath);
         if (!string.IsNullOrEmpty(parent))
@@ -141,11 +153,15 @@ internal sealed class WindowsOs(ILogger<WindowsOs> logger) : IWindowsOs
 
         if (append)
         {
-            using var stream = new FileStream(windowsPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-            return stream.WriteAsync(content, 0, content.Length, cancellationToken);
+            // `await using` makes sure the stream is disposed *after* the
+            // async write completes; the previous `using` + returned Task
+            // disposed the stream before WriteAsync had a chance to finish.
+            await using var stream = new FileStream(windowsPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+            await stream.WriteAsync(content.AsMemory(0, content.Length), cancellationToken).ConfigureAwait(false);
+            return;
         }
 
-        return File.WriteAllBytesAsync(windowsPath, content, cancellationToken);
+        await File.WriteAllBytesAsync(windowsPath, content, cancellationToken).ConfigureAwait(false);
     }
 
     public Task SetFileOwnerAsync(string windowsPath, string owner, CancellationToken cancellationToken)
@@ -243,34 +259,77 @@ internal sealed class WindowsOs(ILogger<WindowsOs> logger) : IWindowsOs
         if (string.IsNullOrWhiteSpace(unixPath))
             throw new ArgumentException("Path is empty.", nameof(unixPath));
 
+        // Reject ".." segments outright — user-controlled paths must not be
+        // able to escape their intended mapping via traversal. We check on the
+        // raw input (before splitting) so both "/foo/../bar" and "C:\foo\..\bar"
+        // are rejected.
+        if (ContainsParentSegment(unixPath))
+            throw new ArgumentException(
+                $"Path contains '..' segment, which is not allowed: '{unixPath}'.", nameof(unixPath));
+
+        string candidate;
+
         // Pass through if the path is already drive-rooted or UNC.
         if (unixPath.Length >= 2 && unixPath[1] == ':')
-            return unixPath.Replace('/', '\\');
-        if (unixPath.StartsWith(@"\\", StringComparison.Ordinal))
-            return unixPath;
-
-        if (!unixPath.StartsWith('/'))
+        {
+            candidate = unixPath.Replace('/', '\\');
+        }
+        else if (unixPath.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            // UNC paths are returned as-is and are not anchored under C:\.
+            // We still canonicalize to flush any stray separators or dot
+            // segments that slipped past the early check.
+            return Path.GetFullPath(unixPath);
+        }
+        else if (!unixPath.StartsWith('/'))
+        {
             throw new ArgumentException(
                 $"Expected an absolute unix path or a drive-rooted Windows path, got '{unixPath}'.", nameof(unixPath));
-
-        var segments = unixPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0)
-            return "C:\\";
-
-        return segments[0] switch
+        }
+        else
         {
-            "home" when segments.Length >= 2 =>
-                Path.Combine(["C:\\Users", .. segments[1..]]),
-            "root" =>
-                Path.Combine(["C:\\Users\\Administrator", .. segments[1..]]),
-            "tmp" =>
-                Path.Combine([Path.GetTempPath().TrimEnd('\\'), .. segments[1..]]),
-            "var" =>
-                Path.Combine(
-                    [Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), .. segments[1..]]),
-            _ =>
-                Path.Combine(["C:\\", .. segments]),
-        };
+            var segments = unixPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+                return "C:\\";
+
+            candidate = segments[0] switch
+            {
+                "home" when segments.Length >= 2 =>
+                    Path.Combine(["C:\\Users", .. segments[1..]]),
+                "root" =>
+                    Path.Combine(["C:\\Users\\Administrator", .. segments[1..]]),
+                "tmp" =>
+                    Path.Combine([Path.GetTempPath().TrimEnd('\\'), .. segments[1..]]),
+                "var" =>
+                    Path.Combine(
+                        [Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), .. segments[1..]]),
+                _ =>
+                    Path.Combine(["C:\\", .. segments]),
+            };
+        }
+
+        // Canonicalize and verify the result still anchors under C:\. The
+        // mapping documented at the top of this file lands everything below
+        // C:\ (including /tmp -> %TEMP% and /var -> %ProgramData%, both of
+        // which are C:\ subtrees on a default Windows install). Anything that
+        // canonicalizes elsewhere is rejected.
+        var full = Path.GetFullPath(candidate);
+        if (!full.StartsWith(@"C:\", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"Translated path '{full}' is outside the allowed C:\\ root (input was '{unixPath}').",
+                nameof(unixPath));
+
+        return full;
+    }
+
+    private static bool ContainsParentSegment(string path)
+    {
+        foreach (var segment in path.Split(['/', '\\']))
+        {
+            if (segment == "..")
+                return true;
+        }
+        return false;
     }
 
     private async Task<RunCommandResult> RunAsync(ProcessStartInfo psi, CancellationToken cancellationToken)

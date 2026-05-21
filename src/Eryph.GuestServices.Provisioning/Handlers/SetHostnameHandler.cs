@@ -32,9 +32,6 @@ internal sealed class SetHostnameHandler(ILogger<SetHostnameHandler> logger) : I
             case SetComputerNameResult.AlreadySet:
                 logger.LogInformation("Computer name is already '{Name}'.", desired);
                 return HandlerOutcome.Ok();
-            case SetComputerNameResult.Set:
-                logger.LogInformation("Computer name set to '{Name}'.", desired);
-                return HandlerOutcome.Ok();
             case SetComputerNameResult.SetWithRebootPending:
                 logger.LogInformation("Computer name change to '{Name}' is pending reboot.", desired);
                 return HandlerOutcome.Reboot($"Hostname change to '{desired}' requires reboot.");

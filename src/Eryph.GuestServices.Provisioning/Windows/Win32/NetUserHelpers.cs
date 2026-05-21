@@ -46,6 +46,25 @@ internal static class NetUserHelpers
         }
     }
 
+    public static NetApi32.USER_INFO_2? TryGetUserInfo2(string userName)
+    {
+        var status = NetApi32.NetUserGetInfo(null, userName, NetApi32.USER_INFO_LEVEL_2, out var buffer);
+        if (status == NetApi32.NERR_UserNotFound)
+            return null;
+
+        if (status != NetApi32.NERR_Success)
+            throw new Win32Exception(status, $"NetUserGetInfo(2) failed for '{userName}' with code {status}.");
+
+        try
+        {
+            return Marshal.PtrToStructure<NetApi32.USER_INFO_2>(buffer);
+        }
+        finally
+        {
+            NetApi32.NetApiBufferFree(buffer);
+        }
+    }
+
     public static void AddUser(LocalUserSpec spec, string? initialPassword)
     {
         var info = new NetApi32.USER_INFO_1
@@ -171,30 +190,40 @@ internal static class NetUserHelpers
 
     public static IReadOnlyList<string> GetGroupMemberNames(string groupName)
     {
-        var status = NetApi32.NetLocalGroupGetMembers(
-            null, groupName, 3, out var buffer, -1, out var entriesRead, out _, IntPtr.Zero);
+        const int ERROR_MORE_DATA = 234;
 
-        if (status != NetApi32.NERR_Success)
-            throw new Win32Exception(status,
-                $"NetLocalGroupGetMembers failed for '{groupName}' with code {status}.");
+        var members = new List<string>();
+        var entrySize = Marshal.SizeOf<NetApi32.LOCALGROUP_MEMBERS_INFO_3>();
+        IntPtr resumeHandle = IntPtr.Zero;
 
-        try
+        while (true)
         {
-            var members = new List<string>(entriesRead);
-            var entrySize = Marshal.SizeOf<NetApi32.LOCALGROUP_MEMBERS_INFO_3>();
-            for (var i = 0; i < entriesRead; i++)
+            var status = NetApi32.NetLocalGroupGetMembers(
+                null, groupName, 3, out var buffer, -1, out var entriesRead, out _, ref resumeHandle);
+
+            if (status != NetApi32.NERR_Success && status != ERROR_MORE_DATA)
+                throw new Win32Exception(status,
+                    $"NetLocalGroupGetMembers failed for '{groupName}' with code {status}.");
+
+            try
             {
-                var entryPtr = IntPtr.Add(buffer, i * entrySize);
-                var entry = Marshal.PtrToStructure<NetApi32.LOCALGROUP_MEMBERS_INFO_3>(entryPtr);
-                if (!string.IsNullOrEmpty(entry.lgrmi3_domainandname))
-                    members.Add(entry.lgrmi3_domainandname);
+                for (var i = 0; i < entriesRead; i++)
+                {
+                    var entryPtr = IntPtr.Add(buffer, i * entrySize);
+                    var entry = Marshal.PtrToStructure<NetApi32.LOCALGROUP_MEMBERS_INFO_3>(entryPtr);
+                    if (!string.IsNullOrEmpty(entry.lgrmi3_domainandname))
+                        members.Add(entry.lgrmi3_domainandname);
+                }
+            }
+            finally
+            {
+                NetApi32.NetApiBufferFree(buffer);
             }
 
-            return members;
+            if (status != ERROR_MORE_DATA || resumeHandle == IntPtr.Zero)
+                break;
         }
-        finally
-        {
-            NetApi32.NetApiBufferFree(buffer);
-        }
+
+        return members;
     }
 }

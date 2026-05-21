@@ -31,7 +31,19 @@ public sealed class ConfigDriveDataSource(
             return null;
 
         var rawMetaData = await File.ReadAllTextAsync(metaDataPath, cancellationToken).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(rawMetaData);
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(rawMetaData);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException(
+                $"ConfigDrive meta_data.json is not valid JSON at {metaDataPath}",
+                ex);
+        }
+
+        using var _ = doc;
         var flat = FlattenJson(doc.RootElement);
 
         if (!flat.TryGetValue("uuid", out var instanceId) || string.IsNullOrWhiteSpace(instanceId))

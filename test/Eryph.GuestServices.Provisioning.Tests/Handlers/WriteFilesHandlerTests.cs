@@ -138,6 +138,28 @@ public sealed class WriteFilesHandlerTests
     }
 
     [Fact]
+    public async Task Fails_when_path_translation_throws_for_traversal()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/../../Windows/notepad.exe")
+            .Returns(_ => throw new ArgumentException("path contains '..'"));
+
+        var handler = new WriteFilesHandler(NullLogger<WriteFilesHandler>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles = [new WriteFileConfig { Path = "/../../Windows/notepad.exe", Content = "evil" }],
+        };
+
+        var result = await handler.ApplyAsync(config, new TestHandlerContext(os), CancellationToken.None);
+
+        result.Should().BeOfType<HandlerOutcome.Failed>()
+            .Which.Reason.Should().Contain("path traversal");
+        await os.DidNotReceive().WriteFileAsync(
+            Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().EnsureDirectoryAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Skips_entries_with_unsupported_encoding()
     {
         var os = Substitute.For<IWindowsOs>();

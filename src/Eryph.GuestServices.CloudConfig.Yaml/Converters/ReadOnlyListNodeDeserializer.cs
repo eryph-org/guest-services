@@ -31,7 +31,11 @@ internal class ReadOnlyListNodeDeserializer : INodeDeserializer
         var elementType = expectedType.GetGenericArguments()[0];
         var listType = typeof(List<>).MakeGenericType(elementType);
 
+        // A null result here means the YAML had an explicit null (e.g. "users: ~" or
+        // "users:" with no value). Pass that through as a null property value rather
+        // than returning false, which would let YamlDotNet fall through and fail with
+        // an unintelligible error.
         value = nestedObjectDeserializer(reader, listType);
-        return value != null;
+        return true;
     }
 }

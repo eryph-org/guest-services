@@ -6,6 +6,9 @@ public sealed record UserConfig
 
     public string? Passwd { get; init; }
 
+    // Cloud-init alias for Passwd with explicit "store plaintext, no hashing" semantics; Passwd may be a hash.
+    public string? PlainTextPasswd { get; init; }
+
     public bool? LockPasswd { get; init; }
 
     public IReadOnlyList<string>? Groups { get; init; }

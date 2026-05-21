@@ -37,10 +37,10 @@ public class WriteFilePermissions : ValidatingNewType<WriteFilePermissions, stri
         from nonEmpty in Eryph.ConfigModel.Validations.ValidateNotEmpty(value, "file permissions")
         let digits = StripPrefix(nonEmpty)
         from _ in guard(IsOctal(digits),
-                Error.New("The file permissions must be an octal number such as \"0644\"."))
-            .ToValidation()
-        from __ in guardnot(digits.Length > 4,
-                Error.New("The file permissions must have at most four octal digits."))
-            .ToValidation()
+                    Error.New("The file permissions must be an octal number such as \"0644\"."))
+                .ToValidation()
+            | guardnot(digits.Length > 4,
+                    Error.New("The file permissions must have at most four octal digits."))
+                .ToValidation()
         select unit;
 }

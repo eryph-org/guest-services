@@ -132,6 +132,57 @@ public class CloudConfigValidationsTests
     }
 
     [Fact]
+    public void ValidateFqdn_SingleLabel_Fails()
+    {
+        var config = new CloudConfig { Fqdn = "myhost" };
+
+        var result = CloudConfigValidations.ValidateCloudConfig(config);
+
+        result.ShouldBeFail().Flatten()
+            .Should().Contain(e => e.Message.Contains("fully qualified"));
+    }
+
+    [Fact]
+    public void ValidateCloudConfig_UserWithBothPasswdAndPlainTextPasswd_ReturnsFail()
+    {
+        var config = new CloudConfig
+        {
+            Users =
+            [
+                new UserConfig
+                {
+                    Name = "alice",
+                    Passwd = "hashed",
+                    PlainTextPasswd = "plain",
+                },
+            ],
+        };
+
+        var result = CloudConfigValidations.ValidateCloudConfig(config);
+
+        result.ShouldBeFail().Flatten()
+            .Should().Contain(e =>
+                e.Message.Contains("users[0]")
+                && e.Message.Contains("'passwd' and 'plain_text_passwd'"));
+    }
+
+    [Fact]
+    public void ValidateCloudConfig_UserWithOnlyPlainTextPasswd_ReturnsSuccess()
+    {
+        var config = new CloudConfig
+        {
+            Users =
+            [
+                new UserConfig { Name = "alice", PlainTextPasswd = "plain" },
+            ],
+        };
+
+        var result = CloudConfigValidations.ValidateCloudConfig(config);
+
+        result.ShouldBeSuccess();
+    }
+
+    [Fact]
     public void ValidateCloudConfig_DuplicateUserNames_ReturnsFail()
     {
         var config = new CloudConfig

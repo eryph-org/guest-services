@@ -15,8 +15,12 @@ internal static class CimComputerSystem
     public static uint Rename(string newName)
     {
         using var session = CimSession.Create(null);
-        // There is exactly one Win32_ComputerSystem instance per machine.
-        var instance = session.EnumerateInstances(CimNamespace, "Win32_ComputerSystem").First();
+        // There is exactly one Win32_ComputerSystem instance per machine on a
+        // healthy install, but defensive code beats an opaque
+        // InvalidOperationException from LINQ if the enumeration is empty.
+        var instance = session.EnumerateInstances(CimNamespace, "Win32_ComputerSystem").FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                "No Win32_ComputerSystem instance was returned by CIM; cannot rename this computer.");
         using (instance)
         {
             using var parameters = new CimMethodParametersCollection

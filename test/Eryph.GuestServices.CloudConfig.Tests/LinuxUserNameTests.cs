@@ -18,18 +18,19 @@ public class LinuxUserNameTests
     }
 
     [Theory]
-    [InlineData("Root")]
-    [InlineData("ADMIN")]
-    [InlineData("0user")]
-    [InlineData("-user")]
-    [InlineData("user with space")]
-    [InlineData("user.name")]
-    [InlineData("user/name")]
-    public void NewValidation_InvalidName_ReturnsFail(string name)
+    [InlineData("Root", "lowercase letter")]
+    [InlineData("ADMIN", "lowercase letter")]
+    [InlineData("0user", "lowercase letter")]
+    [InlineData("-user", "lowercase letter")]
+    [InlineData("user with space", "lowercase letter")]
+    [InlineData("user.name", "lowercase letter")]
+    [InlineData("user/name", "lowercase letter")]
+    public void NewValidation_InvalidName_ReturnsFail(string name, string expectedFragment)
     {
         var result = LinuxUserName.NewValidation(name);
 
-        result.ShouldBeFail().Should().NotBeEmpty();
+        result.ShouldBeFail().Flatten()
+            .Should().Contain(e => e.Message.Contains(expectedFragment));
     }
 
     [Fact]

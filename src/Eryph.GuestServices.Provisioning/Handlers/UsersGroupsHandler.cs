@@ -84,10 +84,18 @@ internal sealed class UsersGroupsHandler(ILogger<UsersGroupsHandler> logger) : I
                 await os.UpdateLocalUserAsync(spec, cancellationToken).ConfigureAwait(false);
             }
 
-            if (!string.IsNullOrEmpty(user.Passwd))
+            // PlainTextPasswd is the cloud-init alias that explicitly carries a
+            // plaintext password (vs. Passwd, which may carry a hashed value).
+            // On Windows we cannot apply hashes, so we treat both identically;
+            // PlainTextPasswd wins if both are set, mirroring cloud-init.
+            var passwordToSet =
+                !string.IsNullOrEmpty(user.PlainTextPasswd) ? user.PlainTextPasswd :
+                !string.IsNullOrEmpty(user.Passwd) ? user.Passwd :
+                null;
+            if (passwordToSet is not null)
             {
                 logger.LogInformation("Setting password for '{User}'.", user.Name);
-                await os.SetLocalUserPasswordAsync(user.Name, user.Passwd, mustChangeAtNextLogon: false, cancellationToken)
+                await os.SetLocalUserPasswordAsync(user.Name, passwordToSet, mustChangeAtNextLogon: false, cancellationToken)
                     .ConfigureAwait(false);
             }
 

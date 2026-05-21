@@ -50,7 +50,10 @@ public static class CloudConfigValidations
                 | (user.PrimaryGroup is null
                     ? Success<Error, Unit>(unit)
                     : ValidateGroupName(user.PrimaryGroup, "primary_group"))
-                | ValidateMembersList(user.Groups, "groups", ValidateGroupName))
+                | ValidateMembersList(user.Groups, "groups", ValidateGroupName)
+                | guardnot(user.Passwd is not null && user.PlainTextPasswd is not null,
+                        Error.New("Cannot specify both 'passwd' and 'plain_text_passwd' for the same user."))
+                    .ToValidation())
             .Map(_ => user));
 
     public static Validation<Error, GroupConfig> ValidateGroupConfig(GroupConfig groupConfig, int index) =>
@@ -77,15 +80,16 @@ public static class CloudConfigValidations
 
     public static Validation<Error, ChpasswdListEntry> ValidateChpasswdListEntry(ChpasswdListEntry entry, int index) =>
         Prefix($"users[{index}]",
-            from name in EryphValidations.ValidateNotEmpty(entry.Name, "name")
-            from _ in ValidateUserName(name)
-            from __ in entry.Type is null
-                ? Success<Error, Unit>(unit)
-                : guard(ValidChpasswdTypes.Contains(entry.Type),
-                        Error.New($"The chpasswd type '{entry.Type}' is invalid. "
-                            + "Valid values are: text, hash, RANDOM."))
-                    .ToValidation()
-            select entry);
+            ((from name in EryphValidations.ValidateNotEmpty(entry.Name, "name")
+              from _ in ValidateUserName(name)
+              select unit)
+                | (entry.Type is null
+                    ? Success<Error, Unit>(unit)
+                    : guard(ValidChpasswdTypes.Contains(entry.Type),
+                            Error.New($"The chpasswd type '{entry.Type}' is invalid. "
+                                + "Valid values are: text, hash, RANDOM."))
+                        .ToValidation()))
+            .Map(_ => entry));
 
     public static Validation<Error, WriteFileConfig> ValidateWriteFileConfig(WriteFileConfig file, int index) =>
         Prefix($"write_files[{index}]",
@@ -122,6 +126,9 @@ public static class CloudConfigValidations
     public static Validation<Error, Unit> ValidateFqdn(string value) =>
         from nonEmpty in EryphValidations.ValidateNotEmpty(value, "fqdn")
         from _ in EryphValidations.ValidateLength(nonEmpty, "fqdn", 1, 253)
+        from ___ in guard(nonEmpty.Contains('.'),
+                Error.New($"The fqdn '{nonEmpty}' must be fully qualified and contain at least one dot."))
+            .ToValidation()
         from __ in nonEmpty.Split('.').ToSeq()
             .Map((i, label) => ValidateHostname(label, $"fqdn label[{i}]"))
             .Sequence()
