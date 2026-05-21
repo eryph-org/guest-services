@@ -327,21 +327,102 @@ function Update-EgsServiceBinariesOffline {
       Copy-Item -LiteralPath $_.FullName -Destination $target -Force
     }
 
+    # Three places cbi can be invoked from. We neuter all three:
+    #
+    #   (1) The cbi install directory — renamed so the binaries are unreachable.
+    #   (2) The cbi Windows service — Start=Disabled in the offline SYSTEM hive
+    #       so the SCM doesn't try to spawn a service whose binary just moved.
+    #   (3) Sysprep's unattend.xml — RunSynchronousCommand entries that invoke
+    #       cbi during OOBE specialize. If we don't patch these, OOBE runs
+    #       cbi.exe at the renamed path, gets a non-zero exit code, and halts
+    #       before egs-service ever starts.
     if (Test-Path -LiteralPath $cbiDir) {
       $disabledName = "$cbiDir.disabled-$(Get-Date -Format 'yyyyMMddHHmmss')"
       Write-Verbose "Disabling cloudbase-init: $cbiDir -> $disabledName"
       Move-Item -LiteralPath $cbiDir -Destination $disabledName -Force
 
-      # Also disable any cbi service registration in the offline SYSTEM hive
-      # so the SCM doesn't try to start a service whose binary just moved.
       Set-OfflineServiceStartType -DriveLetter $mount.DriveLetter `
         -ServiceName 'cloudbase-init' -StartType 4   # 4 = Disabled
     } else {
-      Write-Verbose "cloudbase-init not present at $cbiDir; skipping disable step"
+      Write-Verbose "cloudbase-init not present at $cbiDir; skipping dir rename"
     }
+
+    Disable-CloudbaseInitUnattend -DriveLetter $mount.DriveLetter
   }
   finally {
     Dismount-CatletVhd -VhdPath $mount.VhdPath
+  }
+}
+
+function Disable-CloudbaseInitUnattend {
+  <#
+  .SYNOPSIS
+    Replaces RunSynchronousCommand entries that invoke cloudbase-init with
+    a no-op success command in every unattend.xml found in the offline image.
+
+  .DESCRIPTION
+    The parent gene's sysprep'd image references cloudbase-init from an
+    OOBE/specialize unattend.xml, e.g.:
+
+      <RunSynchronousCommand wcm:action="add">
+        <Order>10</Order>
+        <Path>cmd.exe /c ""C:\Program Files\Cloudbase Solutions\Cloudbase-Init\Python\Scripts\cloudbase-init.exe" --config-file "...\cloudbase-init-unattend.conf" && exit 1 || exit 2"</Path>
+        ...
+      </RunSynchronousCommand>
+
+    If we only rename the cbi install dir, this command exits non-zero and
+    OOBE halts. We rewrite each matching entry to `cmd.exe /c "exit 0"` and
+    set WillReboot to Never. Order is preserved so other commands in the
+    sequence still line up.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $DriveLetter
+  )
+
+  $candidates = @(
+    "$DriveLetter`:\Windows\System32\Sysprep\unattend.xml",
+    "$DriveLetter`:\Windows\Panther\unattend.xml",
+    "$DriveLetter`:\Windows\Panther\unattend\unattend.xml",
+    "$DriveLetter`:\unattend.xml"
+  )
+
+  foreach ($path in $candidates) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+
+    Write-Verbose "Scanning unattend.xml for cloudbase-init RunSynchronousCommand entries: $path"
+    [xml]$xml = Get-Content -LiteralPath $path
+
+    $ns = New-Object System.Xml.XmlNamespaceManager $xml.NameTable
+    $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+
+    $modified = $false
+    foreach ($node in $xml.SelectNodes('//u:RunSynchronousCommand', $ns)) {
+      $pathNode = $node.SelectSingleNode('u:Path', $ns)
+      if (-not $pathNode) { continue }
+      if ($pathNode.InnerText -notmatch 'cloudbase-init') { continue }
+
+      $order = $node.SelectSingleNode('u:Order', $ns).InnerText
+      Write-Verbose "  Patching cbi RunSynchronousCommand at Order=$order"
+      $pathNode.InnerText = 'cmd.exe /c "exit 0"'
+
+      $descNode = $node.SelectSingleNode('u:Description', $ns)
+      if ($descNode) {
+        $descNode.InnerText = 'placeholder — cloudbase-init disabled by eryph e2e harness'
+      }
+      $willRebootNode = $node.SelectSingleNode('u:WillReboot', $ns)
+      if ($willRebootNode) {
+        $willRebootNode.InnerText = 'Never'
+      }
+      $modified = $true
+    }
+
+    if ($modified) {
+      Write-Verbose "  Saving patched $path"
+      $xml.Save($path)
+    } else {
+      Write-Verbose "  No cbi entries in $path"
+    }
   }
 }
 

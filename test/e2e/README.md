@@ -112,9 +112,16 @@ from the Shell suite:
 3. `Update-EgsServiceBinariesOffline` overwrites the existing egs-service
    binaries under `<vol>:\Program Files\eryph\guest-services\bin\` with our
    locally-built publish output.
-4. Same call disables cloudbase-init: renames its install dir to
-   `.disabled-<ts>` AND sets the cloudbase-init service `Start=Disabled` in
-   the offline `SYSTEM` hive.
+4. Same call disables cloudbase-init at three levels:
+   - Renames its install dir to `.disabled-<ts>`.
+   - Sets the cloudbase-init service `Start=Disabled` in the offline `SYSTEM`
+     hive (so the SCM doesn't try to start a service whose binary just moved).
+   - Patches every `unattend.xml` it finds (`Windows\System32\Sysprep\`,
+     `Windows\Panther\`, `Windows\Panther\unattend\`, root) to replace any
+     `RunSynchronousCommand` referencing cloudbase-init with `cmd.exe /c "exit 0"`
+     and `WillReboot=Never`. Without this last step, sysprep's OOBE specialize
+     phase runs cbi.exe at the renamed path, gets a non-zero exit, and halts
+     before egs-service ever starts.
 5. Dismount, start the catlet.
 6. On first boot, only `egs-service` runs (with our patched binaries). The
    embedded `ProvisioningHostedService` discovers the ConfigDrive datasource
