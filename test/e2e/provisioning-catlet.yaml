@@ -5,6 +5,37 @@ cpu:
 memory:
   startup: 2048
 
-# Intentionally minimal: no fodder. We bake egs-service into the VHD
-# offline (Install-EgsServiceOffline), disable cbi, and let our embedded
-# ProvisioningHostedService own the first-boot lifecycle.
+# The cloud-config below IS the test input. eryph-zero compiles fodder into
+# a ConfigDrive ISO attached to the catlet; our embedded provisioning agent
+# (baked into the VHD by the test harness before first start) discovers
+# that ConfigDrive, parses this cloud-config, and runs the stages.
+#
+# Cloudbase-init is disabled offline so our agent owns the lifecycle.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-cloud-config
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-prov-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      users:
+        - name: prov_test_user
+          passwd: 'TestPa55w0rd!'
+          groups:
+            - Administrators
+      write_files:
+        - path: /ProgramData/eryph-e2e/marker-plain.txt
+          content: marker-plain
+          permissions: '0644'
+        - path: /ProgramData/eryph-e2e/marker-b64.txt
+          encoding: base64
+          content: bWFya2VyLWI2NA==
+          permissions: '0644'
+      runcmd:
+        - 'powershell -NoProfile -Command "New-Item -Force -ItemType Directory C:\ProgramData\eryph-e2e | Out-Null; Set-Content -LiteralPath C:\ProgramData\eryph-e2e\runcmd-marker.txt -Value runcmd-ran"'
