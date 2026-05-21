@@ -1,37 +1,38 @@
 using System.Net;
 using System.Net.Http;
+using Eryph.GuestServices.Provisioning.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.UserData;
 
-// Defaults for v1; P2 will lift these into egs-provisioning.json.
-//   PER-ATTEMPT TIMEOUT = 30s
-//   MAX RETRIES         = 3 (so up to 4 attempts total)
-//   BACKOFF             = 1s, 2s, 4s (capped, total < 10s)
-//
 // Supported schemes: http, https, file. The HttpClient is configured for
 // transparent gzip / deflate decompression on the wire; if a server
 // delivers a gzipped payload WITHOUT the Content-Encoding header (e.g.
 // because the file is genuinely a .gz blob) the caller is expected to
 // detect the gzip magic via UserDataContentTypeSniffer.DecompressIfGzipped.
-internal sealed class UrlHelper(ILogger<UrlHelper> logger) : IUrlHelper
+internal sealed class UrlHelper : IUrlHelper
 {
-    public const int DefaultMaxAttempts = 4;
-    public static readonly TimeSpan DefaultPerAttemptTimeout = TimeSpan.FromSeconds(30);
-    public static readonly TimeSpan DefaultInitialBackoff = TimeSpan.FromSeconds(1);
+    private readonly ILogger<UrlHelper> _logger;
+    private readonly HttpClient _httpClient;
+    private readonly int _maxAttempts;
+    private readonly TimeSpan _initialBackoff;
 
-    private static readonly Lazy<HttpClient> SharedHttpClient = new(CreateHttpClient);
-
-    private static HttpClient CreateHttpClient()
+    public UrlHelper(ILogger<UrlHelper> logger, ProvisioningSettings? settings = null)
     {
+        _logger = logger;
+        var s = settings ?? new ProvisioningSettings();
+        _maxAttempts = Math.Max(1, s.UserData.FetchMaxAttempts);
+        _initialBackoff = TimeSpan.FromSeconds(Math.Max(0, s.UserData.FetchInitialBackoffSeconds));
+        var perAttemptTimeout = TimeSpan.FromSeconds(Math.Max(1, s.UserData.FetchTimeoutSeconds));
+
         var handler = new HttpClientHandler
         {
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             AllowAutoRedirect = true,
         };
-        return new HttpClient(handler)
+        _httpClient = new HttpClient(handler)
         {
-            Timeout = DefaultPerAttemptTimeout,
+            Timeout = perAttemptTimeout,
         };
     }
 
@@ -53,14 +54,14 @@ internal sealed class UrlHelper(ILogger<UrlHelper> logger) : IUrlHelper
             throw new InvalidOperationException($"Unsupported URL scheme '{uri.Scheme}' for '{url}'.");
 
         Exception? lastError = null;
-        var backoff = DefaultInitialBackoff;
+        var backoff = _initialBackoff;
 
-        for (var attempt = 1; attempt <= DefaultMaxAttempts; attempt++)
+        for (var attempt = 1; attempt <= _maxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                using var response = await SharedHttpClient.Value
+                using var response = await _httpClient
                     .GetAsync(uri, HttpCompletionOption.ResponseContentRead, cancellationToken)
                     .ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
@@ -75,15 +76,15 @@ internal sealed class UrlHelper(ILogger<UrlHelper> logger) : IUrlHelper
             catch (Exception ex)
             {
                 lastError = ex;
-                logger.LogWarning(
+                _logger.LogWarning(
                     ex,
                     "Fetch attempt {Attempt}/{Max} for {Url} failed: {Message}",
                     attempt,
-                    DefaultMaxAttempts,
+                    _maxAttempts,
                     url,
                     ex.Message);
 
-                if (attempt >= DefaultMaxAttempts)
+                if (attempt >= _maxAttempts)
                     break;
 
                 try
@@ -99,7 +100,7 @@ internal sealed class UrlHelper(ILogger<UrlHelper> logger) : IUrlHelper
         }
 
         throw new HttpRequestException(
-            $"Failed to fetch '{url}' after {DefaultMaxAttempts} attempts.",
+            $"Failed to fetch '{url}' after {_maxAttempts} attempts.",
             lastError);
     }
 }

@@ -1,5 +1,6 @@
 using System.Reflection;
 using Eryph.GuestServices.HvDataExchange.Guest;
+using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Modules;
@@ -56,6 +57,11 @@ internal static class Program
 
     internal static void ConfigureContainer(Container container)
     {
+        // Settings: loaded from disk if present, otherwise defaults. Modules and
+        // helpers depend on ProvisioningSettings directly; tunables that were
+        // previously public constants live here so they're operator-configurable.
+        container.RegisterInstance(ProvisioningSettings.LoadOrDefault());
+
         // Data sources. The locator orders by IDataSource.Priority, not registration
         // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40) -> Hyper-V KVP(50).
         // Azure is probed first so a Windows guest in Azure (where PA may still be

@@ -1,3 +1,4 @@
+using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Microsoft.Extensions.Logging;
@@ -10,28 +11,33 @@ namespace Eryph.GuestServices.Provisioning.UserData;
 // (multipart, include URL) recurse via IUserDataResolutionContext.ProcessNestedAsync.
 // Once the recursion settles, the merged cloud-config, captured scripts, and
 // captured boothooks are returned as a ResolvedUserData.
-//
-// DEFAULTS (v1; P2 will lift these to egs-provisioning.json):
-//   max recursion depth = 10                 (constant DefaultMaxRecursionDepth)
-//   fetch per-attempt timeout = 30s          (UrlHelper.DefaultPerAttemptTimeout)
-//   fetch retry count = 3 retries (4 attempts) (UrlHelper.DefaultMaxAttempts)
-internal sealed class UserDataPipeline(
-    IEnumerable<IUserDataHandler> handlers,
-    ICloudConfigSerializer serializer,
-    IUrlHelper urlHelper,
-    ILogger<UserDataPipeline> logger) : IUserDataPipeline
+internal sealed class UserDataPipeline : IUserDataPipeline
 {
-    public const int DefaultMaxRecursionDepth = 10;
+    private readonly ILogger<UserDataPipeline> _logger;
+    private readonly IReadOnlyList<IUserDataHandler> _handlers;
+    private readonly int _maxRecursionDepth;
+
+    public UserDataPipeline(
+        IEnumerable<IUserDataHandler> handlers,
+        ICloudConfigSerializer serializer,
+        IUrlHelper urlHelper,
+        ILogger<UserDataPipeline> logger,
+        ProvisioningSettings? settings = null)
+    {
+        _logger = logger;
+        _handlers = handlers.ToArray();
+        Serializer = serializer;
+        UrlHelper = urlHelper;
+        _maxRecursionDepth = Math.Max(1, (settings ?? new ProvisioningSettings()).UserData.MaxRecursionDepth);
+    }
 
     // The serializer + urlHelper dependencies are required by the task spec on the
     // pipeline's constructor signature even though the handlers consume them
     // directly via DI. Holding them as fields makes the dependency explicit and
     // gives downstream extensions a sanctioned hook.
-    public ICloudConfigSerializer Serializer { get; } = serializer;
+    public ICloudConfigSerializer Serializer { get; }
 
-    public IUrlHelper UrlHelper { get; } = urlHelper;
-
-    private readonly IReadOnlyList<IUserDataHandler> _handlers = handlers.ToArray();
+    public IUrlHelper UrlHelper { get; }
 
     public async Task<ResolvedUserData> ResolveAsync(byte[]? rawUserData, CancellationToken cancellationToken)
     {
@@ -45,7 +51,7 @@ internal sealed class UserDataPipeline(
         var contentType = UserDataContentTypeSniffer.Sniff(bytes);
         if (contentType == UserDataContentTypeSniffer.PlainText)
         {
-            logger.LogWarning(
+            _logger.LogWarning(
                 "Root user-data does not start with a recognised cloud-init marker; ignoring");
             return ResolvedUserData.Empty(new CloudConfigModel());
         }
@@ -66,11 +72,11 @@ internal sealed class UserDataPipeline(
         cancellationToken.ThrowIfCancellationRequested();
 
         var concrete = (UserDataResolutionContext)ctx;
-        if (concrete.CurrentDepth >= DefaultMaxRecursionDepth)
+        if (concrete.CurrentDepth >= _maxRecursionDepth)
         {
-            logger.LogWarning(
+            _logger.LogWarning(
                 "User-data recursion depth hit the limit of {Limit}; skipping nested part of type '{ContentType}'",
-                DefaultMaxRecursionDepth,
+                _maxRecursionDepth,
                 part.ContentType);
             return;
         }
@@ -81,14 +87,14 @@ internal sealed class UserDataPipeline(
             var handler = _handlers.FirstOrDefault(h => h.CanHandle(part));
             if (handler is null)
             {
-                logger.LogWarning(
+                _logger.LogWarning(
                     "No handler accepted user-data part of type '{ContentType}' (filename='{Filename}'); ignoring",
                     part.ContentType,
                     part.Filename ?? "<root>");
                 return;
             }
 
-            logger.LogDebug(
+            _logger.LogDebug(
                 "Dispatching user-data part '{ContentType}' (depth={Depth}) to {Handler}",
                 part.ContentType,
                 concrete.CurrentDepth,
