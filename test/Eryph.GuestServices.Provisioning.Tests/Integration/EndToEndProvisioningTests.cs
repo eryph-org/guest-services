@@ -57,7 +57,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
                 SourceName = "test",
                 InstanceId = "instance-1",
                 Hostname = "testhost",
-                UserData = yaml,
+                UserData = System.Text.Encoding.UTF8.GetBytes(yaml),
             });
 
         var windowsOs = Substitute.For<IWindowsOs>();

@@ -43,6 +43,16 @@ internal static class UserDataContentTypeSniffer
         if (firstLine.Length == 0)
             return PlainText;
 
+        // Cloud-init's userdata MIME messages — and the configdrive ISO that
+        // eryph-zero generates — are prefixed with an mbox-style "From " line
+        // (RFC 4155 preamble) before the actual MIME headers. Skip it so the
+        // Content-Type / MIME-Version detection below still triggers.
+        //   From nobody Fri Jan  11 07:00:00 1980
+        //   Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+        //   MIME-Version: 1.0
+        if (firstLine.StartsWith("From ", StringComparison.Ordinal))
+            firstLine = FirstNonEmptyLine(SkipFirstLine(text));
+
         // Multipart detection: either a MIME header is present at the very top,
         // or a "Content-Type: multipart/" header appears anywhere in the leading
         // block of the document. We keep the heuristic lenient because real
@@ -129,6 +139,12 @@ internal static class UserDataContentTypeSniffer
         {
             return string.Empty;
         }
+    }
+
+    private static string SkipFirstLine(string text)
+    {
+        var nl = text.IndexOf('\n');
+        return nl < 0 ? string.Empty : text[(nl + 1)..];
     }
 
     private static string FirstNonEmptyLine(string text)

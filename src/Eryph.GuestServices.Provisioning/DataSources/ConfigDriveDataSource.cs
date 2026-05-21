@@ -87,15 +87,16 @@ public sealed class ConfigDriveDataSource(
 
         flat.TryGetValue("availability_zone", out var az);
 
-        string? userData = null;
+        // Raw bytes — see NoCloudDataSource for the gzip rationale.
+        byte[]? userData = null;
         var userDataPath = Path.Combine(baseDir, "user_data");
         if (File.Exists(userDataPath))
-            userData = await File.ReadAllTextAsync(userDataPath, cancellationToken).ConfigureAwait(false);
+            userData = await File.ReadAllBytesAsync(userDataPath, cancellationToken).ConfigureAwait(false);
 
-        string? vendorData = null;
+        byte[]? vendorData = null;
         var vendorDataPath = Path.Combine(baseDir, "vendor_data.json");
         if (File.Exists(vendorDataPath))
-            vendorData = await File.ReadAllTextAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
+            vendorData = await File.ReadAllBytesAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
 
         string? networkConfig = null;
         CloudConfigNetwork? structuredNetworkConfig = null;

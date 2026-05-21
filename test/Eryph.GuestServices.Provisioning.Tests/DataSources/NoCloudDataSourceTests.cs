@@ -45,7 +45,7 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result!.SourceName.Should().Be("NoCloud");
         result.InstanceId.Should().Be("i-abc-123");
         result.Hostname.Should().Be("my-host");
-        result.UserData.Should().Contain("hostname: my-host");
+        System.Text.Encoding.UTF8.GetString(result.UserData!).Should().Contain("hostname: my-host");
         result.NetworkConfig.Should().Be("version: 2\n");
         result.MetaData.Should().ContainKey("instance-id");
 
@@ -80,6 +80,26 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result.Hostname.Should().Be("host");
     }
 
+    // Regression: NoCloud previously read user-data via ReadAllTextAsync, which
+    // corrupts gzipped binary content (UTF-8 invalid byte 0x8B becomes EF BF BD).
+    // eryph-zero's configdrive ships gzipped multipart MIME for user-data, so a
+    // text round-trip destroyed the gzip header and the pipeline silently
+    // dropped every cloud-config payload.
+    [Fact]
+    public async Task ReadAsync_PreservesGzippedUserDataBytesExactly()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"), "instance-id: i\n");
+        // Gzip of "hello"
+        var gzipped = new byte[] { 0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0A,
+                                   0xCB, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00,
+                                   0x86, 0xA6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00 };
+        await File.WriteAllBytesAsync(Path.Combine(_root, "user-data"), gzipped);
+
+        var result = await NoCloudDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.UserData.Should().Equal(gzipped);
+    }
+
     [Fact]
     public async Task ReadAsync_carries_vendor_data_through_when_present()
     {
@@ -88,7 +108,7 @@ public sealed class NoCloudDataSourceTests : IDisposable
 
         var result = await NoCloudDataSource.ReadAsync(_root, CancellationToken.None);
 
-        result!.VendorData.Should().Be("vendor payload");
+        System.Text.Encoding.UTF8.GetString(result!.VendorData!).Should().Be("vendor payload");
         result.GetVendorDataBytes().Length.Should().BeGreaterThan(0);
     }
 

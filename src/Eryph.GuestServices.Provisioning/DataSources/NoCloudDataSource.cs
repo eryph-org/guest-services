@@ -69,15 +69,20 @@ public sealed class NoCloudDataSource(
 
         metaData.TryGetValue("local-hostname", out var hostname);
 
-        string? userData = null;
+        // Read user-data and vendor-data as RAW BYTES, not as text. Real-world
+        // user-data is often gzipped multipart MIME (eryph-zero's configdrive
+        // ships it that way); the gzip header byte 0x8B is not valid UTF-8 and
+        // ReadAllText would silently corrupt it to U+FFFD. The pipeline expects
+        // exactly the bytes on disk.
+        byte[]? userData = null;
         var userDataPath = Path.Combine(root, "user-data");
         if (File.Exists(userDataPath))
-            userData = await File.ReadAllTextAsync(userDataPath, cancellationToken).ConfigureAwait(false);
+            userData = await File.ReadAllBytesAsync(userDataPath, cancellationToken).ConfigureAwait(false);
 
-        string? vendorData = null;
+        byte[]? vendorData = null;
         var vendorDataPath = Path.Combine(root, "vendor-data");
         if (File.Exists(vendorDataPath))
-            vendorData = await File.ReadAllTextAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
+            vendorData = await File.ReadAllBytesAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
 
         string? networkConfig = null;
         CloudConfigNetwork? structuredNetworkConfig = null;

@@ -181,8 +181,11 @@ internal static class NetUserHelpers
         };
 
         var status = NetApi32.NetLocalGroupAddMembers(null, groupName, 3, entries, entries.Length);
-        if (status == NetApi32.NERR_UserInGroup)
-            return; // already a member; idempotent.
+        // NetLocalGroupAddMembers reports the "already a member" outcome via two
+        // different codes depending on Windows version: NERR_UserInGroup (2236)
+        // on some, ERROR_MEMBER_IN_ALIAS (1378) on most. Treat both as success.
+        if (status is NetApi32.NERR_UserInGroup or NetApi32.ERROR_MEMBER_IN_ALIAS)
+            return;
         if (status != NetApi32.NERR_Success)
             throw new Win32Exception(status,
                 $"NetLocalGroupAddMembers failed adding '{userName}' to '{groupName}' with code {status}.");

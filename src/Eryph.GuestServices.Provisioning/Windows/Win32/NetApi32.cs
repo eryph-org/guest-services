@@ -18,6 +18,11 @@ internal static class NetApi32
     public const int NERR_GroupExists = 2223;
     public const int NERR_GroupNotFound = 2220;
     public const int NERR_UserInGroup = 2236;
+    // NetLocalGroupAddMembers returns this Win32 error (NOT a NERR_*) when the
+    // principal is already a member of the local group. Treated as a success
+    // for idempotency — re-running the agent against an already-provisioned
+    // guest must not flip the run to Failed.
+    public const int ERROR_MEMBER_IN_ALIAS = 1378;
 
     // USER_INFO_1.usri1_priv values
     public const uint USER_PRIV_USER = 1;

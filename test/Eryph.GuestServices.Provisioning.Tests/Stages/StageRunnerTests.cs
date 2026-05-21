@@ -282,7 +282,7 @@ public sealed class StageRunnerTests
     {
         SourceName = "test",
         InstanceId = instanceId,
-        UserData = userData ?? "",
+        UserData = userData is null ? null : System.Text.Encoding.UTF8.GetBytes(userData),
     };
 
     private static StageRunner BuildRunner(

@@ -279,18 +279,38 @@ internal sealed class WindowsOs : IWindowsOs
         string command,
         CancellationToken cancellationToken)
     {
-        var psi = new ProcessStartInfo("cmd.exe")
+        // cmd.exe /c "<complex command>" has notoriously broken quoting rules:
+        // embedded `|`, `&`, `<`, `>`, escaped quotes and similar shell-special
+        // characters routinely cause cmd to mis-parse the command line. The
+        // robust pattern (also used by cloudbase-init) is to write the command
+        // verbatim to a temporary .cmd file and run cmd.exe /c on the FILE —
+        // there's no quoting at the parent level, so nothing can be mangled.
+        var tempScript = Path.Combine(
+            Path.GetTempPath(),
+            "egs-runcmd-" + Guid.NewGuid().ToString("N") + ".cmd");
+        await File.WriteAllTextAsync(
+            tempScript,
+            "@echo off\r\n" + command + "\r\n",
+            cancellationToken).ConfigureAwait(false);
+
+        try
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+            var psi = new ProcessStartInfo("cmd.exe")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("/c");
+            psi.ArgumentList.Add(tempScript);
 
-        psi.ArgumentList.Add("/c");
-        psi.ArgumentList.Add(command);
-
-        return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+            return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            try { File.Delete(tempScript); } catch { /* best-effort cleanup */ }
+        }
     }
 
     public async Task<RunCommandResult> RunArgvCommandAsync(

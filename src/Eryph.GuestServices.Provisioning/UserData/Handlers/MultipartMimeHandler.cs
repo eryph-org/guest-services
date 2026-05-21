@@ -148,6 +148,7 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
                 if (trimmed == closeDelim)
                 {
                     if (collecting) FlushChild(children, currentLines);
+                    collecting = false;
                     break;
                 }
                 if (trimmed == openDelim)
@@ -159,6 +160,13 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
                 }
                 if (collecting) currentLines.Add(line);
             }
+
+            // RFC 2046 mandates a `--boundary--` close delimiter, but real
+            // producers (eryph-zero's configdrive among them) sometimes omit it.
+            // If the stream ends with an open part still being collected, flush
+            // it — otherwise the LAST cloud-config / shellscript part is
+            // silently dropped.
+            if (collecting) FlushChild(children, currentLines);
 
             return children;
 

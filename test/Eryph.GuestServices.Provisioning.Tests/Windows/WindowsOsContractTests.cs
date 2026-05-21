@@ -109,4 +109,32 @@ public sealed class WindowsOsContractTests
         result.ExitCode.Should().Be(0);
         result.StdOut.Trim().Should().Be("hello");
     }
+
+    // Regression: cmd.exe /c "<complex-string-with-pipe>" has notoriously broken
+    // quoting rules and mangled the runcmd payloads from real cloud-config
+    // (powershell -Command "... | Out-Null") so the command ran but its `|` was
+    // eaten by cmd. We now write to a temp .cmd file. This test must execute a
+    // real process — it's quick, non-mutating, Windows-only.
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RunShellCommandAsync_PreservesPipeInComplexCommand()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        var marker = Path.Combine(Path.GetTempPath(), $"egs-pipe-test-{Guid.NewGuid():N}.txt");
+        try
+        {
+            // The command contains a `|` that MUST be interpreted by powershell,
+            // not by cmd.exe. Pre-fix this would silently drop the file write.
+            var cmd = $"powershell -NoProfile -Command \"New-Item -ItemType Directory -Force '{Path.GetDirectoryName(marker)}' | Out-Null; Set-Content -LiteralPath '{marker}' -Value pipe-worked\"";
+            var result = await CreateOs().RunShellCommandAsync(cmd, CancellationToken.None);
+            result.ExitCode.Should().Be(0);
+            File.Exists(marker).Should().BeTrue("the | inside the powershell -Command argument must reach powershell intact");
+            (await File.ReadAllTextAsync(marker)).Trim().Should().Be("pipe-worked");
+        }
+        finally
+        {
+            try { File.Delete(marker); } catch { }
+        }
+    }
 }

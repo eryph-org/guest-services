@@ -55,7 +55,7 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
         IDataSource? overrideSource = null;
         if (settings.UserDataPath is not null || settings.InstanceId is not null)
         {
-            string? userData = null;
+            byte[]? userData = null;
             if (settings.UserDataPath is not null)
             {
                 if (!File.Exists(settings.UserDataPath))
@@ -64,7 +64,9 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
                         $"[red]User-data file not found: {settings.UserDataPath}[/]");
                     return 2;
                 }
-                userData = await File.ReadAllTextAsync(settings.UserDataPath).ConfigureAwait(false);
+                // Read as bytes — user-data files are often gzipped multipart MIME
+                // whose bytes are not valid UTF-8. See DataSourceResult.UserData.
+                userData = await File.ReadAllBytesAsync(settings.UserDataPath).ConfigureAwait(false);
             }
 
             var instanceId = settings.InstanceId ?? "cli-override-" + Guid.NewGuid().ToString("N")[..8];

@@ -25,8 +25,12 @@ fodder:
       ssh_authorized_keys:
         - "{{ sshPublicKey }}"
       users:
+        # NOTE: Windows complexity policy rejects passwords that contain three
+        # or more consecutive characters of the account name (case-insensitive).
+        # `prov_test_user` contains "test", so do NOT use "Test"/"prov" in the
+        # password — Windows will refuse with NERR_PasswordTooShort (2245).
         - name: prov_test_user
-          passwd: 'TestPa55w0rd!'
+          passwd: 'XyzqW3lc0me!2!'
           groups:
             - Administrators
       write_files:

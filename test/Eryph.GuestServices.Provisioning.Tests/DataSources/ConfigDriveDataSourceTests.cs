@@ -47,7 +47,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         result!.SourceName.Should().Be("ConfigDrive");
         result.InstanceId.Should().Be("abc-xyz");
         result.Hostname.Should().Be("my-host");
-        result.UserData.Should().Contain("hostname: my-host");
+        System.Text.Encoding.UTF8.GetString(result.UserData!).Should().Contain("hostname: my-host");
         result.NetworkConfig.Should().Be("{\"links\":[]}");
 
         result.PlatformMetadata.Should().NotBeNull();
@@ -103,7 +103,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
 
         var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
 
-        result!.VendorData.Should().Be("{\"some\":\"thing\"}");
+        System.Text.Encoding.UTF8.GetString(result!.VendorData!).Should().Be("{\"some\":\"thing\"}");
     }
 
     [Fact]

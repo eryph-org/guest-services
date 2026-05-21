@@ -6,7 +6,7 @@ namespace Eryph.GuestServices.Provisioning.DataSources;
 /// <c>run --instance-id &lt;id&gt;</c> options. Registered ahead of the
 /// auto-discovery chain so it wins.
 /// </summary>
-internal sealed class OverrideDataSource(string instanceId, string? userData) : IDataSource
+internal sealed class OverrideDataSource(string instanceId, byte[]? userData) : IDataSource
 {
     public string Name => "override";
 
