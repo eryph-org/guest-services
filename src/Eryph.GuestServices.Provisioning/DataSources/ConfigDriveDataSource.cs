@@ -25,6 +25,17 @@ public sealed class ConfigDriveDataSource(
         if (volume is null)
             return DataSourceProbeResult.NotApplicable.Instance;
 
+        // Defensive opt-out: if we're on Azure, the config-2 disk (the label
+        // Azure uses for its PA delivery in some scenarios) belongs to PA, not
+        // to OpenStack. AzureDataSource has higher priority but it's a stub today.
+        if (PlatformProbes.IsRunningOnAzure())
+        {
+            logger.LogInformation(
+                "ConfigDrive volume at {Root} found but Azure context detected; declining to claim it",
+                volume.RootPath);
+            return DataSourceProbeResult.NotApplicable.Instance;
+        }
+
         logger.LogInformation("ConfigDrive datasource located volume at {Root}", volume.RootPath);
 
         try

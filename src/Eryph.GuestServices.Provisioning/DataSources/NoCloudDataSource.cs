@@ -24,6 +24,17 @@ public sealed class NoCloudDataSource(
         if (volume is null)
             return DataSourceProbeResult.NotApplicable.Instance;
 
+        // Defensive opt-out: if we're on Azure, the cidata-shaped disk (if any
+        // ever appears) is not ours to claim — Azure's PA owns the platform.
+        // The AzureDataSource has higher priority but it's still a stub today.
+        if (PlatformProbes.IsRunningOnAzure())
+        {
+            logger.LogInformation(
+                "NoCloud volume at {Root} found but Azure context detected; declining to claim it",
+                volume.RootPath);
+            return DataSourceProbeResult.NotApplicable.Instance;
+        }
+
         logger.LogInformation("NoCloud datasource located volume at {Root}", volume.RootPath);
 
         try
