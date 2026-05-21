@@ -88,6 +88,27 @@ BeforeAll {
   $finalState = Wait-ForProvisioningComplete -VmId $catlet.VmId `
     -Timeout (New-TimeSpan -Minutes 10)
   Write-Host "Provisioning state: $finalState"
+
+  # Pester 5 isolates each Describe block — top-level functions are not in
+  # scope unless defined inside a BeforeAll. Declare helpers here so every
+  # test can use them.
+  function script:Invoke-GuestPS {
+    param([string] $HostName, [string] $Script)
+    $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -Command `"$Script`""
+    return @{
+      ExitCode = $LASTEXITCODE
+      Output   = ($output | Out-String).Trim()
+    }
+  }
+
+  # Give SSH a moment to settle after the final boot — egs-service comes up
+  # and registers Hyper-V sockets, but the Pester test process can race ahead.
+  for ($i = 0; $i -lt 20; $i++) {
+    $probe = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 `
+      "$($catlet.Id).eryph.alt" 'hostname' 2>$null
+    if ($LASTEXITCODE -eq 0) { Write-Host "SSH ready after $i probe(s) — hostname=$probe"; break }
+    Start-Sleep -Seconds 3
+  }
 }
 
 AfterAll {
@@ -100,15 +121,6 @@ AfterAll {
   }
   if ($project) {
     Remove-EryphProject -Id $project.Id -Force -ErrorAction SilentlyContinue
-  }
-}
-
-function Invoke-GuestPS {
-  param([string] $HostName, [string] $Script)
-  $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -Command `"$Script`""
-  return @{
-    ExitCode = $LASTEXITCODE
-    Output   = ($output | Out-String).Trim()
   }
 }
 
@@ -137,12 +149,21 @@ Describe 'Embedded provisioning at first boot' {
       $state.completedStages | Should -Contain 'Final'
     }
 
-    It 'is running the patched binary (egs-service version matches host build)' {
+    It 'is running the patched binary (egs-service commit SHA matches host build)' {
       $hostName = "$($catlet.Id).eryph.alt"
-      $hostBuildVersion = (Get-Item "$resolvedPublishPath\egs-service.exe").VersionInfo.FileVersion
-      $guestVersion = (ssh.exe -o StrictHostKeyChecking=no $hostName `
-        '"C:\Program Files\eryph\guest-services\bin\egs-service.exe" version').Trim()
-      $guestVersion | Should -Match ([regex]::Escape($hostBuildVersion))
+      # ProductVersion carries the GitVersion InformationalVersion with the SHA
+      # baked in (e.g. "0.3.1-provisioning-agent.21+Branch.X.Sha.abcdef..."). The
+      # SHA is the discriminating bit — assembly version stays 0.3.0.0 across
+      # builds. Pin the test to the SHA so we know the offline-patched binary
+      # is what's actually running.
+      $hostProductVersion = (Get-Item "$resolvedPublishPath\egs-service.exe").VersionInfo.ProductVersion
+      $hostSha = if ($hostProductVersion -match 'Sha\.([0-9a-f]{7,})') { $Matches[1] } else { $null }
+      $hostSha | Should -Not -BeNullOrEmpty
+
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version"
+      $r.ExitCode | Should -Be 0
+      $r.Output | Should -Match ([regex]::Escape($hostSha))
     }
 
     It 'did not run cloudbase-init' {
@@ -199,10 +220,10 @@ Describe 'Embedded provisioning at first boot' {
 
     It 'egs-service status --json reports Final completed' {
       $hostName = "$($catlet.Id).eryph.alt"
-      $json = ssh.exe -o StrictHostKeyChecking=no $hostName `
-        '"C:\Program Files\eryph\guest-services\bin\egs-service.exe" status --json'
-      $LASTEXITCODE | Should -Be 0
-      ($json | ConvertFrom-Json -AsHashtable).completedStages | Should -Contain 'Final'
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' status --json"
+      $r.ExitCode | Should -Be 0
+      ($r.Output | ConvertFrom-Json -AsHashtable).completedStages | Should -Contain 'Final'
     }
   }
 }

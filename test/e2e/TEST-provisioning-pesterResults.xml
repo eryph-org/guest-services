@@ -1,81 +1,37 @@
 ﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
-<test-run id="0" name="Pester" fullname="Pester" testcasecount="11" result="Failed" total="11" passed="0" failed="11" inconclusive="0" skipped="0" warnings="0" start-time="2026-05-21T22:40:35.2842344Z" end-time="2026-05-21T22:51:19.2343115Z" duration="643.9501" asserts="11" random-seed="1754708061">
+<test-run id="0" name="Pester" fullname="Pester" testcasecount="11" result="Passed" total="11" passed="11" failed="0" inconclusive="0" skipped="0" warnings="0" start-time="2026-05-21T23:50:41.5949467Z" end-time="2026-05-21T23:52:20.2072781Z" duration="98.6123" asserts="11" random-seed="1347001887">
   <filter />
-  <test-suite type="Assembly" id="1-1000" name="Provisioning.E2E.Tests.ps1" fullname="F:\source\repos\eryph\guest-services\test\e2e\Provisioning.E2E.Tests.ps1" runstate="Runnable" result="Failed" site="SetUp" start-time="2026-05-21T22:40:35.6197217Z" end-time="2026-05-21T22:51:19.5697988Z" duration="643.9501" testcasecount="11" total="11" passed="0" failed="11" inconclusive="0" warnings="0" skipped="0" asserts="11">
-    <environment clr-version="9.0.14" platform="Microsoft Windows 11 Pro|C:\WINDOWS|\Device\Harddisk1\Partition3" user-domain="WASDOMAIN" machine-name="WASD12" framework-version="5.7.1" user="fwagner" os-version="10.0.26200" cwd="F:\source\repos\eryph\guest-services" culture="de-DE" uiculture="de-DE" os-architecture="x64" />
-    <test-suite type="TestSuite" id="1-1001" name="Embedded provisioning at first boot" fullname="Embedded provisioning at first boot" runstate="Runnable" result="Failed" site="Parent" start-time="0001-01-01T00:00:00.0000000Z" end-time="0001-01-01T00:00:00.0000000Z" duration="0" testcasecount="11" total="11" passed="0" failed="11" inconclusive="0" warnings="0" skipped="0" asserts="11">
+  <test-suite type="Assembly" id="1-1000" name="Provisioning.E2E.Tests.ps1" fullname="F:\source\repos\eryph\guest-services\test\e2e\Provisioning.E2E.Tests.ps1" runstate="Runnable" result="Passed" start-time="2026-05-21T23:50:42.1383494Z" end-time="2026-05-21T23:52:20.7506808Z" duration="98.6123" testcasecount="11" total="11" passed="11" failed="0" inconclusive="0" warnings="0" skipped="0" asserts="11">
+    <environment machine-name="WASD12" platform="Microsoft Windows 11 Pro|C:\WINDOWS|\Device\Harddisk1\Partition3" os-version="10.0.26200" user="fwagner" clr-version="9.0.14" cwd="F:\source\repos\eryph\guest-services" framework-version="5.7.1" user-domain="WASDOMAIN" culture="de-DE" uiculture="de-DE" os-architecture="x64" />
+    <test-suite type="TestSuite" id="1-1001" name="Embedded provisioning at first boot" fullname="Embedded provisioning at first boot" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:10.1489978Z" end-time="2026-05-21T23:52:16.9180056Z" duration="6.769" testcasecount="11" total="11" passed="11" failed="0" inconclusive="0" warnings="0" skipped="0" asserts="11">
       <properties>
         <property name="_TYPE" value="Describe" />
       </properties>
-      <test-suite type="TestFixture" id="1-1002" name="lifecycle" fullname="Embedded provisioning at first boot.lifecycle" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" start-time="0001-01-01T00:00:00.0000000Z" end-time="0001-01-01T00:00:00.0000000Z" duration="0" testcasecount="5" total="5" passed="0" failed="5" inconclusive="0" warnings="0" skipped="0" asserts="5">
+      <test-suite type="TestFixture" id="1-1002" name="lifecycle" fullname="Embedded provisioning at first boot.lifecycle" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:10.1570787Z" end-time="2026-05-21T23:52:13.8219589Z" duration="3.6649" testcasecount="5" total="5" passed="5" failed="0" inconclusive="0" warnings="0" skipped="0" asserts="5">
         <properties>
           <property name="_TYPE" value="Context" />
         </properties>
-        <test-case id="1-1003" name="Embedded provisioning at first boot.lifecycle.reports completed via KVP" fullname="Embedded provisioning at first boot.lifecycle.reports completed via KVP" methodname="reports completed via KVP" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1004" name="Embedded provisioning at first boot.lifecycle.reports a non-empty instance id via KVP" fullname="Embedded provisioning at first boot.lifecycle.reports a non-empty instance id via KVP" methodname="reports a non-empty instance id via KVP" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1005" name="Embedded provisioning at first boot.lifecycle.wrote the state file inside the guest" fullname="Embedded provisioning at first boot.lifecycle.wrote the state file inside the guest" methodname="wrote the state file inside the guest" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1006" name="Embedded provisioning at first boot.lifecycle.is running the patched binary (egs-service version matches host build)" fullname="Embedded provisioning at first boot.lifecycle.is running the patched binary (egs-service version matches host build)" methodname="is running the patched binary (egs-service version matches host build)" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1007" name="Embedded provisioning at first boot.lifecycle.did not run cloudbase-init" fullname="Embedded provisioning at first boot.lifecycle.did not run cloudbase-init" methodname="did not run cloudbase-init" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
+        <test-case id="1-1003" name="Embedded provisioning at first boot.lifecycle.reports completed via KVP" fullname="Embedded provisioning at first boot.lifecycle.reports completed via KVP" methodname="reports completed via KVP" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:10.1704636Z" end-time="2026-05-21T23:52:10.5939581Z" duration="0.4235" seed="0" asserts="1" />
+        <test-case id="1-1004" name="Embedded provisioning at first boot.lifecycle.reports a non-empty instance id via KVP" fullname="Embedded provisioning at first boot.lifecycle.reports a non-empty instance id via KVP" methodname="reports a non-empty instance id via KVP" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:10.5933574Z" end-time="2026-05-21T23:52:10.9481236Z" duration="0.3548" seed="0" asserts="1" />
+        <test-case id="1-1005" name="Embedded provisioning at first boot.lifecycle.wrote the state file inside the guest" fullname="Embedded provisioning at first boot.lifecycle.wrote the state file inside the guest" methodname="wrote the state file inside the guest" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:10.9481631Z" end-time="2026-05-21T23:52:11.7598094Z" duration="0.8116" seed="0" asserts="1" />
+        <test-case id="1-1006" name="Embedded provisioning at first boot.lifecycle.is running the patched binary (egs-service commit SHA matches host build)" fullname="Embedded provisioning at first boot.lifecycle.is running the patched binary (egs-service commit SHA matches host build)" methodname="is running the patched binary (egs-service commit SHA matches host build)" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:11.7689243Z" end-time="2026-05-21T23:52:13.3328452Z" duration="1.5639" seed="0" asserts="1" />
+        <test-case id="1-1007" name="Embedded provisioning at first boot.lifecycle.did not run cloudbase-init" fullname="Embedded provisioning at first boot.lifecycle.did not run cloudbase-init" methodname="did not run cloudbase-init" classname="Embedded provisioning at first boot.lifecycle" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:13.3328440Z" end-time="2026-05-21T23:52:13.8066958Z" duration="0.4739" seed="0" asserts="1" />
       </test-suite>
-      <test-suite type="TestFixture" id="1-1008" name="cloud-config payload was applied" fullname="Embedded provisioning at first boot.cloud-config payload was applied" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" start-time="0001-01-01T00:00:00.0000000Z" end-time="0001-01-01T00:00:00.0000000Z" duration="0" testcasecount="5" total="5" passed="0" failed="5" inconclusive="0" warnings="0" skipped="0" asserts="5">
+      <test-suite type="TestFixture" id="1-1008" name="cloud-config payload was applied" fullname="Embedded provisioning at first boot.cloud-config payload was applied" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:13.8219694Z" end-time="2026-05-21T23:52:19.8949316Z" duration="6.073" testcasecount="5" total="5" passed="5" failed="0" inconclusive="0" warnings="0" skipped="0" asserts="5">
         <properties>
           <property name="_TYPE" value="Context" />
         </properties>
-        <test-case id="1-1009" name="Embedded provisioning at first boot.cloud-config payload was applied.SetHostnameModule set the computer name to egs-prov-e2e" fullname="Embedded provisioning at first boot.cloud-config payload was applied.SetHostnameModule set the computer name to egs-prov-e2e" methodname="SetHostnameModule set the computer name to egs-prov-e2e" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1010" name="Embedded provisioning at first boot.cloud-config payload was applied.UsersGroupsModule created prov_test_user in Administrators" fullname="Embedded provisioning at first boot.cloud-config payload was applied.UsersGroupsModule created prov_test_user in Administrators" methodname="UsersGroupsModule created prov_test_user in Administrators" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1011" name="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule produced the plain marker file" fullname="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule produced the plain marker file" methodname="WriteFilesModule produced the plain marker file" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1012" name="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule decoded the base64 marker file" fullname="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule decoded the base64 marker file" methodname="WriteFilesModule decoded the base64 marker file" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
-        <test-case id="1-1013" name="Embedded provisioning at first boot.cloud-config payload was applied.RuncmdModule executed the runcmd entry" fullname="Embedded provisioning at first boot.cloud-config payload was applied.RuncmdModule executed the runcmd entry" methodname="RuncmdModule executed the runcmd entry" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
+        <test-case id="1-1009" name="Embedded provisioning at first boot.cloud-config payload was applied.SetHostnameModule set the computer name to egs-prov-e2e" fullname="Embedded provisioning at first boot.cloud-config payload was applied.SetHostnameModule set the computer name to egs-prov-e2e" methodname="SetHostnameModule set the computer name to egs-prov-e2e" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:13.8231860Z" end-time="2026-05-21T23:52:14.2639399Z" duration="0.4408" seed="0" asserts="1" />
+        <test-case id="1-1010" name="Embedded provisioning at first boot.cloud-config payload was applied.UsersGroupsModule created prov_test_user in Administrators" fullname="Embedded provisioning at first boot.cloud-config payload was applied.UsersGroupsModule created prov_test_user in Administrators" methodname="UsersGroupsModule created prov_test_user in Administrators" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:14.2639884Z" end-time="2026-05-21T23:52:14.8176940Z" duration="0.5537" seed="0" asserts="1" />
+        <test-case id="1-1011" name="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule produced the plain marker file" fullname="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule produced the plain marker file" methodname="WriteFilesModule produced the plain marker file" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:14.8177363Z" end-time="2026-05-21T23:52:15.2851764Z" duration="0.4674" seed="0" asserts="1" />
+        <test-case id="1-1012" name="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule decoded the base64 marker file" fullname="Embedded provisioning at first boot.cloud-config payload was applied.WriteFilesModule decoded the base64 marker file" methodname="WriteFilesModule decoded the base64 marker file" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:15.2852330Z" end-time="2026-05-21T23:52:15.7589088Z" duration="0.4737" seed="0" asserts="1" />
+        <test-case id="1-1013" name="Embedded provisioning at first boot.cloud-config payload was applied.RuncmdModule executed the runcmd entry" fullname="Embedded provisioning at first boot.cloud-config payload was applied.RuncmdModule executed the runcmd entry" methodname="RuncmdModule executed the runcmd entry" classname="Embedded provisioning at first boot.cloud-config payload was applied" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:15.7589700Z" end-time="2026-05-21T23:52:16.2261482Z" duration="0.4672" seed="0" asserts="1" />
       </test-suite>
-      <test-suite type="TestFixture" id="1-1014" name="CLI on the guest" fullname="Embedded provisioning at first boot.CLI on the guest" classname="Embedded provisioning at first boot.CLI on the guest" runstate="Runnable" result="Failed" site="Parent" start-time="0001-01-01T00:00:00.0000000Z" end-time="0001-01-01T00:00:00.0000000Z" duration="0" testcasecount="1" total="1" passed="0" failed="1" inconclusive="0" warnings="0" skipped="0" asserts="1">
+      <test-suite type="TestFixture" id="1-1014" name="CLI on the guest" fullname="Embedded provisioning at first boot.CLI on the guest" classname="Embedded provisioning at first boot.CLI on the guest" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:16.2300623Z" end-time="2026-05-21T23:52:22.9878114Z" duration="6.7577" testcasecount="1" total="1" passed="1" failed="0" inconclusive="0" warnings="0" skipped="0" asserts="1">
         <properties>
           <property name="_TYPE" value="Context" />
         </properties>
-        <test-case id="1-1015" name="Embedded provisioning at first boot.CLI on the guest.egs-service status --json reports Final completed" fullname="Embedded provisioning at first boot.CLI on the guest.egs-service status --json reports Final completed" methodname="egs-service status --json reports Final completed" classname="Embedded provisioning at first boot.CLI on the guest" runstate="Runnable" result="Failed" site="Parent" seed="0" asserts="1">
-          <failure>
-            <message><![CDATA[This test should run but it did not. Most likely a setup in some parent block failed.]]></message>
-          </failure>
-        </test-case>
+        <test-case id="1-1015" name="Embedded provisioning at first boot.CLI on the guest.egs-service status --json reports Final completed" fullname="Embedded provisioning at first boot.CLI on the guest.egs-service status --json reports Final completed" methodname="egs-service status --json reports Final completed" classname="Embedded provisioning at first boot.CLI on the guest" runstate="Runnable" result="Passed" start-time="2026-05-21T23:52:16.2313319Z" end-time="2026-05-21T23:52:16.9106083Z" duration="0.6793" seed="0" asserts="1" />
       </test-suite>
     </test-suite>
   </test-suite>
