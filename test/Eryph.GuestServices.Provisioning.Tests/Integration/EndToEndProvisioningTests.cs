@@ -7,6 +7,7 @@ using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
 using Eryph.GuestServices.Provisioning.UserData;
+using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -74,7 +75,20 @@ public sealed class EndToEndProvisioningTests : IDisposable
 
         var stateStore = new FileStateStore(NullLogger<FileStateStore>.Instance, _stateDirectory);
         var serializer = new CloudConfigSerializer();
-        var pipeline = new PassthroughUserDataPipeline(serializer);
+        var urlHelper = Substitute.For<IUrlHelper>();
+        var handlers = new IUserDataHandler[]
+        {
+            new MultipartMimeHandler(NullLogger<MultipartMimeHandler>.Instance),
+            new IncludeUrlHandler(urlHelper, NullLogger<IncludeUrlHandler>.Instance),
+            new CloudConfigPartHandler(serializer, NullLogger<CloudConfigPartHandler>.Instance),
+            new ShellScriptPartHandler(NullLogger<ShellScriptPartHandler>.Instance),
+            new BoothookPartHandler(NullLogger<BoothookPartHandler>.Instance),
+        };
+        var pipeline = new UserDataPipeline(
+            handlers,
+            serializer,
+            urlHelper,
+            NullLogger<UserDataPipeline>.Instance);
         var reporter = Substitute.For<IReportingDispatcher>();
 
         var modules = new IModule[]

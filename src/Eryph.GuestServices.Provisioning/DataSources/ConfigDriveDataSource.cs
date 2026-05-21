@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Eryph.GuestServices.CloudConfig.Yaml;
 using Microsoft.Extensions.Logging;
+using CloudConfigNetwork = Eryph.GuestServices.CloudConfig.NetworkConfig;
 
 namespace Eryph.GuestServices.Provisioning.DataSources;
 
@@ -11,17 +13,36 @@ public sealed class ConfigDriveDataSource(
 
     public string Name => "ConfigDrive";
 
-    public async Task<DataSourceResult?> TryDiscoverAsync(CancellationToken cancellationToken)
+    public int Priority => 40;
+
+    public bool RequiresNetwork => false;
+
+    public async Task<DataSourceProbeResult> ProbeAsync(CancellationToken cancellationToken)
     {
         var volume = volumeProbe.EnumerateVolumes()
             .FirstOrDefault(v => string.Equals(v.Label, ExpectedLabel, StringComparison.OrdinalIgnoreCase));
 
         if (volume is null)
-            return null;
+            return DataSourceProbeResult.NotApplicable.Instance;
 
         logger.LogInformation("ConfigDrive datasource located volume at {Root}", volume.RootPath);
-        return await ReadAsync(volume.RootPath, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var data = await ReadAsync(volume.RootPath, cancellationToken).ConfigureAwait(false);
+            if (data is null)
+                return DataSourceProbeResult.NotApplicable.Instance;
+
+            return new DataSourceProbeResult.Ready(data);
+        }
+        catch (Exception ex)
+        {
+            return new DataSourceProbeResult.Failed($"ConfigDrive datasource is malformed: {ex.Message}", ex);
+        }
     }
+
+    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 
     internal static async Task<DataSourceResult?> ReadAsync(string root, CancellationToken cancellationToken)
     {
@@ -53,15 +74,30 @@ public sealed class ConfigDriveDataSource(
         if (string.IsNullOrWhiteSpace(hostname))
             flat.TryGetValue("name", out hostname);
 
+        flat.TryGetValue("availability_zone", out var az);
+
         string? userData = null;
         var userDataPath = Path.Combine(baseDir, "user_data");
         if (File.Exists(userDataPath))
             userData = await File.ReadAllTextAsync(userDataPath, cancellationToken).ConfigureAwait(false);
 
+        string? vendorData = null;
+        var vendorDataPath = Path.Combine(baseDir, "vendor_data.json");
+        if (File.Exists(vendorDataPath))
+            vendorData = await File.ReadAllTextAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
+
         string? networkConfig = null;
+        CloudConfigNetwork? structuredNetworkConfig = null;
         var networkDataPath = Path.Combine(baseDir, "network_data.json");
         if (File.Exists(networkDataPath))
+        {
             networkConfig = await File.ReadAllTextAsync(networkDataPath, cancellationToken).ConfigureAwait(false);
+            // TODO: OpenStack network_data.json is JSON with a different schema than
+            // cloud-init network-config; for v1 we try YAML (some sources publish
+            // network-config YAML in the same slot) and ignore structured parse
+            // failures so the raw text is still available downstream.
+            structuredNetworkConfig = TryParseNetworkConfig(networkConfig);
+        }
 
         return new DataSourceResult
         {
@@ -69,9 +105,31 @@ public sealed class ConfigDriveDataSource(
             InstanceId = instanceId,
             Hostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname,
             UserData = userData,
+            VendorData = vendorData,
             MetaData = flat,
+            PlatformMetadata = new CloudConfig.PlatformMetadata
+            {
+                LocalHostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname,
+                AvailabilityZone = string.IsNullOrWhiteSpace(az) ? null : az,
+                CloudName = "openstack",
+                Platform = "openstack",
+                Subplatform = "config-drive",
+            },
             NetworkConfig = networkConfig,
+            StructuredNetworkConfig = structuredNetworkConfig,
         };
+    }
+
+    private static CloudConfigNetwork? TryParseNetworkConfig(string raw)
+    {
+        try
+        {
+            return NetworkConfigYamlSerializer.Deserialize(raw);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static Dictionary<string, string> FlattenJson(JsonElement element)

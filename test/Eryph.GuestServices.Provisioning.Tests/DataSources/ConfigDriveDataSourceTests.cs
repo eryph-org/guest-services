@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.DataSources;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace Eryph.GuestServices.Provisioning.Tests.DataSources;
 
@@ -33,7 +35,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
     public async Task ReadAsync_reads_all_fields_when_present()
     {
         await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
-            "{\"uuid\":\"abc-xyz\",\"hostname\":\"my-host\"}");
+            "{\"uuid\":\"abc-xyz\",\"hostname\":\"my-host\",\"availability_zone\":\"az1\"}");
         await File.WriteAllTextAsync(Path.Combine(_openstackDir, "user_data"),
             "#cloud-config\nhostname: my-host\n");
         await File.WriteAllTextAsync(Path.Combine(_openstackDir, "network_data.json"),
@@ -47,6 +49,12 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         result.Hostname.Should().Be("my-host");
         result.UserData.Should().Contain("hostname: my-host");
         result.NetworkConfig.Should().Be("{\"links\":[]}");
+
+        result.PlatformMetadata.Should().NotBeNull();
+        result.PlatformMetadata!.LocalHostname.Should().Be("my-host");
+        result.PlatformMetadata!.AvailabilityZone.Should().Be("az1");
+        result.PlatformMetadata!.CloudName.Should().Be("openstack");
+        result.PlatformMetadata!.Subplatform.Should().Be("config-drive");
     }
 
     [Fact]
@@ -83,5 +91,64 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         assertion.Which.Message.Should().Contain("meta_data.json");
         assertion.Which.Message.Should().Contain(metaDataPath);
         assertion.Which.InnerException.Should().BeAssignableTo<System.Text.Json.JsonException>();
+    }
+
+    [Fact]
+    public async Task ReadAsync_carries_vendor_data_when_present()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\"}");
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "vendor_data.json"),
+            "{\"some\":\"thing\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.VendorData.Should().Be("{\"some\":\"thing\"}");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_NotApplicable_when_no_volume()
+    {
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([]);
+
+        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.NotApplicable>();
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_Ready_when_volume_present_and_valid()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"abc\"}");
+
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([new MountedVolume("config-2", _root)]);
+
+        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.Ready>();
+        ((DataSourceProbeResult.Ready)result).Data.InstanceId.Should().Be("abc");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_Failed_when_meta_data_json_malformed()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{ not json ");
+
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([new MountedVolume("config-2", _root)]);
+
+        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.Failed>();
     }
 }

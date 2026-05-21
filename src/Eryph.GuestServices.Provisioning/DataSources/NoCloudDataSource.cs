@@ -1,4 +1,6 @@
+using Eryph.GuestServices.CloudConfig.Yaml;
 using Microsoft.Extensions.Logging;
+using CloudConfigNetwork = Eryph.GuestServices.CloudConfig.NetworkConfig;
 
 namespace Eryph.GuestServices.Provisioning.DataSources;
 
@@ -10,17 +12,36 @@ public sealed class NoCloudDataSource(
 
     public string Name => "NoCloud";
 
-    public async Task<DataSourceResult?> TryDiscoverAsync(CancellationToken cancellationToken)
+    public int Priority => 30;
+
+    public bool RequiresNetwork => false;
+
+    public async Task<DataSourceProbeResult> ProbeAsync(CancellationToken cancellationToken)
     {
         var volume = volumeProbe.EnumerateVolumes()
             .FirstOrDefault(v => string.Equals(v.Label, ExpectedLabel, StringComparison.OrdinalIgnoreCase));
 
         if (volume is null)
-            return null;
+            return DataSourceProbeResult.NotApplicable.Instance;
 
         logger.LogInformation("NoCloud datasource located volume at {Root}", volume.RootPath);
-        return await ReadAsync(volume.RootPath, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var data = await ReadAsync(volume.RootPath, cancellationToken).ConfigureAwait(false);
+            if (data is null)
+                return DataSourceProbeResult.NotApplicable.Instance;
+
+            return new DataSourceProbeResult.Ready(data);
+        }
+        catch (Exception ex)
+        {
+            return new DataSourceProbeResult.Failed($"NoCloud datasource is malformed: {ex.Message}", ex);
+        }
     }
+
+    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 
     internal static async Task<DataSourceResult?> ReadAsync(string root, CancellationToken cancellationToken)
     {
@@ -42,10 +63,19 @@ public sealed class NoCloudDataSource(
         if (File.Exists(userDataPath))
             userData = await File.ReadAllTextAsync(userDataPath, cancellationToken).ConfigureAwait(false);
 
+        string? vendorData = null;
+        var vendorDataPath = Path.Combine(root, "vendor-data");
+        if (File.Exists(vendorDataPath))
+            vendorData = await File.ReadAllTextAsync(vendorDataPath, cancellationToken).ConfigureAwait(false);
+
         string? networkConfig = null;
+        CloudConfigNetwork? structuredNetworkConfig = null;
         var networkConfigPath = Path.Combine(root, "network-config");
         if (File.Exists(networkConfigPath))
+        {
             networkConfig = await File.ReadAllTextAsync(networkConfigPath, cancellationToken).ConfigureAwait(false);
+            structuredNetworkConfig = TryParseNetworkConfig(networkConfig);
+        }
 
         return new DataSourceResult
         {
@@ -53,9 +83,31 @@ public sealed class NoCloudDataSource(
             InstanceId = instanceId,
             Hostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname,
             UserData = userData,
+            VendorData = vendorData,
             MetaData = metaData,
+            PlatformMetadata = new CloudConfig.PlatformMetadata
+            {
+                LocalHostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname,
+                CloudName = "nocloud",
+                Platform = "nocloud",
+            },
             NetworkConfig = networkConfig,
+            StructuredNetworkConfig = structuredNetworkConfig,
         };
+    }
+
+    private static CloudConfigNetwork? TryParseNetworkConfig(string yaml)
+    {
+        try
+        {
+            return NetworkConfigYamlSerializer.Deserialize(yaml);
+        }
+        catch
+        {
+            // The locator logs probe failures; a malformed network-config inside an
+            // otherwise valid NoCloud volume is not fatal for discovery.
+            return null;
+        }
     }
 
     // Tiny key: value scalar parser - NoCloud meta-data only ever uses flat scalar fields in v1.

@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.DataSources;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace Eryph.GuestServices.Provisioning.Tests.DataSources;
 
@@ -46,6 +48,13 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result.UserData.Should().Contain("hostname: my-host");
         result.NetworkConfig.Should().Be("version: 2\n");
         result.MetaData.Should().ContainKey("instance-id");
+
+        result.PlatformMetadata.Should().NotBeNull();
+        result.PlatformMetadata!.LocalHostname.Should().Be("my-host");
+        result.PlatformMetadata!.CloudName.Should().Be("nocloud");
+
+        result.StructuredNetworkConfig.Should().NotBeNull();
+        result.StructuredNetworkConfig!.Version.Should().Be(2);
     }
 
     [Fact]
@@ -69,5 +78,76 @@ public sealed class NoCloudDataSourceTests : IDisposable
 
         result!.InstanceId.Should().Be("i-quoted");
         result.Hostname.Should().Be("host");
+    }
+
+    [Fact]
+    public async Task ReadAsync_carries_vendor_data_through_when_present()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"), "instance-id: i\n");
+        await File.WriteAllTextAsync(Path.Combine(_root, "vendor-data"), "vendor payload");
+
+        var result = await NoCloudDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.VendorData.Should().Be("vendor payload");
+        result.GetVendorDataBytes().Length.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_NotApplicable_when_no_volume_matches()
+    {
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([]);
+
+        var source = new NoCloudDataSource(probe, NullLogger<NoCloudDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.NotApplicable>();
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_Ready_when_volume_present_and_valid()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"), "instance-id: i-1\n");
+
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([new MountedVolume("cidata", _root)]);
+
+        var source = new NoCloudDataSource(probe, NullLogger<NoCloudDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.Ready>();
+        ((DataSourceProbeResult.Ready)result).Data.InstanceId.Should().Be("i-1");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_Failed_when_meta_data_is_malformed()
+    {
+        // No instance-id present — ReadAsync throws InvalidDataException, which the
+        // probe must surface as Failed (not bubble out).
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"), "local-hostname: x\n");
+
+        var probe = Substitute.For<IVolumeProbe>();
+        probe.EnumerateVolumes().Returns([new MountedVolume("cidata", _root)]);
+
+        var source = new NoCloudDataSource(probe, NullLogger<NoCloudDataSource>.Instance);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        result.Should().BeOfType<DataSourceProbeResult.Failed>();
+    }
+
+    [Fact]
+    public async Task OnCompletedAsync_is_a_noop()
+    {
+        var probe = Substitute.For<IVolumeProbe>();
+        var source = new NoCloudDataSource(probe, NullLogger<NoCloudDataSource>.Instance);
+
+        var act = async () => await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "NoCloud", InstanceId = "x" },
+            CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
     }
 }

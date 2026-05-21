@@ -4,10 +4,12 @@ using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Handlers;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
 using Eryph.GuestServices.Provisioning.UserData;
+using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -54,10 +56,17 @@ internal static class Program
 
     internal static void ConfigureContainer(Container container)
     {
-        // Data sources (probed in registration order by DataSourceLocator).
+        // Data sources. The locator orders by IDataSource.Priority, not registration
+        // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40) -> Hyper-V KVP(50).
+        // Azure is probed first so a Windows guest in Azure (where PA may still be
+        // writing CustomData.bin) holds up the chain via WaitForReady instead of
+        // falling through to a stale NoCloud/ConfigDrive volume.
         container.Register<IVolumeProbe, DriveInfoVolumeProbe>(Lifestyle.Singleton);
+        container.Collection.Append<IDataSource, AzureDataSource>(Lifestyle.Singleton);
+        container.Collection.Append<IDataSource, Ec2DataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, NoCloudDataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, ConfigDriveDataSource>(Lifestyle.Singleton);
+        container.Collection.Append<IDataSource, HyperVKvpDataSource>(Lifestyle.Singleton);
         container.Register<IDataSourceLocator, DataSourceLocator>(Lifestyle.Singleton);
 
         // State.
@@ -74,14 +83,22 @@ internal static class Program
         // Windows OS abstraction.
         container.Register<IWindowsOs, WindowsOs>(Lifestyle.Singleton);
 
-        // Reporting. Agent X replaces NullReportingDispatcher with a multi-handler
-        // dispatcher and ports the KVP key scheme into a KvpReportingHandler.
+        // Reporting framework: dispatcher fans out to all registered handlers.
         container.Register<IGuestDataExchange, WindowsGuestDataExchange>(Lifestyle.Singleton);
-        container.Register<IReportingDispatcher, NullReportingDispatcher>(Lifestyle.Singleton);
+        container.Register<IReportingDispatcher, ReportingDispatcher>(Lifestyle.Singleton);
+        container.Collection.Append<IReportingHandler, LogReportingHandler>(Lifestyle.Singleton);
+        container.Collection.Append<IReportingHandler, KvpReportingHandler>(Lifestyle.Singleton);
 
-        // User-data pipeline. Agent Z replaces PassthroughUserDataPipeline with the
-        // full recursive pipeline (multipart MIME, include URL, jinja2, etc.).
-        container.Register<IUserDataPipeline, PassthroughUserDataPipeline>(Lifestyle.Singleton);
+        // User-data pipeline. Sniffs the root content type, dispatches through
+        // the handler chain, and recurses via multipart / #include URL handlers
+        // until the user-data is fully settled.
+        container.Register<IUrlHelper, UrlHelper>(Lifestyle.Singleton);
+        container.Collection.Append<IUserDataHandler, MultipartMimeHandler>(Lifestyle.Singleton);
+        container.Collection.Append<IUserDataHandler, IncludeUrlHandler>(Lifestyle.Singleton);
+        container.Collection.Append<IUserDataHandler, CloudConfigPartHandler>(Lifestyle.Singleton);
+        container.Collection.Append<IUserDataHandler, ShellScriptPartHandler>(Lifestyle.Singleton);
+        container.Collection.Append<IUserDataHandler, BoothookPartHandler>(Lifestyle.Singleton);
+        container.Register<IUserDataPipeline, UserDataPipeline>(Lifestyle.Singleton);
 
         // YAML serializer adapter.
         container.Register<ICloudConfigSerializer, CloudConfigSerializer>(Lifestyle.Singleton);

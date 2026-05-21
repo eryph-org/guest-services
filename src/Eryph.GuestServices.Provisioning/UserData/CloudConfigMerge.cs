@@ -1,0 +1,132 @@
+using Eryph.GuestServices.CloudConfig;
+
+namespace Eryph.GuestServices.Provisioning.UserData;
+
+// Deep-merge policy for stacking cloud-config fragments coming from
+// multipart parts and #include URLs:
+//
+//   - scalar values:   right (incoming) overrides left (accumulated)
+//                      when the right side is non-null
+//   - lists:           concatenated (left, then right) preserving order,
+//                      EXCEPT users/groups/chpasswd-users which merge by
+//                      Name with the right entry replacing the left
+//   - dicts (records): deep-merged field by field
+//
+// The "users replace by name" twist matches cloud-init's behaviour: two
+// fragments declaring the same user name produce a single user record,
+// with later declarations winning on conflict.
+internal static class CloudConfigMerge
+{
+    public static CloudConfig.CloudConfig Merge(
+        CloudConfig.CloudConfig left,
+        CloudConfig.CloudConfig right)
+    {
+        return new CloudConfig.CloudConfig
+        {
+            Hostname = right.Hostname ?? left.Hostname,
+            Fqdn = right.Fqdn ?? left.Fqdn,
+            PreserveHostname = right.PreserveHostname ?? left.PreserveHostname,
+            Users = MergeByName(left.Users, right.Users, u => u.Name, MergeUser),
+            Groups = MergeByName(left.Groups, right.Groups, g => g.Name, MergeGroup),
+            Chpasswd = MergeChpasswd(left.Chpasswd, right.Chpasswd),
+            Password = right.Password ?? left.Password,
+            SshPwauth = right.SshPwauth ?? left.SshPwauth,
+            SshAuthorizedKeys = Concat(left.SshAuthorizedKeys, right.SshAuthorizedKeys),
+            WriteFiles = Concat(left.WriteFiles, right.WriteFiles),
+            Runcmd = Concat(left.Runcmd, right.Runcmd),
+        };
+    }
+
+    private static UserConfig MergeUser(UserConfig left, UserConfig right) => new()
+    {
+        Name = right.Name ?? left.Name,
+        Passwd = right.Passwd ?? left.Passwd,
+        PlainTextPasswd = right.PlainTextPasswd ?? left.PlainTextPasswd,
+        LockPasswd = right.LockPasswd ?? left.LockPasswd,
+        Groups = Concat(left.Groups, right.Groups),
+        SshAuthorizedKeys = Concat(left.SshAuthorizedKeys, right.SshAuthorizedKeys),
+        Inactive = right.Inactive ?? left.Inactive,
+        Shell = right.Shell ?? left.Shell,
+        HomeDir = right.HomeDir ?? left.HomeDir,
+        PrimaryGroup = right.PrimaryGroup ?? left.PrimaryGroup,
+        Sudo = right.Sudo ?? left.Sudo,
+        System = right.System ?? left.System,
+    };
+
+    private static GroupConfig MergeGroup(GroupConfig left, GroupConfig right) => new()
+    {
+        Name = right.Name ?? left.Name,
+        Members = Concat(left.Members, right.Members),
+    };
+
+    private static ChpasswdConfig? MergeChpasswd(ChpasswdConfig? left, ChpasswdConfig? right)
+    {
+        if (left is null) return right;
+        if (right is null) return left;
+        return new ChpasswdConfig
+        {
+            Expire = right.Expire ?? left.Expire,
+            List = right.List ?? left.List,
+            Users = MergeByName(left.Users, right.Users, u => u.Name, MergeChpasswdEntry),
+        };
+    }
+
+    private static ChpasswdListEntry MergeChpasswdEntry(ChpasswdListEntry left, ChpasswdListEntry right) => new()
+    {
+        Name = right.Name ?? left.Name,
+        Password = right.Password ?? left.Password,
+        Type = right.Type ?? left.Type,
+    };
+
+    // Concatenates two lists, treating null as empty.
+    private static IReadOnlyList<T>? Concat<T>(IReadOnlyList<T>? left, IReadOnlyList<T>? right)
+    {
+        if (left is null || left.Count == 0) return right;
+        if (right is null || right.Count == 0) return left;
+        var combined = new List<T>(left.Count + right.Count);
+        combined.AddRange(left);
+        combined.AddRange(right);
+        return combined;
+    }
+
+    // Merges two lists keyed by a name selector: entries with the same
+    // (non-null) name are replaced by the later one (deep-merged), and
+    // unique entries are kept in left-then-right order.
+    private static IReadOnlyList<T>? MergeByName<T>(
+        IReadOnlyList<T>? left,
+        IReadOnlyList<T>? right,
+        Func<T, string?> nameSelector,
+        Func<T, T, T> merge) where T : class
+    {
+        if (left is null || left.Count == 0) return right;
+        if (right is null || right.Count == 0) return left;
+
+        var result = new List<T>(left.Count + right.Count);
+        var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var item in left)
+        {
+            var name = nameSelector(item);
+            if (name is not null)
+                indexByName[name] = result.Count;
+            result.Add(item);
+        }
+
+        foreach (var item in right)
+        {
+            var name = nameSelector(item);
+            if (name is not null && indexByName.TryGetValue(name, out var idx))
+            {
+                result[idx] = merge(result[idx], item);
+            }
+            else
+            {
+                if (name is not null)
+                    indexByName[name] = result.Count;
+                result.Add(item);
+            }
+        }
+
+        return result;
+    }
+}
