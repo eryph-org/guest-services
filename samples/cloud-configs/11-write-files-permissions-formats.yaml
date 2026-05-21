@@ -1,0 +1,32 @@
+# Sample 11 — write_files exercising every accepted permissions literal shape.
+#
+# cloud-init users in the wild quote permissions inconsistently. The YAML layer
+# normalises all three of these into a 4-digit octal string before the validator
+# checks them; the handler then logs a warning because Windows file ACLs don't
+# map cleanly onto POSIX permissions, but the file is still written.
+#
+# Exercises:
+#   - YAML converter: quoted "0644" parses as string.
+#   - YAML converter: bare 0644 parses as integer, then the converter promotes
+#     it to the canonical 4-digit octal string.
+#   - YAML converter: "0o755" parses via the modern octal prefix, stripped.
+#   - WriteFilePermissions.NewValidation accepts all three shapes.
+#   - WriteFilesModule emits the "permissions are ignored on Windows beyond
+#     basic ACLs" warning for each entry that has a Permissions value.
+#
+# Expected provisioning outcome:
+#   - Three files under C:\ProgramData\eryph-samples\11\ are written.
+#   - Three warning log lines noting that POSIX permissions don't apply on Windows.
+#cloud-config
+write_files:
+  - path: /ProgramData/eryph-samples/11/quoted-perms.txt
+    content: permissions specified as a quoted string
+    permissions: "0644"
+
+  - path: /ProgramData/eryph-samples/11/bare-perms.txt
+    content: permissions specified as a bare octal integer
+    permissions: 0644
+
+  - path: /ProgramData/eryph-samples/11/prefix-perms.txt
+    content: permissions specified with the 0o octal prefix
+    permissions: "0o755"

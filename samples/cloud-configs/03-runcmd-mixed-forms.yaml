@@ -1,0 +1,14 @@
+# Sample 03 — runcmd with both shell-string and argv-list forms.
+#
+# Exercises:
+#   - RuncmdModule, IsShellCommand branching.
+#   - YAML scalar-vs-sequence converter for runcmd entries.
+#
+# Expected provisioning outcome:
+#   - Three runcmd entries are executed in order.
+#   - The first two are shell strings; the third is an exec-style argv list.
+#cloud-config
+runcmd:
+  - echo "first runcmd entry: shell string"
+  - powershell.exe -NoProfile -Command "Write-Host 'second entry: shell string invoking pwsh'"
+  - [ powershell.exe, -NoProfile, -Command, "Write-Host 'third entry: argv list'" ]

@@ -1,0 +1,16 @@
+# Intentionally broken sample.
+#
+# Two users share the same name. CloudConfigValidations.ValidateUserList
+# uses EryphValidations.ValidateDistinct to flag this; the validator returns
+# an aggregated error.
+#
+# Expected outcome:
+#   - `egs-provisioning validate --user-data ...` exits non-zero.
+#   - Stderr contains "user name" and/or "duplicate" wording.
+#cloud-config
+users:
+  - name: duplicated
+    groups:
+      - Administrators
+  - name: duplicated
+    sudo: ALL=(ALL) NOPASSWD:ALL

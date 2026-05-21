@@ -1,0 +1,21 @@
+# Sample 08 — User with lock_passwd: true (account disabled).
+#
+# Exercises:
+#   - UsersGroupsModule maps lock_passwd onto LocalUserSpec.Disabled, which the
+#     Windows OS layer translates into a disabled local user.
+#   - Co-existence of an active and a locked user in one config.
+#
+# Expected provisioning outcome:
+#   - Local user 'service-account' created, enabled.
+#   - Local user 'audit-readonly' created, disabled.
+#   - 'service-account' is placed into Administrators (sudo alias).
+#cloud-config
+users:
+  - name: service-account
+    groups:
+      - Administrators
+    sudo: true
+    passwd: ServiceAccount-Pa55w0rd!
+
+  - name: audit-readonly
+    lock_passwd: true

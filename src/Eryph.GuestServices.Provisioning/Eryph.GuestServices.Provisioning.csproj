@@ -1,13 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <SelfContained>true</SelfContained>
-    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
-    <AssemblyName>egs-provisioning</AssemblyName>
     <RootNamespace>Eryph.GuestServices.Provisioning</RootNamespace>
   </PropertyGroup>
 
@@ -19,6 +15,8 @@
     <PackageReference Include="SimpleInjector" Version="5.5.0" />
     <PackageReference Include="SimpleInjector.Integration.GenericHost" Version="5.2.0" />
     <PackageReference Include="SimpleInjector.Integration.ServiceCollection" Version="5.5.0" />
+    <PackageReference Include="Spectre.Console" Version="0.51.1" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +28,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Eryph.GuestServices.Provisioning.Tests" />
+    <InternalsVisibleTo Include="egs-service" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,43 @@
+# Sample 12 — A user-data document that mirrors what eryph emits when a host
+# pairs platform-supplied vendor-data with operator-supplied user-data.
+#
+# RFC-0001 defers vendor-data PROCESSING to a future version of the agent, but
+# the parser must still accept a payload that LOOKS like a merged result —
+# vendor-data conventions like `vendor_data:`-style keys may appear in the
+# document and must round-trip through the YAML layer without errors.
+#
+# This sample is therefore a vanilla #cloud-config that combines several
+# directives that real eryph genes emit together:
+#   - hostname + write_files (from the platform's vendor block)
+#   - users + runcmd (from the operator's gene)
+#
+# Exercises:
+#   - End-to-end pipeline with a non-trivial document combining four modules.
+#   - YAML parser does not stumble on `vendor_data`-style top-level keys that
+#     our model ignores.
+#
+# Expected provisioning outcome:
+#   - Hostname is set.
+#   - One write_files entry is applied.
+#   - One user is created.
+#   - One runcmd entry is executed.
+#cloud-config
+
+# --- "vendor" portion (platform defaults) -----------------------------------
+hostname: eryph-vendor-12
+write_files:
+  - path: /ProgramData/eryph-samples/12/vendor-marker.txt
+    content: |
+      written by the vendor portion of sample 12
+
+# --- "user" portion (operator-supplied gene) --------------------------------
+users:
+  - name: operator
+    groups:
+      - Administrators
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILxA1JaPbjGEqkRZ8I0YbqVZj8eF6sJh4nXkzZRf1XYK operator@example.com
+
+runcmd:
+  - echo "sample 12 user-portion runcmd done"

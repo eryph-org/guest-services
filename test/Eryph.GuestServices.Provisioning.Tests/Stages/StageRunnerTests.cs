@@ -217,6 +217,43 @@ public sealed class StageRunnerTests
     }
 
     [Fact]
+    public async Task RunStageAsync_runs_only_the_requested_stage()
+    {
+        var data = MakeData("i-1");
+        var stateStore = new InMemoryStateStore();
+
+        var trace = new List<string>();
+        var modules = new IModule[]
+        {
+            new NetworkRecordingModule(trace),
+            new ConfigRecordingAModule(trace),
+            new ConfigRecordingBModule(trace),
+        };
+
+        var runner = BuildRunner(LocatorReturning(data), stateStore: stateStore, modules: modules);
+        var result = await runner.RunStageAsync(Stage.Config, CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Success>();
+        trace.Should().Equal("config-a", "config-b");
+        // Only the requested stage gets recorded as completed.
+        stateStore.Current!.CompletedStages.Should().BeEquivalentTo(["Config"]);
+    }
+
+    [Fact]
+    public async Task RunStageAsync_for_Local_does_not_require_userdata_resolution()
+    {
+        var data = MakeData("i-1");
+        var pipeline = Substitute.For<IUserDataPipeline>();
+        // No setup — calling pipeline.ResolveAsync would trigger NSubstitute defaults.
+
+        var runner = BuildRunner(LocatorReturning(data), pipeline: pipeline);
+        var result = await runner.RunStageAsync(Stage.Local, CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Success>();
+        await pipeline.DidNotReceiveWithAnyArgs().ResolveAsync(default, default);
+    }
+
+    [Fact]
     public async Task RunAsync_returns_Failed_when_userdata_cannot_be_parsed()
     {
         var data = MakeData("i-1", userData: "not valid yaml maybe");

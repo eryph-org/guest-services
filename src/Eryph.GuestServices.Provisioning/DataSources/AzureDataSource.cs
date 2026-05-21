@@ -7,9 +7,7 @@ namespace Eryph.GuestServices.Provisioning.DataSources;
 // STUB. Detects an Azure environment via HKLM\SOFTWARE\Microsoft\Windows Azure\VmId
 // and signals WaitForReady while Microsoft's Provisioning Agent is still writing
 // CustomData.bin. A full implementation will read CustomData.bin and surface the
-// VmId-derived instance id; see the reference Python service shipped with the
-// cloudbase-init patches at
-// templates/windows/cookbooks/packer/files/default/cloudbase-patches/metadata/services/azurecustomdata.py.
+// VmId-derived instance id
 public sealed class AzureDataSource(ILogger<AzureDataSource> logger) : IDataSource
 {
     internal const string AzureVmIdKey = @"SOFTWARE\Microsoft\Windows Azure";

@@ -1,0 +1,13 @@
+#include
+# Sample 06 — #include user-data pointing at another sample in this directory.
+#
+# Exercises:
+#   - IncludeUrlHandler: parses lines that are not comments and not blank as URLs.
+#   - The pipeline then fetches each URL, sniffs the response, and re-injects it.
+#
+# Sample 01 (the minimal admin user cloud-config) is fetched via file://.
+# The {{SAMPLES_DIR}} placeholder is replaced by the Pester harness with the
+# absolute path to samples/cloud-configs/ before invoking the provisioning agent.
+# When running by hand, replace the placeholder with the directory path you
+# downloaded the samples to.
+file:///{{SAMPLES_DIR}}/01-minimal-admin-user.yaml

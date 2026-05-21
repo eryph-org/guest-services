@@ -1,0 +1,25 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=============eryph-sample-05=="
+
+--=============eryph-sample-05==
+Content-Type: text/cloud-config; charset="utf-8"
+Content-Disposition: attachment; filename="part-01-cloud-config.yaml"
+
+#cloud-config
+hostname: eryph-multipart-sample
+users:
+  - name: mpadmin
+    groups:
+      - Administrators
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+--=============eryph-sample-05==
+Content-Type: text/x-shellscript; charset="utf-8"
+Content-Disposition: attachment; filename="part-02-bootstrap.ps1"
+
+#ps1_sysnative
+Write-Host "Sample 05 bootstrap script ran"
+New-Item -ItemType Directory -Force -Path "C:\ProgramData\eryph-samples\05" | Out-Null
+Set-Content -LiteralPath "C:\ProgramData\eryph-samples\05\bootstrap.marker" -Value "ok"
+
+--=============eryph-sample-05==--

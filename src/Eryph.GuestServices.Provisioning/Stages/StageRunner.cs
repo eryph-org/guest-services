@@ -27,7 +27,15 @@ public sealed class StageRunner(
         Stage.Final,
     ];
 
-    public async Task<StageRunOutcome> RunAsync(CancellationToken cancellationToken)
+    public Task<StageRunOutcome> RunAsync(CancellationToken cancellationToken) =>
+        RunStagesAsync(StageOrder, cancellationToken);
+
+    public Task<StageRunOutcome> RunStageAsync(Stage stage, CancellationToken cancellationToken) =>
+        RunStagesAsync([stage], cancellationToken);
+
+    private async Task<StageRunOutcome> RunStagesAsync(
+        IReadOnlyList<Stage> stagesToRun,
+        CancellationToken cancellationToken)
     {
         // Pre-step: discover the datasource before any stage runs.
         var data = await dataSourceLocator.LocateAsync(cancellationToken).ConfigureAwait(false);
@@ -50,7 +58,12 @@ public sealed class StageRunner(
         // influence subsequent stages without paying the parse cost up front.
         ResolvedUserData? resolvedUserData = null;
 
-        foreach (var stage in StageOrder)
+        // When a single stage is requested via RunStageAsync, the Network
+        // stage may not be included — in that case we still need to resolve
+        // user-data because Config/Final handlers depend on it.
+        var needsUserData = stagesToRun.Any(s => s != Stage.Local);
+
+        foreach (var stage in stagesToRun)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var stageName = stage.ToString();
@@ -64,8 +77,10 @@ public sealed class StageRunner(
 
             logger.LogInformation("Running stage {Stage} ({Count} module(s))", stageName, stageModules.Count);
 
-            // Resolve user-data once, at the start of the Network stage.
-            if (stage == Stage.Network && resolvedUserData is null)
+            // Resolve user-data once, at the start of the first non-Local stage.
+            // (RunStageAsync may start at Network, Config or Final directly, so
+            // we resolve on demand rather than gating on Stage.Network only.)
+            if (needsUserData && resolvedUserData is null && stage != Stage.Local)
             {
                 try
                 {

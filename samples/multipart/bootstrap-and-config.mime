@@ -1,0 +1,41 @@
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=============eryph-multipart=="
+
+--=============eryph-multipart==
+Content-Type: text/cloud-config; charset="utf-8"
+Content-Disposition: attachment; filename="00-bootstrap.cloud-config"
+
+#cloud-config
+hostname: eryph-multipart-bootstrap
+users:
+  - name: bootstrap
+    groups:
+      - Administrators
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILxA1JaPbjGEqkRZ8I0YbqVZj8eF6sJh4nXkzZRf1XYK bootstrap@example.com
+write_files:
+  - path: /ProgramData/eryph-samples/multipart/cloud-config.marker
+    content: |
+      written from the cloud-config part of the multipart sample
+
+--=============eryph-multipart==
+Content-Type: text/x-shellscript; charset="utf-8"
+Content-Disposition: attachment; filename="10-post-install.ps1"
+
+#ps1_sysnative
+$ErrorActionPreference = 'Stop'
+$markerDir = 'C:\ProgramData\eryph-samples\multipart'
+New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+Set-Content -LiteralPath (Join-Path $markerDir 'post-install.marker') -Value 'shellscript part ran'
+Write-Host "Multipart sample shellscript part executed at $(Get-Date -Format o)"
+
+--=============eryph-multipart==
+Content-Type: text/cloud-boothook; charset="utf-8"
+Content-Disposition: attachment; filename="20-boothook.cmd"
+
+#cloud-boothook
+mkdir C:\ProgramData\eryph-samples\multipart 2>nul
+echo boothook part ran > C:\ProgramData\eryph-samples\multipart\boothook.marker
+
+--=============eryph-multipart==--

@@ -1,0 +1,19 @@
+# Sample 01 — Minimal admin user with SSH key.
+#
+# Exercises:
+#   - UsersGroupsModule: creates the 'admin' local user, places it into
+#     Administrators (via the sudo alias).
+#   - SshAuthorizedKeysModule: per-user authorized_keys path.
+#
+# Expected provisioning outcome:
+#   - Local user 'admin' created.
+#   - User added to Administrators group.
+#   - %ProgramData%\ssh\users\admin\.ssh\authorized_keys populated with one key.
+#cloud-config
+users:
+  - name: admin
+    groups:
+      - Administrators
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILxA1JaPbjGEqkRZ8I0YbqVZj8eF6sJh4nXkzZRf1XYK admin@example.com
