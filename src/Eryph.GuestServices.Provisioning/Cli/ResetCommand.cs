@@ -22,30 +22,32 @@ public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
         [Description("Also delete the staged scripts directory.")]
         public bool ClearScripts { get; init; }
 
+        [CommandOption("--state-dir <DIR>")]
+        [Description("Override the state directory (default: %ProgramData%\\eryph\\provisioning).")]
+        public string? StateDir { get; init; }
+
+        // Kept as a no-op for backwards compat with scripts that may pass it.
+        // Reset has no confirmation prompt (matches cloud-init's `clean`): state.json
+        // is metadata only, OS mutations are already done, and modules are idempotent
+        // so re-running provisioning after an accidental reset is harmless.
         [CommandOption("-y|--yes")]
-        [Description("Skip the confirmation prompt (CI / automation).")]
+        [Description("Compatibility no-op (reset never prompts).")]
         public bool Yes { get; init; }
     }
 
     public override Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
+        if (!string.IsNullOrWhiteSpace(settings.StateDir))
+            ProvisioningPaths.RootOverride = settings.StateDir;
+
         var items = new List<string> { ProvisioningPaths.StateFile };
         if (settings.ClearLogs) items.Add(ProvisioningPaths.LogsDirectory);
         if (settings.ClearScripts)
             items.Add(ProvisioningPaths.ScriptsDirectory(ProvisioningSettings.LoadOrDefault()));
 
-        AnsiConsole.MarkupLine("[yellow]The following paths will be removed:[/]");
+        AnsiConsole.MarkupLine("[yellow]Removing:[/]");
         foreach (var p in items)
             AnsiConsole.MarkupLineInterpolated($"  {p}");
-
-        if (!settings.Yes)
-        {
-            if (!AnsiConsole.Confirm("Continue?", defaultValue: false))
-            {
-                AnsiConsole.MarkupLine("[grey]Aborted.[/]");
-                return Task.FromResult(0);
-            }
-        }
 
         var removed = 0;
         foreach (var path in items)

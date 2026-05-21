@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 02 — write_files exercising every supported encoding in one config.
 #
 # Exercises:

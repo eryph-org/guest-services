@@ -71,6 +71,59 @@ public class CloudConfigYamlSerializerTests
             });
     }
 
+    // Regression: discovered via Pester sample 03 — an unquoted scalar list item
+    // that contains ': ' is a YAML mapping indicator, not a shell string. The
+    // user MUST single- or double-quote the whole scalar. We document both the
+    // failing form (parse error) and the working form (parses as shell command).
+    [Fact]
+    public void Deserialize_RuncmdScalarWithUnquotedColonSpace_Throws()
+    {
+        const string yaml = """
+                            runcmd:
+                              - echo "first: with colon"
+                            """;
+
+        var act = () => CloudConfigYamlSerializer.Deserialize(yaml);
+
+        act.Should().Throw<Eryph.ConfigModel.InvalidConfigException>();
+    }
+
+    [Fact]
+    public void Deserialize_RuncmdSingleQuotedScalarWithColon_ParsesAsShellCommand()
+    {
+        const string yaml = """
+                            runcmd:
+                              - 'echo "first: with colon"'
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Runcmd.Should().ContainSingle().Which.Should().Match<RuncmdEntry>(
+            e => e.IsShellCommand && e.Command == "echo \"first: with colon\"" && e.Argv == null);
+    }
+
+    // cloudbase-init compat: argv-form runcmd entries can have YAML-quoted
+    // tokens. The quoting is transparent — same RuncmdEntry shape as unquoted
+    // tokens. Documenting because the user flagged it explicitly.
+    [Fact]
+    public void Deserialize_RuncmdArgvWithQuotedTokens_ParsesAsArgv()
+    {
+        const string yaml = """
+                            runcmd:
+                              - [ "powershell.exe", "-NoProfile", "-Command", "Write-Host hi" ]
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Runcmd.Should().ContainSingle().Which.Should().Match<RuncmdEntry>(
+            e => !e.IsShellCommand && e.Argv != null
+                 && e.Argv.Count == 4
+                 && e.Argv[0] == "powershell.exe"
+                 && e.Argv[1] == "-NoProfile"
+                 && e.Argv[2] == "-Command"
+                 && e.Argv[3] == "Write-Host hi");
+    }
+
     [Fact]
     public void Deserialize_UserAsString_ReturnsUserWithNameOnly()
     {

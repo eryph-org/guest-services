@@ -16,7 +16,7 @@
 #   egs-provisioning run          --user-data <path> --dry-run [--state-dir <dir>]
 #   egs-provisioning status       [--state-dir <dir>]
 #   egs-provisioning reset        [--state-dir <dir>]
-#   egs-provisioning collect-logs --output <zipPath>
+#   egs-provisioning collect-logs <zipPath>
 #
 # All `run` invocations in this suite pass --dry-run so the agent does not
 # mutate the host. Dry-run is expected to log "would <action>" lines and
@@ -205,9 +205,13 @@ Describe 'Sample dry-run execution (run --dry-run)' {
                     '--state-dir', $stateDir
                 )
                 Assert-EgsExitCode -Result $result -Expected 0
-                # Dry-run scripts module logs a "would run" intent rather than
-                # invoking PowerShell. We assert by the embedded marker name.
-                Assert-EgsOutputContains -Result $result -Substring '07'
+                # ScriptsUserModule stages the user-data script and (in dry-run)
+                # logs the intent to run it. The filename isn't propagated
+                # through the pipeline today (filename → ScriptPayload.Filename
+                # would be a v2 enhancement), so we assert on the generic
+                # "script" log token instead.
+                Assert-EgsOutputContains -Result $result -Substring 'script'
+                Assert-EgsOutputContains -Result $result -Substring 'DRY-RUN'
             }
             finally {
                 Remove-IsolatedStateDir -Path $stateDir
@@ -372,14 +376,15 @@ Describe 'Broken samples (validate must fail)' {
         $result.ExitCode | Should -Not -Be 0
         # Either the YAML parser surfaces "YAML" or our wrapper says "parse"
         # — accept either as long as stderr is informative.
-        ($result.StdErr -match 'YAML|parse|invalid') | Should -BeTrue
+        # Spectre AnsiConsole writes to stdout; check both streams to be lenient.
+        ("$($result.StdOut)$($result.StdErr)" -match 'YAML|parse|invalid') | Should -BeTrue
     }
 
     It 'rejects samples/cloud-configs/broken/duplicate-user.yaml' {
         $path = Join-Path $script:BrokenDir 'duplicate-user.yaml'
         $result = Invoke-EgsProvisioning -Arguments @('validate', '--user-data', $path)
         $result.ExitCode | Should -Not -Be 0
-        ($result.StdErr -match 'user|duplicate|distinct') | Should -BeTrue
+        ("$($result.StdOut)$($result.StdErr)" -match 'user|duplicate|distinct') | Should -BeTrue
     }
 }
 
@@ -430,7 +435,7 @@ Describe 'Collect-logs command' {
         $zipPath = Join-Path $tempZipDir 'collected.zip'
         try {
             $result = Invoke-EgsProvisioning -Arguments @(
-                'collect-logs', '--output', $zipPath
+                'collect-logs', $zipPath
             )
             Assert-EgsExitCode -Result $result -Expected 0
             Test-Path -LiteralPath $zipPath | Should -BeTrue

@@ -1,3 +1,4 @@
+#cloud-config
 # Intentionally broken sample.
 #
 # Two users share the same name. CloudConfigValidations.ValidateUserList

@@ -54,6 +54,56 @@ public sealed class ResetCommandTests : IDisposable
         File.Exists(stateFile).Should().BeFalse();
     }
 
+    // Regression: an earlier version prompted for confirmation unless --yes was
+    // passed, which broke non-TTY callers (Pester, CI). Reset must succeed without
+    // --yes, matching cloud-init's `clean` semantics.
+    [Fact]
+    public async Task ExecuteAsync_without_yes_flag_still_deletes_in_non_interactive()
+    {
+        var stateFile = Path.Combine(_root, "state.json");
+        await File.WriteAllTextAsync(stateFile, "{}");
+
+        var sut = new ResetCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("reset"),
+            new ResetCommand.Settings { Yes = false });
+
+        exit.Should().Be(0);
+        File.Exists(stateFile).Should().BeFalse();
+    }
+
+    // Regression: Pester drives reset with --state-dir to point at a temp dir
+    // so the real install state stays untouched. Verify the flag routes through
+    // to ProvisioningPaths.
+    [Fact]
+    public async Task ExecuteAsync_StateDirFlag_OverridesRoot()
+    {
+        // Clear any test-set override so we're sure it's the flag doing the work.
+        ProvisioningPaths.RootOverride = null;
+
+        var altRoot = Path.Combine(Path.GetTempPath(), "egs-reset-altroot-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(altRoot);
+        try
+        {
+            var stateFile = Path.Combine(altRoot, "state.json");
+            await File.WriteAllTextAsync(stateFile, "{}");
+
+            var sut = new ResetCommand();
+            var exit = await sut.ExecuteAsync(
+                TestCommandContext.Create("reset"),
+                new ResetCommand.Settings { StateDir = altRoot });
+
+            exit.Should().Be(0);
+            File.Exists(stateFile).Should().BeFalse();
+        }
+        finally
+        {
+            ProvisioningPaths.RootOverride = _root;
+            if (Directory.Exists(altRoot))
+                Directory.Delete(altRoot, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ExecuteAsync_with_logs_deletes_logs_directory()
     {

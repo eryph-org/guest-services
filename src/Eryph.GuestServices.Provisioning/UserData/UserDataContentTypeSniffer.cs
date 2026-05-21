@@ -102,13 +102,28 @@ internal static class UserDataContentTypeSniffer
         return output.ToArray();
     }
 
+    private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
+
     private static string SafeDecode(byte[] body)
     {
         try
         {
+            var offset = 0;
+            // Tools that write files on Windows (PowerShell Set-Content,
+            // Notepad, etc.) commonly emit a UTF-8 BOM. Cloud-init's markers
+            // (#cloud-config, #!/bin/sh, etc.) MUST be the first non-whitespace
+            // bytes, so strip the BOM before reading the leading line.
+            if (body.Length >= Utf8Bom.Length
+                && body[0] == Utf8Bom[0]
+                && body[1] == Utf8Bom[1]
+                && body[2] == Utf8Bom[2])
+            {
+                offset = Utf8Bom.Length;
+            }
+
             // Take at most the first 4KB; we only need the leading line.
-            var len = Math.Min(body.Length, 4096);
-            return Encoding.UTF8.GetString(body, 0, len);
+            var len = Math.Min(body.Length - offset, 4096);
+            return Encoding.UTF8.GetString(body, offset, len);
         }
         catch
         {

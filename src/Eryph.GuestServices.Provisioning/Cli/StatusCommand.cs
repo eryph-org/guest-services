@@ -26,6 +26,10 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         [CommandOption("--json")]
         [Description("Emit raw JSON instead of a human-readable summary.")]
         public bool Json { get; init; }
+
+        [CommandOption("--state-dir <DIR>")]
+        [Description("Override the state directory (default: %ProgramData%\\eryph\\provisioning).")]
+        public string? StateDir { get; init; }
     }
 
     private readonly IStateStore _store;
@@ -43,6 +47,9 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
+        if (!string.IsNullOrWhiteSpace(settings.StateDir))
+            ProvisioningPaths.RootOverride = settings.StateDir;
+
         if (settings.Wait)
         {
             var deadline = DateTime.UtcNow + WaitTimeout;

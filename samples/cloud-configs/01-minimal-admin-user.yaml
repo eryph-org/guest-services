@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 01 — Minimal admin user with SSH key.
 #
 # Exercises:

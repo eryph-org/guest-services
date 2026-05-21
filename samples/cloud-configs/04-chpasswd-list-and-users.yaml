@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 04 — chpasswd in legacy `list:` form plus per-user `passwd:` shorthand.
 #
 # Covers both ways to assign passwords:

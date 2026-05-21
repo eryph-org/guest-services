@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 12 — A user-data document that mirrors what eryph emits when a host
 # pairs platform-supplied vendor-data with operator-supplied user-data.
 #

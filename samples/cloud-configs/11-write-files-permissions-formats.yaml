@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 11 — write_files exercising every accepted permissions literal shape.
 #
 # cloud-init users in the wild quote permissions inconsistently. The YAML layer

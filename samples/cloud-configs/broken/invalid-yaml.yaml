@@ -1,3 +1,4 @@
+#cloud-config
 # Intentionally broken sample.
 #
 # The YAML below has an unterminated flow-style sequence — the closing `]`
@@ -6,8 +7,7 @@
 #
 # Expected outcome:
 #   - `egs-provisioning validate --user-data ...` exits non-zero.
-#   - Stderr contains the substring "YAML" or a parse-error class name.
-#cloud-config
+#   - Output contains the substring "YAML" or a parse-error class name.
 users:
   - name: admin
     groups: [ Administrators, RemoteDesktopUsers

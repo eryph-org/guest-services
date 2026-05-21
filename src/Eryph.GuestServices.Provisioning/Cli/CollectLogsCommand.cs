@@ -21,10 +21,17 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
         [CommandArgument(0, "<OUTPUT>")]
         [Description("Path of the zip archive to create.")]
         public string Output { get; init; } = "";
+
+        [CommandOption("--state-dir <DIR>")]
+        [Description("Override the state directory (default: %ProgramData%\\eryph\\provisioning).")]
+        public string? StateDir { get; init; }
     }
 
     public override Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
+        if (!string.IsNullOrWhiteSpace(settings.StateDir))
+            ProvisioningPaths.RootOverride = settings.StateDir;
+
         if (string.IsNullOrWhiteSpace(settings.Output))
         {
             AnsiConsole.MarkupLine("[red]Output path is required.[/]");

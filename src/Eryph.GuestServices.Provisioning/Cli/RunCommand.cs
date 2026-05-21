@@ -40,10 +40,17 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
         [CommandOption("--instance-id <ID>")]
         [Description("Override the instance id (forces fresh-instance treatment).")]
         public string? InstanceId { get; init; }
+
+        [CommandOption("--state-dir <DIR>")]
+        [Description("Override the state directory (default: %ProgramData%\\eryph\\provisioning).")]
+        public string? StateDir { get; init; }
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
+        if (!string.IsNullOrWhiteSpace(settings.StateDir))
+            ProvisioningPaths.RootOverride = settings.StateDir;
+
         // Build the override datasource if either of the override options is set.
         IDataSource? overrideSource = null;
         if (settings.UserDataPath is not null || settings.InstanceId is not null)

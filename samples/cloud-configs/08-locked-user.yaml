@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 08 — User with lock_passwd: true (account disabled).
 #
 # Exercises:

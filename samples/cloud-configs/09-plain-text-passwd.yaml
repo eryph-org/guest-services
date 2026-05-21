@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 09 — User with plain_text_passwd (cloud-init alias for passwd that
 # explicitly signals "this is plaintext, not a hash").
 #

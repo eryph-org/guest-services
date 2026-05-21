@@ -1,3 +1,4 @@
+#cloud-config
 # Sample 10 — Minimal config that only sets the hostname.
 #
 # Exercises:
