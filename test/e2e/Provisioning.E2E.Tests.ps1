@@ -75,8 +75,8 @@ BeforeAll {
     throw "Expected catlet to be Off after creation; got $state."
   }
 
-  Write-Host "Baking egs-service offline (publish=$resolvedPublishPath) ..."
-  Install-EgsServiceOffline -VmId $catlet.VmId -PublishPath $resolvedPublishPath
+  Write-Host "Replacing egs-service binaries offline (publish=$resolvedPublishPath) ..."
+  Update-EgsServiceBinariesOffline -VmId $catlet.VmId -PublishPath $resolvedPublishPath
 
   Write-Host "Starting catlet $($catlet.Name) ..."
   Start-Catlet -Id $catlet.Id -Force

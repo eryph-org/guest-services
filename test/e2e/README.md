@@ -103,24 +103,28 @@ of each step.
 End-to-end tests for the embedded ProvisioningHostedService. Different shape
 from the Shell suite:
 
-1. Creates a base catlet (`provisioning-catlet.yaml`) — no fodder. The parent
-   gene gives Windows + cloudbase-init; nothing else.
+1. Creates a base catlet (`provisioning-catlet.yaml`). The parent gene gives
+   Windows + cloudbase-init + a pre-installed (but unstarted) egs-service.
+   The cloud-config fodder in the catlet config IS the test input — the
+   payload our agent is asked to process.
 2. The catlet is NOT started yet. We mount its VHD on the host
    (`Mount-CatletVhd`).
-3. We copy the locally-built `egs-service` publish output into
-   `<vol>:\Program Files\eryph\guest-services\bin\`.
-4. We disable cloudbase-init: rename its install dir to `.disabled-<ts>` AND
-   set its service `Start=Disabled` in the offline `SYSTEM` hive.
-5. We register `egs-service` as a Windows service (Start=Automatic,
-   Type=OwnProcess) by writing into the offline `SYSTEM` hive at
-   `ControlSet001\Services\eryph-guest-services`.
-6. Dismount, start the catlet.
-7. On first boot, only `egs-service` runs. The embedded
-   `ProvisioningHostedService` discovers a data source, runs the stages, and
-   reports state via KVP.
-8. Tests assert KVP reads `eryph.provisioning.state = completed`, the on-disk
-   `state.json` includes the `Final` stage, the running binary is our build,
-   and cloudbase-init never started.
+3. `Update-EgsServiceBinariesOffline` overwrites the existing egs-service
+   binaries under `<vol>:\Program Files\eryph\guest-services\bin\` with our
+   locally-built publish output.
+4. Same call disables cloudbase-init: renames its install dir to
+   `.disabled-<ts>` AND sets the cloudbase-init service `Start=Disabled` in
+   the offline `SYSTEM` hive.
+5. Dismount, start the catlet.
+6. On first boot, only `egs-service` runs (with our patched binaries). The
+   embedded `ProvisioningHostedService` discovers the ConfigDrive datasource
+   produced from the catlet's fodder, processes the cloud-config, runs the
+   stages, and reports state via KVP. `SetHostnameModule` may trigger a
+   reboot; `Wait-ForProvisioningComplete` polls through that.
+7. Tests assert KVP reads `eryph.provisioning.state = completed`, the on-disk
+   `state.json` includes the `Final` stage, the cloud-config outcomes are
+   visible inside the guest (hostname set, user created, write_files
+   markers, runcmd marker), and cloudbase-init never started.
 
 ```powershell
 pwsh ./Run-ProvisioningE2ETests.ps1            # default winsrv2022

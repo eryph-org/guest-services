@@ -262,23 +262,27 @@ function Dismount-CatletVhd {
   Dismount-VHD -Path $VhdPath -ErrorAction Stop
 }
 
-function Install-EgsServiceOffline {
+function Update-EgsServiceBinariesOffline {
   <#
   .SYNOPSIS
-    Bakes the locally-built egs-service into a stopped catlet's VHD, disables
-    cloudbase-init, and registers egs-service as a Windows service via the
-    offline SYSTEM registry hive so it autostarts at first boot.
+    Replaces the egs-service binaries inside a stopped catlet's VHD with the
+    locally-built publish output, and disables cloudbase-init.
+
+  .DESCRIPTION
+    The parent gene already installed egs-service into
+    `C:\Program Files\eryph\guest-services\bin\` and registered it as a
+    Windows service — we just overwrite the files. This requires admin
+    (Mount-VHD + offline reg edit for cbi disable).
 
   .PARAMETER VmId
-    The catlet's VmId. The catlet must be stopped.
+    The catlet's VmId. The catlet must be Off (not Running, not Saved).
 
   .PARAMETER PublishPath
-    Directory containing the `dotnet publish` output of egs-service (must
-    include egs-service.exe and its dependencies).
+    Directory containing the `dotnet publish` output of egs-service. Must
+    include `egs-service.exe`.
 
   .NOTES
-    Requires administrator. Operates ONLY on the offline VHD — does not
-    touch the host's running services or registry.
+    Operates ONLY on the offline VHD — does not touch the host.
   #>
   [CmdletBinding()]
   param(
@@ -293,7 +297,6 @@ function Install-EgsServiceOffline {
     throw "egs-service.exe not present under $PublishPath."
   }
 
-  $catlet = Get-Catlet -Id $VmId -ErrorAction Stop
   $status = (Get-VM -Id $VmId).State
   if ($status -eq 'Running' -or $status -eq 'Saved') {
     throw "Catlet must be Stopped (current: $status) before mounting its VHD."
@@ -305,12 +308,23 @@ function Install-EgsServiceOffline {
     $binDir = Join-Path $root 'Program Files\eryph\guest-services\bin'
     $cbiDir = Join-Path $root 'Program Files\Cloudbase Solutions\Cloudbase-Init'
 
-    Write-Verbose "Copying egs-service binaries to $binDir"
     if (-not (Test-Path -LiteralPath $binDir)) {
-      New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+      throw "Expected egs-service install at $binDir but the directory is missing. " +
+            "The parent gene should have egs-service pre-installed; without it this " +
+            "test cannot just replace binaries — it would need to install the service " +
+            "too. Verify the parent gene or pick one with egs-service baked in."
     }
-    Get-ChildItem -LiteralPath $PublishPath -File | ForEach-Object {
-      Copy-Item -LiteralPath $_.FullName -Destination $binDir -Force
+
+    Write-Verbose "Replacing egs-service binaries in $binDir"
+    # Mirror copy: drop new file contents on top of the existing layout.
+    Get-ChildItem -LiteralPath $PublishPath -Recurse -File | ForEach-Object {
+      $relative = $_.FullName.Substring($PublishPath.Length).TrimStart('\','/')
+      $target = Join-Path $binDir $relative
+      $targetDir = Split-Path $target -Parent
+      if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+      }
+      Copy-Item -LiteralPath $_.FullName -Destination $target -Force
     }
 
     if (Test-Path -LiteralPath $cbiDir) {
@@ -325,70 +339,9 @@ function Install-EgsServiceOffline {
     } else {
       Write-Verbose "cloudbase-init not present at $cbiDir; skipping disable step"
     }
-
-    Register-OfflineService `
-      -DriveLetter $mount.DriveLetter `
-      -ServiceName 'eryph-guest-services' `
-      -DisplayName 'eryph guest services' `
-      -ImagePath  '"C:\Program Files\eryph\guest-services\bin\egs-service.exe"' `
-      -Description 'Eryph guest channel + provisioning agent.'
   }
   finally {
     Dismount-CatletVhd -VhdPath $mount.VhdPath
-  }
-}
-
-function Register-OfflineService {
-  <#
-  .SYNOPSIS
-    Writes a Win32 service registration into the offline SYSTEM hive of a
-    mounted Windows image so the SCM auto-starts it on first boot.
-
-  .DESCRIPTION
-    Loads <Drive>:\Windows\System32\config\SYSTEM under HKLM\OfflineSystem,
-    creates Services\<ServiceName> with Start=2 (Automatic), Type=10 (Own
-    Process), and the required value names; unloads the hive when done.
-    Idempotent: existing registrations are overwritten.
-  #>
-  [CmdletBinding()]
-  param(
-    [Parameter(Mandatory = $true)] [string] $DriveLetter,
-    [Parameter(Mandatory = $true)] [string] $ServiceName,
-    [Parameter(Mandatory = $true)] [string] $DisplayName,
-    [Parameter(Mandatory = $true)] [string] $ImagePath,
-    [Parameter()] [string] $Description = ''
-  )
-
-  $hivePath = "$DriveLetter`:\Windows\System32\config\SYSTEM"
-  if (-not (Test-Path -LiteralPath $hivePath)) {
-    throw "Offline SYSTEM hive not found: $hivePath"
-  }
-
-  $tempHive = "HKLM\OfflineSystem_$([guid]::NewGuid().ToString('N'))"
-  $regExe = "$env:WINDIR\System32\reg.exe"
-
-  & $regExe load $tempHive $hivePath | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "reg load failed for $hivePath" }
-
-  try {
-    # ControlSet001 is what becomes CurrentControlSet at boot.
-    $svcKey = "$tempHive\ControlSet001\Services\$ServiceName"
-
-    & $regExe add $svcKey /f /v ImagePath   /t REG_EXPAND_SZ /d $ImagePath   | Out-Null
-    & $regExe add $svcKey /f /v DisplayName /t REG_SZ        /d $DisplayName | Out-Null
-    if ($Description) {
-      & $regExe add $svcKey /f /v Description /t REG_SZ /d $Description | Out-Null
-    }
-    & $regExe add $svcKey /f /v Start        /t REG_DWORD /d 2  | Out-Null  # 2 = Automatic
-    & $regExe add $svcKey /f /v Type         /t REG_DWORD /d 16 | Out-Null  # 0x10 = Own Process
-    & $regExe add $svcKey /f /v ErrorControl /t REG_DWORD /d 1  | Out-Null  # 1 = Normal
-    & $regExe add $svcKey /f /v ObjectName   /t REG_SZ    /d 'LocalSystem' | Out-Null
-  }
-  finally {
-    # Force garbage collect — reg.exe sometimes leaves the hive briefly busy.
-    [System.GC]::Collect()
-    [System.GC]::WaitForPendingFinalizers()
-    & $regExe unload $tempHive | Out-Null
   }
 }
 
