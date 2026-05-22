@@ -11,10 +11,24 @@ public interface ISemaphoreStore
 {
     /// <summary>
     /// Returns <c>true</c> when a marker exists for (module, frequency,
-    /// instance) — meaning the module has already run for this scope and
-    /// should be skipped.
+    /// instance) — meaning the module has been recorded in some terminal-ish
+    /// state. Callers that need to distinguish <c>"completed"</c> from
+    /// <c>"reboot-requested"</c> must use <see cref="ReadOutcomeAsync"/>.
     /// </summary>
     Task<bool> ExistsAsync(
+        string moduleKey,
+        ModuleFrequency frequency,
+        string instanceId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns the outcome string written by the most recent
+    /// <see cref="WriteAsync"/>, or <c>null</c> when no marker exists for
+    /// (module, frequency, instance). The StageRunner uses this to skip on
+    /// <c>"completed"</c> and resume on <c>"reboot-requested"</c>.
+    /// docs/bugs/0001 documents the bug this method was introduced to fix.
+    /// </summary>
+    Task<string?> ReadOutcomeAsync(
         string moduleKey,
         ModuleFrequency frequency,
         string instanceId,

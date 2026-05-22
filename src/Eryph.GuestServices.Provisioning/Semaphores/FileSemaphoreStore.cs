@@ -42,6 +42,31 @@ public sealed class FileSemaphoreStore : ISemaphoreStore
         return Task.FromResult(File.Exists(path));
     }
 
+    public async Task<string?> ReadOutcomeAsync(
+        string moduleKey,
+        ModuleFrequency frequency,
+        string instanceId,
+        CancellationToken cancellationToken)
+    {
+        var path = ResolvePath(moduleKey, frequency, instanceId);
+        if (!File.Exists(path))
+            return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            var record = JsonSerializer.Deserialize(json, SemaphoreStoreJsonContext.Default.SemaphoreRecord);
+            return record?.Outcome;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException)
+        {
+            // Corrupt or partial marker — treat as "exists but unknown outcome".
+            // The StageRunner's gate falls back to the conservative path (re-run).
+            _logger.LogWarning(ex, "Failed to read semaphore outcome from {Path}; treating as unknown", path);
+            return string.Empty;
+        }
+    }
+
     public async Task WriteAsync(
         string moduleKey,
         ModuleFrequency frequency,

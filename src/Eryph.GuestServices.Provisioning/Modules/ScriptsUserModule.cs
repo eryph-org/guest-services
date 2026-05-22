@@ -20,13 +20,22 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 internal sealed class ScriptsUserModule(
     ILogger<ScriptsUserModule> logger,
     ProvisioningSettings settings,
-    IReportingDispatcher reporter) : IModule
+    IReportingDispatcher reporter,
+    IScriptCheckpointStore checkpointStore) : IModule
 {
     /// <summary>
     /// Exit code reserved by the cloudbase-init "reboot and continue"
     /// convention. Same value the RuncmdModule honors.
     /// </summary>
     public const int RebootRequestedExitCode = 1003;
+
+    /// <summary>
+    /// Per-script reboot quota. A given (ordinal, body-hash) may request
+    /// reboot at most this many times before we fail the module — guards
+    /// against a broken installer that returns 1003 indefinitely.
+    /// docs/bugs/0001 "loop-safety".
+    /// </summary>
+    internal const int MaxRebootsPerScript = 2;
 
     /// <summary>
     /// Directory where per-script stdout/stderr logs are written. One log
@@ -52,6 +61,9 @@ internal sealed class ScriptsUserModule(
         await context.Os.EnsureDirectoryAsync(scriptDirectory, cancellationToken).ConfigureAwait(false);
         await context.Os.EnsureDirectoryAsync(logDirectory, cancellationToken).ConfigureAwait(false);
 
+        var instanceId = context.DataSource.InstanceId;
+        var checkpoint = await checkpointStore.LoadAsync(instanceId, cancellationToken).ConfigureAwait(false);
+
         for (var index = 0; index < userData.Scripts.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -69,6 +81,21 @@ internal sealed class ScriptsUserModule(
                     "Skipping script #{Index} ('{Filename}') — kind Other (see earlier warning).",
                     ordinal,
                     script.Filename ?? "<root>");
+                continue;
+            }
+
+            var bodyHash = ScriptCheckpoint.ComputeBodyHash(script.Body);
+
+            // Resume guard: skip scripts already recorded as executed (cloud-init
+            // doesn't have this; we do because cbi-style 1003 means the script
+            // DID its work and signalled "reboot, then move on"). The (ordinal,
+            // body-hash) pair invalidates the entry if the operator edits the
+            // script between runs.
+            if (checkpoint.Contains(ordinal, bodyHash))
+            {
+                logger.LogInformation(
+                    "Skipping script #{Index} ('{Filename}') — already executed in a prior run (resume).",
+                    ordinal, script.Filename ?? "<root>");
                 continue;
             }
 
@@ -110,9 +137,44 @@ internal sealed class ScriptsUserModule(
 
             if (result.ExitCode == RebootRequestedExitCode)
             {
+                // Per-script reboot quota: the same (ordinal, body-hash) may
+                // request reboot at most MaxRebootsPerScript times. Past that
+                // we treat it as a stuck installer and fail rather than loop.
+                var rebootKey = $"{ordinal}:{bodyHash}";
+                var rebootCount = checkpoint.RebootCounts.GetValueOrDefault(rebootKey) + 1;
+                if (rebootCount > MaxRebootsPerScript)
+                {
+                    logger.LogError(
+                        "Script #{Index} ({Path}) exceeded per-script reboot quota ({Quota}). Failing.",
+                        ordinal, scriptPath, MaxRebootsPerScript);
+                    var updatedCounts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
+                    {
+                        [rebootKey] = rebootCount,
+                    };
+                    await checkpointStore.SaveAsync(instanceId,
+                        checkpoint with { RebootCounts = updatedCounts },
+                        cancellationToken).ConfigureAwait(false);
+                    return ModuleOutcome.Fail(
+                        $"script #{ordinal} ('{scriptName}') exceeded per-script reboot quota.");
+                }
+
                 logger.LogInformation(
                     "Script #{Index} ({Path}) requested reboot-and-continue (exit {Code}).",
                     ordinal, scriptPath, RebootRequestedExitCode);
+
+                // Mark the script as executed BEFORE returning Reboot — cbi
+                // semantics for 1003: "I did my work; reboot, then run my
+                // successors". The resume must NOT re-run this script.
+                var executed = checkpoint.Executed
+                    .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
+                    .ToList();
+                var counts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
+                {
+                    [rebootKey] = rebootCount,
+                };
+                checkpoint = checkpoint with { Executed = executed, RebootCounts = counts };
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+
                 return ModuleOutcome.Reboot(
                     $"script #{ordinal} ('{scriptName}') requested reboot (exit {RebootRequestedExitCode}).");
             }
@@ -121,6 +183,15 @@ internal sealed class ScriptsUserModule(
                 logger.LogError(
                     "Script #{Index} ({Path}) exited with code {Code}; continuing with remaining scripts.",
                     ordinal, scriptPath, result.ExitCode);
+
+            // Mark executed (success OR non-1003 failure). A failing script
+            // does not block the queue, so it has 'run'; replaying it on the
+            // next reboot-resume would just fail twice.
+            var nowExecuted = checkpoint.Executed
+                .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
+                .ToList();
+            checkpoint = checkpoint with { Executed = nowExecuted };
+            await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
         }
 
         return ModuleOutcome.Ok();

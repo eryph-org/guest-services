@@ -22,10 +22,13 @@ public sealed class ScriptsUserModuleTests
         },
     };
 
-    private static ScriptsUserModule CreateModule(IReportingDispatcher? reporter = null) =>
+    private static ScriptsUserModule CreateModule(
+        IReportingDispatcher? reporter = null,
+        IScriptCheckpointStore? checkpointStore = null) =>
         new(NullLogger<ScriptsUserModule>.Instance,
             TestSettings,
-            reporter ?? Substitute.For<IReportingDispatcher>());
+            reporter ?? Substitute.For<IReportingDispatcher>(),
+            checkpointStore ?? new InMemoryScriptCheckpointStore());
 
     [Fact]
     public async Task ApplyAsync_NoScripts_NoOp()

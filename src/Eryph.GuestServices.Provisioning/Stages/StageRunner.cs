@@ -32,6 +32,18 @@ public sealed class StageRunner(
         Stage.Final,
     ];
 
+    // Semaphore outcome values. "completed" gates further runs; any other
+    // value (including "reboot-requested") allows the module to re-enter.
+    // docs/bugs/0001 explains the bug introduced by treating these as equal.
+    internal const string OutcomeCompleted = "completed";
+    internal const string OutcomeRebootRequested = "reboot-requested";
+
+    // Hard cap on how many times the same module may return RebootRequested
+    // before the StageRunner stops re-entering it and treats the situation
+    // as a failed run. Protects against a misbehaving script that keeps
+    // returning 1003 without making progress (docs/bugs/0001 "loop-safety").
+    private const int MaxRebootsPerModule = 3;
+
     public Task<StageRunOutcome> RunAsync(CancellationToken cancellationToken) =>
         RunStagesAsync(StageOrder, cancellationToken);
 
@@ -126,12 +138,25 @@ public sealed class StageRunner(
                 var moduleName = module.GetType().Name;
                 var frequency = entry.Frequency;
 
-                if (await semaphoreStore.ExistsAsync(moduleKey, frequency, data.InstanceId, cancellationToken).ConfigureAwait(false))
+                var existingOutcome = await semaphoreStore
+                    .ReadOutcomeAsync(moduleKey, frequency, data.InstanceId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (existingOutcome == OutcomeCompleted)
                 {
                     logger.LogInformation(
-                        "Skipping module {Module} ({Frequency}); semaphore already present",
+                        "Skipping module {Module} ({Frequency}); already completed",
                         moduleKey, frequency);
                     continue;
+                }
+                if (existingOutcome == OutcomeRebootRequested)
+                {
+                    // Post-reboot resume: the module asked for a reboot last
+                    // time; re-enter it so it can finish its work (e.g.
+                    // ScriptsUserModule continues with later scripts; modules
+                    // like SetHostname idempotently confirm AlreadySet).
+                    logger.LogInformation(
+                        "Re-entering module {Module} ({Frequency}) after reboot-requested marker",
+                        moduleKey, frequency);
                 }
 
                 await reporter.EmitAsync(
@@ -164,11 +189,13 @@ public sealed class StageRunner(
                 switch (outcome)
                 {
                     case ModuleOutcome.Completed:
-                        await semaphoreStore.WriteAsync(moduleKey, frequency, data.InstanceId, "completed", cancellationToken)
+                        await semaphoreStore.WriteAsync(moduleKey, frequency, data.InstanceId, OutcomeCompleted, cancellationToken)
                             .ConfigureAwait(false);
                         state = state with
                         {
                             CompletedHandlers = AddPerInstanceIfApplicable(state.CompletedHandlers, moduleKey, frequency),
+                            // Resume completed: drop the pending marker.
+                            PendingHandlers = Without(state.PendingHandlers, moduleKey),
                             LastUpdated = DateTimeOffset.UtcNow,
                         };
                         await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
@@ -181,14 +208,49 @@ public sealed class StageRunner(
                         break;
 
                     case ModuleOutcome.RebootRequested reboot:
-                        // Write the marker BEFORE returning — otherwise the
-                        // post-reboot run would re-execute the module and we
-                        // would loop forever.
-                        await semaphoreStore.WriteAsync(moduleKey, frequency, data.InstanceId, "reboot-requested", cancellationToken)
+                        // Per-module reboot cap. If this module has already
+                        // requested a reboot >= MaxRebootsPerModule times,
+                        // treat the third+ request as a hard failure to avoid
+                        // an unbounded re-entry loop (docs/bugs/0001).
+                        var nextRebootCount = state.ModuleRebootCounts.GetValueOrDefault(moduleKey) + 1;
+                        if (nextRebootCount > MaxRebootsPerModule)
+                        {
+                            var capMessage = $"Module {moduleKey} exceeded the reboot cap " +
+                                $"({MaxRebootsPerModule} reboots) without making progress.";
+                            logger.LogError(capMessage);
+                            state = state with
+                            {
+                                ModuleRebootCounts = WithCount(state.ModuleRebootCounts, moduleKey, nextRebootCount),
+                                LastUpdated = DateTimeOffset.UtcNow,
+                            };
+                            await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                            await reporter.EmitAsync(
+                                new ReportingEvent.ModuleFailed(moduleName, capMessage, Exception: null)
+                                {
+                                    Origin = $"module:{moduleName}",
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                            await reporter.EmitAsync(
+                                new ReportingEvent.ProvisioningFailed(capMessage, Exception: null)
+                                {
+                                    Origin = "stage-runner",
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                            return new StageRunOutcome.Failed(capMessage, Exception: null);
+                        }
+
+                        // Write the marker BEFORE returning so a crash between
+                        // module.ApplyAsync and the reboot does not leave the
+                        // module mid-flight without record of its intent.
+                        await semaphoreStore.WriteAsync(moduleKey, frequency, data.InstanceId, OutcomeRebootRequested, cancellationToken)
                             .ConfigureAwait(false);
+                        // Reboot-pending must NOT enter CompletedHandlers —
+                        // pre-fix that's how state.json reported "all green"
+                        // when a script-3 1003 silently dropped scripts 4+.
                         state = state with
                         {
-                            CompletedHandlers = AddPerInstanceIfApplicable(state.CompletedHandlers, moduleKey, frequency),
+                            PendingHandlers = With(state.PendingHandlers, moduleKey),
+                            ModuleRebootCounts = WithCount(state.ModuleRebootCounts, moduleKey, nextRebootCount),
                             RebootCount = state.RebootCount + 1,
                             LastUpdated = DateTimeOffset.UtcNow,
                         };
@@ -319,11 +381,16 @@ public sealed class StageRunner(
         {
             if (await semaphoreStore.ExistsAsync(moduleKey, ModuleFrequency.PerInstance, state.InstanceId, cancellationToken).ConfigureAwait(false))
                 continue;
+            // Legacy CompletedHandlers entries by definition reached the
+            // Completed outcome, so the new outcome-aware gate must treat
+            // them as such. Storing a "migrated-..." outcome here would
+            // make ReadOutcomeAsync return that string and the gate would
+            // re-enter the module on every boot.
             await semaphoreStore.WriteAsync(
                 moduleKey,
                 ModuleFrequency.PerInstance,
                 state.InstanceId,
-                "migrated-from-state.json",
+                OutcomeCompleted,
                 cancellationToken).ConfigureAwait(false);
             migrated++;
         }
@@ -337,6 +404,22 @@ public sealed class StageRunner(
     private static HashSet<string> AddTo(HashSet<string> source, string value)
     {
         var next = new HashSet<string>(source, source.Comparer) { value };
+        return next;
+    }
+
+    private static HashSet<string> With(HashSet<string> source, string value) => AddTo(source, value);
+
+    private static HashSet<string> Without(HashSet<string> source, string value)
+    {
+        var next = new HashSet<string>(source, source.Comparer);
+        next.Remove(value);
+        return next;
+    }
+
+    private static Dictionary<string, int> WithCount(Dictionary<string, int> source, string key, int value)
+    {
+        var next = new Dictionary<string, int>(source, source.Comparer);
+        next[key] = value;
         return next;
     }
 

@@ -177,7 +177,10 @@ public sealed class StageRunnerTests
         result.Should().BeOfType<StageRunOutcome.RebootRequested>()
             .Which.Reason.Should().Be("needs-reboot");
         trace.Should().BeEmpty();
-        stateStore.Current!.CompletedHandlers.Should().Contain(typeof(RebootingModule).FullName!);
+        // docs/bugs/0001: a reboot-pending module must NOT appear in
+        // CompletedHandlers — that's what made the bug silent.
+        stateStore.Current!.PendingHandlers.Should().Contain(typeof(RebootingModule).FullName!);
+        stateStore.Current.CompletedHandlers.Should().NotContain(typeof(RebootingModule).FullName!);
         stateStore.Current.RebootCount.Should().Be(1);
         await reporter.Received().EmitAsync(
             Arg.Is<ReportingEvent.RebootRequested>(e => e.Reason == "needs-reboot"),

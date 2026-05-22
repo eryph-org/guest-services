@@ -11,14 +11,20 @@ namespace Eryph.GuestServices.Provisioning.Semaphores;
 /// </summary>
 internal sealed class NullSemaphoreStore : ISemaphoreStore
 {
-    private readonly ConcurrentDictionary<string, byte> _markers = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _markers = new(StringComparer.Ordinal);
 
     public Task<bool> ExistsAsync(string moduleKey, ModuleFrequency frequency, string instanceId, CancellationToken cancellationToken) =>
         Task.FromResult(_markers.ContainsKey(Key(moduleKey, frequency, instanceId)));
 
+    public Task<string?> ReadOutcomeAsync(string moduleKey, ModuleFrequency frequency, string instanceId, CancellationToken cancellationToken)
+    {
+        _markers.TryGetValue(Key(moduleKey, frequency, instanceId), out var outcome);
+        return Task.FromResult<string?>(outcome);
+    }
+
     public Task WriteAsync(string moduleKey, ModuleFrequency frequency, string instanceId, string outcome, CancellationToken cancellationToken)
     {
-        _markers[Key(moduleKey, frequency, instanceId)] = 1;
+        _markers[Key(moduleKey, frequency, instanceId)] = outcome;
         return Task.CompletedTask;
     }
 

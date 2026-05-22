@@ -96,6 +96,7 @@ internal static class ProvisioningContainerBuilder
         {
             container.Register<IStateStore, NullStateStore>(Lifestyle.Singleton);
             container.Register<ISemaphoreStore, NullSemaphoreStore>(Lifestyle.Singleton);
+            container.Register<IScriptCheckpointStore, NullScriptCheckpointStore>(Lifestyle.Singleton);
         }
         else
         {
@@ -106,6 +107,11 @@ internal static class ProvisioningContainerBuilder
             // constructor explicitly via a factory.
             container.Register<ISemaphoreStore>(
                 () => new FileSemaphoreStore(container.GetInstance<ILogger<FileSemaphoreStore>>()),
+                Lifestyle.Singleton);
+            // FileScriptCheckpointStore exposes a test-only secondary constructor;
+            // pin the DI constructor via a factory.
+            container.Register<IScriptCheckpointStore>(
+                () => new FileScriptCheckpointStore(container.GetInstance<ILogger<FileScriptCheckpointStore>>()),
                 Lifestyle.Singleton);
         }
 

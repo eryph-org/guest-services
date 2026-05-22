@@ -128,12 +128,17 @@ public sealed class EndToEndProvisioningTests : IDisposable
         var state = await stateStore.LoadAsync(CancellationToken.None);
         state.Should().NotBeNull();
         state!.InstanceId.Should().Be("instance-1");
-        state.CompletedHandlers.Should().Contain(typeof(SetHostnameModule).FullName!);
+        // docs/bugs/0001: a reboot-pending module is in PendingHandlers, not
+        // CompletedHandlers. Pre-fix it landed in CompletedHandlers which made
+        // state.json claim "all green" when work was actually unfinished.
+        state.PendingHandlers.Should().Contain(typeof(SetHostnameModule).FullName!);
+        state.CompletedHandlers.Should().NotContain(typeof(SetHostnameModule).FullName!);
 
         await windowsOs.Received(1).SetComputerNameAsync("testhost", Arg.Any<CancellationToken>());
 
-        // Second run after the (simulated) reboot — hostname module is already completed,
-        // remaining modules should run.
+        // Second run after the (simulated) reboot — the StageRunner re-enters
+        // SetHostnameModule which sees AlreadySet and returns Completed. That
+        // promotes the handler from PendingHandlers to CompletedHandlers.
         windowsOs.ClearReceivedCalls();
         windowsOs.SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(SetComputerNameResult.AlreadySet);
@@ -141,7 +146,13 @@ public sealed class EndToEndProvisioningTests : IDisposable
         var outcome2 = await runner.RunAsync(CancellationToken.None);
         outcome2.Should().BeOfType<StageRunOutcome.Success>();
 
-        await windowsOs.DidNotReceive().SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        // SetHostnameModule is re-entered on resume; the second call confirms
+        // the rename completed during reboot (AlreadySet path).
+        await windowsOs.Received(1).SetComputerNameAsync("testhost", Arg.Any<CancellationToken>());
+
+        state = await stateStore.LoadAsync(CancellationToken.None);
+        state!.PendingHandlers.Should().NotContain(typeof(SetHostnameModule).FullName!);
+        state.CompletedHandlers.Should().Contain(typeof(SetHostnameModule).FullName!);
         await windowsOs.Received().CreateLocalUserAsync(
             Arg.Is<LocalUserSpec>(s => s.Name == "admin"),
             Arg.Any<CancellationToken>());
