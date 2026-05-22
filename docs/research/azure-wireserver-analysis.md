@@ -46,9 +46,9 @@ Sources:
 
 Citation for "WinGA owns ongoing health + extensions + OSProfile cert sync": [agent-windows.md](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/agent-windows) — "The Azure VM Agent contains only extension-handling code. The Windows provisioning code is separate" and "If you manually remove these certificates ... the Azure Windows Guest Agent will add them back."
 
-## 3. CustomData decryption — exact protocol
+## 3. The wireserver certificate exchange — and what it does NOT cover
 
-Decryption is a wireserver round-trip using a **locally-generated transport cert**. There is no upload of the transport cert via a separate POST; it is sent as an HTTP header on the certificates GET.
+The fabric-side cert exchange exists for `AdminPassword` and `LinuxConfigurationSet/SSH` key material — **not** for CustomData. Documenting the exchange anyway because the protocol shape is non-obvious and our previous research note conflated this with CustomData decryption.
 
 Step by step, as implemented in cloud-init `helpers/azure.py` (mirrors waagent):
 
@@ -57,11 +57,11 @@ Step by step, as implemented in cloud-init `helpers/azure.py` (mirrors waagent):
 3. GET that URL with two extra headers — `x-ms-cipher-name: DES_EDE3_CBC` (or `AES128_CBC`) and `x-ms-guest-agent-public-x509-cert: <base64 of TransportCert.pem>` (lines ~341, ~474). The fabric encrypts the response bundle with the transport public key.
 4. Parse `<CertificateFile><Data>` from the response — base64 PKCS#7.
 5. Decrypt with the transport **private** key: `openssl cms -decrypt -inkey TransportPrivate.pem -recip TransportCert.pem | openssl pkcs12 -nodes -password pass:` (lines ~700-720).
-6. The resulting PEM bundle is indexed by thumbprint. The OSProfile-supplied cert that matches `CertificateThumbprint` in `ovf-env.xml` is then used to decrypt the `CustomData` PKCS#7 envelope.
+6. The decrypted PEM bundle is indexed by thumbprint and used to decrypt `AdminPassword` and SSH key payloads whose `<CertificateThumbprint>` references match. **CustomData is NOT in this bundle and has no `CertificateThumbprint` — it is base64-decoded and written verbatim to `C:\AzureData\CustomData.bin`.** See `helpers/azure.py:_parse_property("CustomData", decode_base64=True)` (~line 1282) and the verification note at [research/azure-customdata-encryption.md](azure-customdata-encryption.md) for the per-source confirmation across cloud-init / WALinuxAgent / cloudbase-init / MS docs.
 
-Sources: [helpers/azure.py](https://raw.githubusercontent.com/canonical/cloud-init/main/cloudinit/sources/helpers/azure.py) lines ~341/~465-476/~681-682/~700-720; [goal_state.py](https://raw.githubusercontent.com/Azure/WALinuxAgent/master/azurelinuxagent/common/protocol/goal_state.py) lines ~794-840 (cert download + AES128_CBC/DES_EDE3_CBC + `decrypt_certificates_p7m`).
+Sources: [helpers/azure.py](https://raw.githubusercontent.com/canonical/cloud-init/main/cloudinit/sources/helpers/azure.py) lines ~341/~465-476/~681-682/~700-720/~1240/~1282; [goal_state.py](https://raw.githubusercontent.com/Azure/WALinuxAgent/master/azurelinuxagent/common/protocol/goal_state.py) lines ~794-840 (cert download + AES128_CBC/DES_EDE3_CBC + `decrypt_certificates_p7m`); [ovfenv.py](https://raw.githubusercontent.com/Azure/WALinuxAgent/master/azurelinuxagent/common/protocol/ovfenv.py) (CustomData read as plain XML text, no cert lookup).
 
-**Key finding for our agent**: on Windows the PA performs this exchange during OOBE, then the decrypted OSProfile certs end up in `Cert:\LocalMachine\My` (referenced as "Windows Azure CRP Certificate Generator" certificates — see [features-windows.md](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/features-windows), "Help secure VM extension data" section). RFC 0015's plan to decrypt CustomData from those locally-resident certs **without** re-fetching from wireserver is therefore viable; the wireserver round-trip is only needed if PA never ran or if the certs have been wiped.
+**Key finding for our agent**: CustomData requires no decryption. The local-cert-store path matters only if we ever needed to read encrypted AdminPassword / SSH material, which PA already applies during OOBE — so we don't.
 
 ## 4. Ready handshake details
 
@@ -116,7 +116,7 @@ Endpoints (file-line citations to [azureservice.py](https://raw.githubuserconten
 ## 7. Side effects of NOT calling wireserver
 
 If our agent never touches wireserver:
-- **CustomData decryption**: possible **without** wireserver — PA has already imported the OSProfile certs into `Cert:\LocalMachine\My`, and the WinGA keeps them in sync (re-adds them if deleted, [agent-windows.md](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/agent-windows) "OSProfile certificates" section). RFC 0015 can decrypt CustomData purely against the local cert store.
+- **CustomData**: nothing to decrypt. PA base64-decodes the `<CustomData>` value out of ovf-env and writes the resulting bytes to `C:\AzureData\CustomData.bin`. Our agent reads those bytes directly. (For encrypted AdminPassword / SSH key material the OSProfile certs are already imported into `Cert:\LocalMachine\My` by PA and re-imported by WinGA if removed, but we never need them — PA applied those fields during OOBE.)
 - **Extensions delivery**: unaffected. Extensions are fetched and applied by the **WinGA** (`WindowsAzureGuestAgent.exe`), which is a separate, long-running service that continues to drive the goal-state loop in the background regardless of our agent ([agent-windows.md](https://learn.microsoft.com/en-us/azure/virtual-machines/extensions/agent-windows): "The Azure VM Agent contains only extension-handling code. The Windows provisioning code is separate").
 - **Fabric tearing the VM down**: would only happen if **PA fails to send the initial Ready**. PA owns that step; our agent's silence is irrelevant. We never become the timeout's responsible party — PA is.
 - **Soft features**: load-balancer health probes use a separate inbound channel from `168.63.129.16` to the VM (not initiated by us); DNS, DHCP, and KVP heartbeats are not our concern. **Telemetry** posts from WinGA continue; our agent emitting no telemetry simply means Microsoft support has less to look at — no functional impact.
@@ -152,5 +152,5 @@ The only conceivable read-only call would be `GET /?comp=versions` as a sanity p
 
 1. **HTTP method for Ready is POST, not PUT** (RFC 0014 §"Coexistence with PA" says "PUT to `/machine?comp=health`"; actual method is POST per [wire.py](https://raw.githubusercontent.com/Azure/WALinuxAgent/master/azurelinuxagent/common/protocol/wire.py) line ~821 and [helpers/azure.py](https://raw.githubusercontent.com/canonical/cloud-init/main/cloudinit/sources/helpers/azure.py) line ~821). RFC 0008 has the same error in its provisioning-success-signal column.
 2. **PA is not the only Microsoft component holding the wireserver channel.** RFC 0014 implies "PA owns the wireserver"; the more accurate model is "PA owns the **first** Ready; WinGA owns the **ongoing** wireserver traffic indefinitely". This strengthens the no-touch recommendation — the channel is never idle, it is always owned by some MS component.
-3. **CustomData decryption does NOT require wireserver** (RFC 0014 §"Deferred to RFC 0015" leaves open whether decryption needs the wireserver). It does not — PA and WinGA together keep the decryption cert resident in `Cert:\LocalMachine\My`. RFC 0015 can be designed as a pure local-cert-store operation.
+3. **CustomData is not encrypted at all.** RFC 0014 §"Deferred to RFC 0015" assumed a decryption step was needed; there is no PKCS#7 envelope to decrypt. PA base64-decodes the ovf-env `<CustomData>` value and writes the bytes verbatim. RFC 0015 (CustomData decryption) is therefore unnecessary and should be dropped. See [research/azure-customdata-encryption.md](azure-customdata-encryption.md) for the source-by-source verification.
 4. **Azure x-ms-version**: RFC 0014 does not mention this header. If we ever do touch wireserver for diagnostic purposes only, the well-known versions are `2012-11-30` (waagent) and `2015-04-05` (cbi); newer is not necessarily supported on the fabric side.

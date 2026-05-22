@@ -39,9 +39,13 @@ Three inputs, tried in this order:
 
 ### (a) `C:\AzureData\CustomData.bin`
 
-Written by PA from the ovf-env.xml `CustomData` element after PA's first-boot work. This is the canonical post-PA user-data location on Windows. For v1 we expose `UserData` as the **raw bytes of CustomData.bin** without attempting decryption — see RFC 0015. The downstream pipeline already handles arbitrary bytes (`DataSourceResult.UserData` is `byte[]`; see RFC 0001 and the gzip regression that motivated it).
+Written by PA from the ovf-env.xml `<CustomData>` element after PA's first-boot work. This is the canonical post-PA user-data location on Windows.
 
-If the bytes are encrypted (CertificateThumbprint set in ovf-env), no handler will recognise them and the user-data pipeline returns no parts. That is the correct v1 behaviour: provisioning completes from IMDS metadata + ovf-env hostname; user-data is silently dropped. RFC 0015 lifts this restriction.
+**CustomData is NOT encrypted** — neither at the API level nor in ovf-env. PA base64-decodes the ovf-env element once and writes the resulting bytes verbatim. We expose `UserData` as those bytes; the downstream pipeline handles whatever the user submitted (gzipped multipart MIME, `#cloud-config`, `#include`, etc. — `DataSourceResult.UserData` is `byte[]`). MS docs explicitly warn "do not store sensitive data in custom data" — confirmation that it's not protected at rest.
+
+Verified across cloud-init `helpers/azure.py` (`_parse_property("CustomData", decode_base64=True)`), WALinuxAgent `protocol/ovfenv.py` (`findtext(conf_set, "CustomData", …)` — no cert lookup), and cloudbase-init `azureservice.py` (`get_user_data()` reads `CUSTOM_DATA_FILENAME` with `open(rb).read()`, comment "Don't decode to retain compatibility"). See [research/azure-customdata-encryption.md](../research/azure-customdata-encryption.md) for per-source citations.
+
+The OSProfile `<CertificateThumbprint>` machinery in ovf-env wraps **AdminPassword** and **LinuxConfigurationSet/SSH** key payloads — not CustomData. Those fields are already applied by PA during OOBE; we don't re-process them.
 
 ### (b) IMDS — instance metadata service
 
@@ -119,10 +123,11 @@ The `AzureDataSource.OnCompletedAsync` hook may safely delete `C:\AzureData\Cust
 | `PlatformMetadata` | CloudName="azure", Platform="azure", Subplatform="customdata", LocalHostname=Hostname, Region=`compute.location`, AvailabilityZone=`compute.zone`, InstanceType=`compute.vmSize`. |
 | `NetworkConfig` | null (PA configured the NIC; IMDS network section is for diagnostics only in v1). |
 
-## Deferred to RFC 0015
+## Not deferred — clarifications from research
 
-- CustomData decryption. **No wireserver round-trip required**: PA imports the OSProfile decryption cert into `Cert:\LocalMachine\My` at OOBE, and WinGA re-imports it if it gets deleted (per `agent-windows.md` "OSProfile certificates"). RFC 0015 is therefore a pure local-cert-store operation: enumerate `Cert:\LocalMachine\My`, find the cert whose thumbprint matches `ovf-env.xml`'s `CertificateThumbprint`, decrypt the CustomData PKCS#7 envelope with the matching private key. No `Certificates` GET, no transport-cert generation, no goal-state pull.
-- ovf-env-supplied SSH public-key fingerprints (Linux-shape; rarely seen on Windows).
+- **CustomData decryption: not a thing.** Originally listed as deferred to RFC 0015. We later verified that CustomData is base64-only plaintext at every layer (cloud-init, WALinuxAgent, cloudbase-init, MS docs). PA already base64-decoded it before writing `CustomData.bin`. There is no envelope to decrypt; the v1 datasource as designed already produces the correct bytes. RFC 0015 is dropped.
+- **AdminPassword / SSH key decryption: explicitly out of scope.** Those fields ARE PKCS#7-encrypted in ovf-env, and PA decrypts them with the OSProfile cert during OOBE. We never re-process them.
+- ovf-env-supplied SSH public-key fingerprints (Linux-shape; rarely seen on Windows) — not implemented; PA handles SSH key material on the rare Linux Azure path before we'd see it.
 
 ## Open questions
 
