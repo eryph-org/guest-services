@@ -12,22 +12,32 @@ This is the dimension that matters most. Clouds split into three groups:
 
 | Platform | Native agent | Platform requires the handshake? | Provisioning success signal |
 |---|---|---|---|
-| **Azure** | Microsoft Provisioning Agent (PA) + Azure VM Guest Agent | **YES — hard requirement** | PUT to wireserver `/machine?comp=health` with `Ready`. Timeout → VM marked failed by the fabric. |
+| **Azure** | Microsoft Provisioning Agent (PA) + Windows Guest Agent (WinGA, `WindowsAzureGuestAgent.exe`) | **YES — hard requirement** | POST to wireserver `/machine?comp=health` with `Ready`. PA sends the first Ready during OOBE then exits; WinGA owns the ongoing heartbeat indefinitely. Fabric tears the VM down if the first Ready is missing. |
 | **AWS** | EC2Launch v2 (or EC2Config legacy) | **NO — entirely optional** | Hypervisor + network reachability checks only. AWS doesn't care if anything inside the guest talks back. |
 | **GCP** | GCP Guest Agent | **SOFT** — agent is strongly expected (SSH keys, hostname, accounts flow through it), but no hard fabric-level boot handshake | Health checks similar to AWS; agent absence is tolerated but breaks several console features. |
 | **OpenStack / Hyper-V (eryph)** | None | n/a | We are the agent. |
 
 ## What each platform agent does (and what we lose if we replace it)
 
-### Azure — Microsoft Provisioning Agent (PA)
-**Required, must coexist.** PA runs during oobeSystem. It:
+### Azure — Microsoft Provisioning Agent (PA) + Windows Guest Agent (WinGA)
+**Required, must coexist.** Microsoft splits provisioning across two components:
+
+**PA** runs during oobeSystem. It:
 - Reads `ovf-env.xml` from the Azure ConfigDrive.
 - Applies: ComputerName, admin user + password, RDP enable.
 - Writes user-data to `C:\AzureData\CustomData.bin`, ejects the ConfigDrive.
+- Imports the OSProfile decryption cert into `Cert:\LocalMachine\My`.
 - Re-enables follow-on agents (cloudbase-init / our agent) via `SetupComplete2.cmd`.
-- **Critically:** signals the wireserver that the VM is provisioned. If this doesn't happen within the timeout, the Azure fabric controller tears the VM down or flags it as failed.
+- **Critically:** POSTs the **first** `Ready` to the wireserver `/machine?comp=health`. If this doesn't happen within the timeout, the Azure fabric controller tears the VM down or flags it as failed.
+- Exits when done — PA is not a long-running service.
 
-**Conclusion: we MUST coexist with Azure PA. We never replace it.**
+**WinGA** (`WindowsAzureGuestAgent.exe`) is the long-running Windows service. After PA exits it:
+- Polls goal-state and POSTs ongoing health heartbeats (the channel is **never idle**).
+- Installs and updates VM agent extensions.
+- Keeps OSProfile certs synced in `Cert:\LocalMachine\My` (re-imports them if deleted).
+- Posts telemetry as `WALinuxAgent`/`WindowsAzureGuestAgent`.
+
+**Conclusion: we MUST coexist with both. We never POST to `/machine?comp=health`, never call any wireserver endpoint, never emit telemetry as a Microsoft agent.** See [RFC 0014](0014-azure-datasource.md) and [research/azure-wireserver-analysis.md](../research/azure-wireserver-analysis.md) for the per-endpoint inventory.
 
 ### AWS — EC2Launch v2
 **Optional, can replace.** EC2Launch v2 is convenience tooling, not a fabric requirement. If we ship an AMI with no AWS agent at all and only our agent, EC2 will report the instance healthy as soon as the system + network status checks pass. There's no equivalent to Azure's wireserver handshake.
@@ -62,7 +72,7 @@ GCP can boot a VM without it, but the experience degrades sharply. If eryph targ
 
 | Platform | Coexistence stance | Datasource omits | Datasource provides |
 |---|---|---|---|
-| Azure | **Coexist with PA (mandatory)** | hostname, admin user/password (PA already did them); also push wireserver reporting via RFC 0006 | user-data from `CustomData.bin`, stable instance-id from `HKLM\SOFTWARE\Microsoft\Windows Azure\VmId` |
+| Azure | **Coexist with PA + WinGA (mandatory)** | hostname, admin user/password (PA already did them); ALL wireserver endpoints (PA + WinGA own them indefinitely); telemetry as a Microsoft agent | user-data from `CustomData.bin`, stable instance-id from `HKLM\SOFTWARE\Microsoft\Windows Azure\VmId` |
 | AWS | **Replace EC2Launch v2 by default** (opt-in to coexist for "Get Password") | (default) nothing — we handle everything | user-data from IMDS, instance-id from IMDS, network-config from IMDS |
 | GCP | **Coexist with Guest Agent** | hostname, users, SSH keys | user-data from metadata service, instance-id from metadata, network-config from metadata |
 | OpenStack | Replace | nothing | full payload from ConfigDrive |

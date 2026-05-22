@@ -20,7 +20,7 @@ Cloudbase-init's `AzureService` (and cloud-init's `DataSourceAzure`):
 - Read the Azure ConfigDrive (`ovf-env.xml`) on first boot — extracts `ProvisioningSection/LinuxProvisioningConfigurationSet` or `WindowsProvisioningConfigurationSet` (HostName, AdminPassword, CustomData, SSHKeys, DisableSshPasswordAuthentication).
 - Query IMDS at `http://169.254.169.254/metadata/instance?api-version=2021-02-01` with the mandatory `Metadata: true` header for ongoing instance metadata (vmId, location, subscriptionId, vm size, network).
 - On Windows, post-PA the ConfigDrive is usually ejected; user-data is persisted to `C:\AzureData\CustomData.bin` (base64-decoded if the ovf-env CustomData element was base64-encoded).
-- PUT to the wireserver `/machine?comp=health` Ready endpoint to signal provisioning success. **PA owns this on Windows — cloudbase-init does NOT signal Ready when PA is present.**
+- **POST** to the wireserver `/machine?comp=health` Ready endpoint to signal provisioning success. **On Windows the channel is owned by Microsoft components throughout the VM's lifetime — see "Coexistence" below — cloudbase-init does NOT signal Ready when PA is present.**
 
 ## Detection (v1)
 
@@ -87,15 +87,22 @@ So the v1 read path is almost always (a) + (b). (c) is a fallback for edge cases
 
 Azure = 10 in `DataSourceLocator`. Already documented in `ProvisioningContainerBuilder` and unchanged. NoCloud (30), ConfigDrive (40), Hyper-V KVP (50) defensively decline when `PlatformProbes.IsRunningOnAzure()` is true.
 
-## Coexistence with PA (HARD CONSTRAINT)
+## Coexistence with PA + WinGA (HARD CONSTRAINT)
 
-Cross-reference: [RFC 0008](0008-platform-native-provisioner-coexistence.md).
+Cross-reference: [RFC 0008](0008-platform-native-provisioner-coexistence.md) and [research/azure-wireserver-analysis.md](../research/azure-wireserver-analysis.md).
 
-**We MUST NOT signal Ready to the Azure wireserver.** PA owns the `/machine?comp=health` PUT; a second Ready signal from us has historically caused the fabric to treat the VM as in a transitional state. Our role is strictly:
+On a Microsoft-Windows Azure image, **two** Microsoft components own the wireserver channel — at no point is it idle:
 
-- Read CustomData.bin (do not delete it; PA may inspect its own state).
+- **PA** runs during `oobeSystem`, applies ovf-env, sends the **first** `<State>Ready</State>` POST, then exits. Not a long-running service.
+- **WinGA** (`WindowsAzureGuestAgent.exe`) is the long-running Windows service. It owns the **ongoing** goal-state polling loop, heartbeat health POSTs, extension installation, OSProfile cert sync, and telemetry — indefinitely after PA exits.
+
+**We MUST NOT POST to `/machine?comp=health` at all.** PA owns the first Ready; WinGA owns every Ready after that. A second writer from us risks fabric confusion regardless of which MS component is "current". Our role is strictly:
+
+- Read CustomData.bin (do not delete it; PA / WinGA may inspect their own state).
 - Query IMDS for live instance metadata.
-- Skip hostname / admin user / RDP / wireserver — all owned by PA.
+- Skip hostname / admin user / RDP / wireserver / telemetry / extensions — all owned by PA + WinGA.
+
+The default v1 stance is **skip the wireserver entirely**. We do not even probe `?comp=versions` — IMDS plus registry / chassis-tag detection is sufficient to identify Azure. See the research note for the full per-endpoint inventory and rationale.
 
 The `AzureDataSource.OnCompletedAsync` hook may safely delete `C:\AzureData\CustomData.bin` after our pipeline has consumed it (mirrors cbi's `AzureCustomDataService.provisioning_completed()`). Deferring this is fine for v1; tracked as a TODO in the implementation.
 
@@ -114,12 +121,15 @@ The `AzureDataSource.OnCompletedAsync` hook may safely delete `C:\AzureData\Cust
 
 ## Deferred to RFC 0015
 
-- CustomData decryption (CertificateThumbprint → PKCS#7 envelope decryption against the matching cert in `Cert:\LocalMachine\My`).
+- CustomData decryption. **No wireserver round-trip required**: PA imports the OSProfile decryption cert into `Cert:\LocalMachine\My` at OOBE, and WinGA re-imports it if it gets deleted (per `agent-windows.md` "OSProfile certificates"). RFC 0015 is therefore a pure local-cert-store operation: enumerate `Cert:\LocalMachine\My`, find the cert whose thumbprint matches `ovf-env.xml`'s `CertificateThumbprint`, decrypt the CustomData PKCS#7 envelope with the matching private key. No `Certificates` GET, no transport-cert generation, no goal-state pull.
 - ovf-env-supplied SSH public-key fingerprints (Linux-shape; rarely seen on Windows).
-- Wireserver Goal State parsing.
 
 ## Open questions
 
 - **`api-version`** — 2021-02-01 is widely supported and ships the `compute.userData` element. The v1 implementation does NOT read IMDS `userData` (it is a Linux-flavoured alternative to ovf-env CustomData that PA does not populate on Windows). If we ever want to support managed-identity-based scenarios, bump to 2021-12-13.
 - **Chassis asset tag read on Linux** — out of scope, this agent is Windows-only.
 - **CustomData.bin retention** — RFC 0005 says cleanup goes through `OnCompletedAsync`. PA does not appear to re-read CustomData.bin after first boot, but confirm before enabling the delete.
+
+## References
+
+- [research/azure-wireserver-analysis.md](../research/azure-wireserver-analysis.md) — per-endpoint inventory, citation-backed dissection of cloud-init / cloudbase-init / WALinuxAgent / MS docs.
