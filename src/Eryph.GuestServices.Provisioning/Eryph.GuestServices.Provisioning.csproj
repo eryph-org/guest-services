@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Eryph.GuestServices.Provisioning</RootNamespace>
+    <!-- Library is consumed by egs-service which exposes its own version constants.
+         Generating GitVersionInformation here collides via InternalsVisibleTo. -->
+    <GenerateGitVersionInformation>false</GenerateGitVersionInformation>
   </PropertyGroup>
 
   <ItemGroup>

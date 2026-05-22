@@ -96,4 +96,30 @@ public sealed class MultipartMimeHandlerTests
         ctx.NestedParts.Should().ContainSingle()
             .Which.ContentType.Should().Be("text/x-cloud-config");
     }
+
+    // cbi-compat: cloudbase-init encodes the filename in the Content-Type
+    // `name=` parameter (in addition to / instead of Content-Disposition).
+    // Our parser extracts it from Content-Type when Content-Disposition is absent.
+    [Fact]
+    public async Task ProcessAsync_ExtractsFilenameFromContentTypeName()
+    {
+        const string raw =
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n" +
+            "\r\n" +
+            "--B\r\n" +
+            "Content-Type: text/x-shellscript; charset=us-ascii; name=\"setup.ps1\"\r\n" +
+            "\r\n" +
+            "Write-Host cbi-compat\n" +
+            "\r\n" +
+            "--B--\r\n";
+
+        var handler = new MultipartMimeHandler(NullLogger<MultipartMimeHandler>.Instance);
+        var ctx = new TestResolutionContext();
+        var part = new UserDataPart("multipart/mixed", Encoding.UTF8.GetBytes(raw), null);
+
+        await handler.ProcessAsync(part, ctx, CancellationToken.None);
+
+        ctx.NestedParts.Should().ContainSingle()
+            .Which.Filename.Should().Be("setup.ps1");
+    }
 }

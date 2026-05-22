@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Security.AccessControl;
 
 namespace Eryph.GuestServices.Provisioning.Windows;
@@ -21,6 +22,7 @@ namespace Eryph.GuestServices.Provisioning.Windows;
 /// caller — this class only computes the new ACEs to ADD for the owner,
 /// primary group, and "Everyone".
 /// </remarks>
+[SupportedOSPlatform("windows")]
 public static class PosixPermissions
 {
     /// <summary>Translates a POSIX triplet digit (0–7) to the NTFS rights equivalent.</summary>

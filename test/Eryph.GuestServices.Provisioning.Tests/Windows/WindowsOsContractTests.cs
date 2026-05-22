@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -8,6 +9,7 @@ namespace Eryph.GuestServices.Provisioning.Tests.Windows;
 /// Tests for the pure (non-IO) parts of <see cref="WindowsOs"/>. The remaining
 /// methods mutate the host and are tagged <c>Category=Manual</c> below.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public sealed class WindowsOsContractTests
 {
     private static WindowsOs CreateOs() => new(NullLogger<WindowsOs>.Instance);
@@ -79,36 +81,17 @@ public sealed class WindowsOsContractTests
         act.Should().Throw<ArgumentException>();
     }
 
-    // The following tests genuinely mutate the host and need a live Windows
-    // instance with admin privileges. We keep them around as a manual smoke
-    // suite — they are not run by default.
-
     [Fact]
-    [Trait("Category", "Manual")]
+    [Trait("Category", "Integration")]
     public async Task GetComputerNameAsync_returns_environment_machine_name()
     {
         var name = await CreateOs().GetComputerNameAsync(CancellationToken.None);
         name.Should().Be(Environment.MachineName);
     }
 
-    [Fact(Skip = "Mutates the host; run manually.")]
-    [Trait("Category", "Manual")]
-    public async Task SetComputerNameAsync_returns_AlreadySet_for_current_name()
-    {
-        var os = CreateOs();
-        var current = await os.GetComputerNameAsync(CancellationToken.None);
-        var result = await os.SetComputerNameAsync(current, CancellationToken.None);
-        result.Should().Be(SetComputerNameResult.AlreadySet);
-    }
-
-    [Fact(Skip = "Spawns a real process; manual.")]
-    [Trait("Category", "Manual")]
-    public async Task RunShellCommandAsync_executes_via_cmd()
-    {
-        var result = await CreateOs().RunShellCommandAsync("echo hello", CancellationToken.None);
-        result.ExitCode.Should().Be(0);
-        result.StdOut.Trim().Should().Be("hello");
-    }
+    // SetComputerNameAsync's AlreadySet branch is exercised in the eryph-genes
+    // base-catlet Pester suite (Validate-BaseOS.Tests.ps1) by observing the
+    // SetHostname module's idempotent re-run in the egs-service event log.
 
     // Regression: cmd.exe /c "<complex-string-with-pipe>" has notoriously broken
     // quoting rules and mangled the runcmd payloads from real cloud-config

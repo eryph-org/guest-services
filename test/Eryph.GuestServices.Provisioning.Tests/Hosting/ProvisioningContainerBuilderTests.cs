@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.Versioning;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Semaphores;
@@ -22,6 +24,8 @@ namespace Eryph.GuestServices.Provisioning.Tests.Hosting;
 /// integration — the unit suite happily passed while the integrated
 /// egs-service binary crashed at boot with .NET event Id 1026.
 /// </summary>
+[SupportedOSPlatform("windows")]
+[RequiresUnreferencedCode("Tests ProvisioningContainerBuilder which uses Assembly.GetTypes().")]
 public sealed class ProvisioningContainerBuilderTests
 {
     [Fact]

@@ -57,9 +57,6 @@ internal static class Program
                 return ex.HResult == 0 ? 1 : ex.HResult;
             });
 
-            config.AddCommand<RunCommand>("run")
-                .WithDescription("Run the provisioning agent once (synchronous one-shot).");
-
             config.AddCommand<StatusCommand>("status")
                 .WithDescription("Print the current provisioning state.");
 
@@ -69,11 +66,14 @@ internal static class Program
             config.AddCommand<CollectLogsCommand>("collect-logs")
                 .WithDescription("Bundle state, logs and scripts into a zip archive.");
 
-            config.AddCommand<ValidateCommand>("validate")
-                .WithDescription("Validate a cloud-config user-data file without applying it.");
-
             config.AddCommand<VersionCommand>("version")
                 .WithDescription("Print the agent version.");
+
+            // run and validate use Windows-only APIs (WindowsOs, KVP, etc.).
+            // Only register them when running on Windows; on Linux the service
+            // starts without provisioning support.
+            if (OperatingSystem.IsWindows())
+                AddWindowsProvisioningCommands(config);
         });
 
         return await app.RunAsync(args).ConfigureAwait(false);
@@ -121,7 +121,7 @@ internal static class Program
         {
             provisioningContainer = new Container();
             provisioningContainer.Options.ResolveUnregisteredConcreteTypes = true;
-            ProvisioningContainerBuilder.RegisterInto(provisioningContainer);
+            RegisterProvisioningInto(provisioningContainer);
 
             builder.Services.AddSimpleInjector(provisioningContainer, options =>
             {
@@ -157,5 +157,18 @@ internal static class Program
 
             provisioningContainer?.Dispose();
         }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void RegisterProvisioningInto(Container container) =>
+        ProvisioningContainerBuilder.RegisterInto(container);
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static void AddWindowsProvisioningCommands(IConfigurator config)
+    {
+        config.AddCommand<RunCommand>("run")
+            .WithDescription("Run the provisioning agent once (synchronous one-shot).");
+        config.AddCommand<ValidateCommand>("validate")
+            .WithDescription("Validate a cloud-config user-data file without applying it.");
     }
 }

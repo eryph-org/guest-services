@@ -1,8 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.Versioning;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Cli;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Cli;
 
+[SupportedOSPlatform("windows")]
+[RequiresUnreferencedCode("Tests ValidateCommand which uses ProvisioningContainerBuilder.")]
 public sealed class ValidateCommandTests : IDisposable
 {
     private readonly string _tempDir;

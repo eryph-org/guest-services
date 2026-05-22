@@ -1,9 +1,11 @@
+using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Windows;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Windows;
 
+[SupportedOSPlatform("windows")]
 public sealed class PosixPermissionsTests
 {
     [Theory]

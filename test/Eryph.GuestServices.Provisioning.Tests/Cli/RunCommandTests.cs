@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.Versioning;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Cli;
 using Eryph.GuestServices.Provisioning.Stages;
@@ -10,6 +12,8 @@ namespace Eryph.GuestServices.Provisioning.Tests.Cli;
 /// be tested without spinning up the host: option-to-value parsing and the
 /// stage name parser.
 /// </summary>
+[SupportedOSPlatform("windows")]
+[RequiresUnreferencedCode("Tests RunCommand which uses ProvisioningContainerBuilder.")]
 public sealed class RunCommandTests
 {
     [Theory]

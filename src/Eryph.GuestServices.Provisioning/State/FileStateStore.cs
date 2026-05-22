@@ -1,15 +1,11 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.State;
 
 public sealed class FileStateStore(ILogger<FileStateStore> logger) : IStateStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
 
     private readonly string _stateDirectory = DefaultStateDirectory();
     private readonly string _statePath = Path.Combine(DefaultStateDirectory(), "state.json");
@@ -30,7 +26,7 @@ public sealed class FileStateStore(ILogger<FileStateStore> logger) : IStateStore
         try
         {
             await using var stream = File.Open(_statePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            return await JsonSerializer.DeserializeAsync<ProvisioningState>(stream, JsonOptions, cancellationToken)
+            return await JsonSerializer.DeserializeAsync(stream, StateStoreJsonContext.Default.ProvisioningState, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (JsonException ex)
@@ -47,7 +43,7 @@ public sealed class FileStateStore(ILogger<FileStateStore> logger) : IStateStore
 
         await using (var stream = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
         {
-            await JsonSerializer.SerializeAsync(stream, state, JsonOptions, cancellationToken).ConfigureAwait(false);
+            await JsonSerializer.SerializeAsync(stream, state, StateStoreJsonContext.Default.ProvisioningState, cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -67,3 +63,9 @@ public sealed class FileStateStore(ILogger<FileStateStore> logger) : IStateStore
         return Path.Combine(programData, "eryph", "provisioning");
     }
 }
+
+[JsonSerializable(typeof(ProvisioningState))]
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+internal sealed partial class StateStoreJsonContext : JsonSerializerContext;

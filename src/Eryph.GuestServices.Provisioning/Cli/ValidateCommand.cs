@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.Versioning;
 using Eryph.GuestServices.CloudConfig.Validation;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.UserData;
@@ -16,6 +17,7 @@ namespace Eryph.GuestServices.Provisioning.Cli;
 /// workflows: exit code 0 means the file is loadable and semantically valid,
 /// 1 means validation failed, 2 means it couldn't even be parsed.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public sealed class ValidateCommand : AsyncCommand<ValidateCommand.Settings>
 {
     public sealed class Settings : CommandSettings

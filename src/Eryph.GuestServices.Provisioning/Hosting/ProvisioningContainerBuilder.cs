@@ -1,4 +1,4 @@
-using System.Reflection;
+using System.Runtime.Versioning;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.DataSources;
@@ -24,6 +24,7 @@ namespace Eryph.GuestServices.Provisioning.Hosting;
 /// container per command so dry-run can swap out the OS implementation without
 /// touching the rest of the graph.
 /// </summary>
+[SupportedOSPlatform("windows")]
 internal static class ProvisioningContainerBuilder
 {
     public static Container Build(ProvisioningContainerOptions? options = null)
@@ -124,9 +125,8 @@ internal static class ProvisioningContainerBuilder
         // Stage runner.
         container.Register<IStageRunner, StageRunner>(Lifestyle.Singleton);
 
-        // Module discovery.
-        var moduleTypes = ModuleDiscovery.DiscoverModules(Assembly.GetExecutingAssembly());
-        container.Collection.Register(typeof(IModule), moduleTypes, Lifestyle.Singleton);
+        // Module registration — explicit list; trim-safe (no Assembly.GetTypes()).
+        container.Collection.Register(typeof(IModule), ModuleRegistry.ModuleTypes, Lifestyle.Singleton);
 
         // Windows OS abstraction. In dry-run mode we wrap the real WindowsOs
         // in a DryRunWindowsOs decorator so reads pass through to the real

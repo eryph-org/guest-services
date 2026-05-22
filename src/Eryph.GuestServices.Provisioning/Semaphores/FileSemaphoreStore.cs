@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Microsoft.Extensions.Logging;
 
@@ -16,12 +17,6 @@ namespace Eryph.GuestServices.Provisioning.Semaphores;
 /// </summary>
 public sealed class FileSemaphoreStore : ISemaphoreStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = false,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly ILogger<FileSemaphoreStore> _logger;
     private readonly string _root;
 
@@ -63,7 +58,7 @@ public sealed class FileSemaphoreStore : ISemaphoreStore
             instanceId,
             outcome);
 
-        var json = JsonSerializer.Serialize(payload, JsonOptions);
+        var json = JsonSerializer.Serialize(payload, SemaphoreStoreJsonContext.Default.SemaphoreRecord);
 
         // Atomic write: temp file + move. File-existence semantics are what
         // gate execution, so an interrupted write that leaves only the temp
@@ -191,8 +186,14 @@ public sealed class FileSemaphoreStore : ISemaphoreStore
 
     // Stored as a JSON object so existing files round-trip cleanly even as
     // we extend the marker shape.
-    private sealed record SemaphoreRecord(
+    internal sealed record SemaphoreRecord(
         DateTimeOffset Timestamp,
         string InstanceId,
         string Outcome);
 }
+
+[JsonSerializable(typeof(FileSemaphoreStore.SemaphoreRecord))]
+[JsonSourceGenerationOptions(
+    WriteIndented = false,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+internal sealed partial class SemaphoreStoreJsonContext : JsonSerializerContext;

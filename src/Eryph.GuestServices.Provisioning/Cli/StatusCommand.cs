@@ -86,11 +86,7 @@ public sealed class StatusCommand : AsyncCommand<StatusCommand.Settings>
         if (json)
         {
             var payload = state ?? new ProvisioningState();
-            AnsiConsole.WriteLine(JsonSerializer.Serialize(payload, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            }));
+            AnsiConsole.WriteLine(JsonSerializer.Serialize(payload, StateStoreJsonContext.Default.ProvisioningState));
             return;
         }
 

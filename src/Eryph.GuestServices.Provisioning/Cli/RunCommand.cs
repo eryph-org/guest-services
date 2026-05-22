@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Reporting;
@@ -21,6 +22,7 @@ namespace Eryph.GuestServices.Provisioning.Cli;
 /// and returns. Supports <c>--dry-run</c>, <c>--stage</c>, <c>--user-data</c>
 /// and <c>--instance-id</c> for operator workflows.
 /// </summary>
+[SupportedOSPlatform("windows")]
 public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
 {
     public sealed class Settings : CommandSettings

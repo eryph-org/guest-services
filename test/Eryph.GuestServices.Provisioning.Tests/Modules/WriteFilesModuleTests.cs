@@ -318,4 +318,35 @@ public sealed class WriteFilesModuleTests
         await os.DidNotReceive().WriteFileAsync(
             Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
+
+    // Regression: base64-encoded content must round-trip via byte[], never via
+    // string. Any bytes > 0x7F (Latin-1 characters, binary data) must survive
+    // intact; a string round-trip would mangle them via UTF-8 substitution.
+    [Fact]
+    public async Task Base64_preserves_non_utf8_bytes()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/etc/bin").Returns(@"C:\etc\bin");
+
+        // Bytes > 0x7F that are NOT valid UTF-8 sequences.
+        var binary = new byte[] { 0x80, 0xFF, 0xFE, 0x00, 0xC0, 0x90 };
+        var b64 = Convert.ToBase64String(binary);
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles = [new WriteFileConfig { Path = "/etc/bin", Content = b64, Encoding = "base64" }],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().WriteFileAsync(
+            @"C:\etc\bin",
+            Arg.Is<byte[]>(b => b.SequenceEqual(binary)),
+            false,
+            Arg.Any<CancellationToken>());
+    }
 }

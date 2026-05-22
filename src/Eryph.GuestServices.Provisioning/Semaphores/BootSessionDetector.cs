@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Semaphores;
@@ -12,12 +13,6 @@ namespace Eryph.GuestServices.Provisioning.Semaphores;
 /// </summary>
 public sealed class BootSessionDetector : IBootSessionDetector
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = false,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
     private readonly IBootClock _clock;
     private readonly ILogger<BootSessionDetector> _logger;
     private readonly string _markerPath;
@@ -57,7 +52,7 @@ public sealed class BootSessionDetector : IBootSessionDetector
             try
             {
                 var json = await File.ReadAllTextAsync(_markerPath, cancellationToken).ConfigureAwait(false);
-                var record = JsonSerializer.Deserialize<BootMarker>(json, JsonOptions);
+                var record = JsonSerializer.Deserialize(json, BootSessionDetectorJsonContext.Default.BootMarker);
                 previous = record?.BootId;
             }
             catch (Exception ex)
@@ -73,7 +68,7 @@ public sealed class BootSessionDetector : IBootSessionDetector
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(_markerPath)!);
-        var payload = JsonSerializer.Serialize(new BootMarker(current, DateTimeOffset.UtcNow), JsonOptions);
+        var payload = JsonSerializer.Serialize(new BootMarker(current, DateTimeOffset.UtcNow), BootSessionDetectorJsonContext.Default.BootMarker);
         var tempPath = _markerPath + ".tmp";
         await File.WriteAllTextAsync(tempPath, payload, cancellationToken).ConfigureAwait(false);
         File.Move(tempPath, _markerPath, overwrite: true);
@@ -90,5 +85,11 @@ public sealed class BootSessionDetector : IBootSessionDetector
         return Path.Combine(programData, "eryph", "provisioning", "last-seen-boot.json");
     }
 
-    private sealed record BootMarker(string BootId, DateTimeOffset DetectedAt);
+    internal sealed record BootMarker(string BootId, DateTimeOffset DetectedAt);
 }
+
+[JsonSerializable(typeof(BootSessionDetector.BootMarker))]
+[JsonSourceGenerationOptions(
+    WriteIndented = false,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+internal sealed partial class BootSessionDetectorJsonContext : JsonSerializerContext;
