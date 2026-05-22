@@ -15,7 +15,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | # | Title | Status |
 |---|---|---|
 | [0001](0001-vendor-data-merge-policy.md) | Vendor-data merge policy | Draft |
-| [0002](0002-network-config-v1-v2-application.md) | Network-config v1/v2 application on Windows | Draft |
+| [0002](0002-network-config-v1-v2-application.md) | Network-config v1/v2 application on Windows | Implemented |
 | [0003](0003-module-frequencies.md) | Module frequencies (per-instance / per-boot / per-once) | Draft |
 | [0004](0004-datasource-readiness-timeout.md) | Datasource readiness — probe timeout, retry backoff | Draft |
 | [0005](0005-datasource-cleanup-hook.md) | Datasource cleanup hook timing | Draft |
@@ -27,6 +27,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0011](0011-jinja2-templating.md) | Jinja2 templating in user-data | Draft |
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |
 | [0013](0013-boothook-execution.md) | Boothook execution | Draft |
+| [0014](0014-azure-datasource.md) | Azure datasource (probe + CustomData.bin + IMDS + ovf-env) | Draft |
 
 ## Authoring
 

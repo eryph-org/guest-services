@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using Microsoft.Management.Infrastructure;
 using Microsoft.Win32;
 
 namespace Eryph.GuestServices.Provisioning.DataSources;
@@ -13,7 +14,13 @@ namespace Eryph.GuestServices.Provisioning.DataSources;
 /// </summary>
 internal static class PlatformProbes
 {
-    public static bool IsRunningOnAzure() => ReadAzureVmId() is not null;
+    // Well-known SMBIOS chassis asset tag burned into every Azure VM. Mirrors
+    // cloudbase-init's _check_for_asset_tag() (same constant, same intent).
+    internal const string AzureChassisAssetTag = "7783-7084-3265-9085-8269-3286-77";
+
+    public static bool IsRunningOnAzure() =>
+        ReadAzureVmId() is not null
+        || string.Equals(ReadChassisAssetTag(), AzureChassisAssetTag, StringComparison.Ordinal);
 
     private static string? ReadAzureVmId()
     {
@@ -34,5 +41,36 @@ internal static class PlatformProbes
     {
         using var key = Registry.LocalMachine.OpenSubKey(AzureDataSource.AzureVmIdKey);
         return key?.GetValue(AzureDataSource.AzureVmIdValue) as string;
+    }
+
+    private static string? ReadChassisAssetTag()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        try
+        {
+            return ReadChassisAssetTagCore();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? ReadChassisAssetTagCore()
+    {
+        using var session = CimSession.Create(null);
+        foreach (var instance in session.EnumerateInstances(@"root\cimv2", "Win32_SystemEnclosure"))
+        {
+            using (instance)
+            {
+                var value = instance.CimInstanceProperties["SMBIOSAssetTag"]?.Value;
+                if (value is string s && !string.IsNullOrWhiteSpace(s))
+                    return s.Trim();
+            }
+        }
+
+        return null;
     }
 }

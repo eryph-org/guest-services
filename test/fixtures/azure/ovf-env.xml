@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Environment xmlns="http://schemas.dmtf.org/ovf/environment/1"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:oe="http://schemas.dmtf.org/ovf/environment/1"
+             xmlns:wa="http://schemas.microsoft.com/windowsazure"
+             xmlns:ns1="http://schemas.microsoft.com/windowsazure">
+  <wa:ProvisioningSection>
+    <wa:Version>1.0.0.0</wa:Version>
+    <wa:WindowsProvisioningConfigurationSet>
+      <wa:ConfigurationSetType>WindowsProvisioningConfiguration</wa:ConfigurationSetType>
+      <wa:ComputerName>azure-test-host</wa:ComputerName>
+      <wa:AdminPassword>REDACTED</wa:AdminPassword>
+      <wa:AdminUsername>azureuser</wa:AdminUsername>
+      <wa:EnableAutomaticUpdates>true</wa:EnableAutomaticUpdates>
+      <wa:TimeZone>UTC</wa:TimeZone>
+      <wa:CustomData>I2Nsb3VkLWNvbmZpZwpob3N0bmFtZTogYXp1cmUtdGVzdC1ob3N0Cg==</wa:CustomData>
+    </wa:WindowsProvisioningConfigurationSet>
+  </wa:ProvisioningSection>
+  <wa:PlatformSettingsSection>
+    <wa:Version>1.0.0.0</wa:Version>
+    <wa:PlatformSettings>
+      <wa:KmsServerHostname>kms.core.windows.net</wa:KmsServerHostname>
+      <wa:ProvisionGuestAgent>true</wa:ProvisionGuestAgent>
+      <wa:GuestAgentPackageName i:nil="true" xmlns:i="http://www.w3.org/2001/XMLSchema-instance" />
+    </wa:PlatformSettings>
+  </wa:PlatformSettingsSection>
+</Environment>

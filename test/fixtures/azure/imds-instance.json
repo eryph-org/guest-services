@@ -1,0 +1,92 @@
+{
+  "compute": {
+    "azEnvironment": "AzurePublicCloud",
+    "customData": "",
+    "evictionPolicy": "",
+    "isHostCompatibilityLayerVm": "false",
+    "licenseType": "",
+    "location": "westeurope",
+    "name": "azure-test-host",
+    "offer": "WindowsServer",
+    "osProfile": {
+      "adminUsername": "azureuser",
+      "computerName": "azure-test-host",
+      "disablePasswordAuthentication": ""
+    },
+    "osType": "Windows",
+    "placementGroupId": "",
+    "plan": {
+      "name": "",
+      "product": "",
+      "publisher": ""
+    },
+    "platformFaultDomain": "0",
+    "platformUpdateDomain": "0",
+    "priority": "",
+    "provider": "Microsoft.Compute",
+    "publicKeys": [],
+    "publisher": "MicrosoftWindowsServer",
+    "resourceGroupName": "test-rg",
+    "resourceId": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/test-rg/providers/Microsoft.Compute/virtualMachines/azure-test-host",
+    "securityProfile": {
+      "secureBootEnabled": "true",
+      "virtualTpmEnabled": "true"
+    },
+    "sku": "2022-datacenter-azure-edition",
+    "storageProfile": {
+      "imageReference": {
+        "id": "",
+        "offer": "WindowsServer",
+        "publisher": "MicrosoftWindowsServer",
+        "sku": "2022-datacenter-azure-edition",
+        "version": "latest"
+      },
+      "osDisk": {
+        "caching": "ReadWrite",
+        "createOption": "FromImage",
+        "diffDiskSettings": { "option": "" },
+        "diskSizeGB": "127",
+        "encryptionSettings": { "enabled": "false" },
+        "image": { "uri": "" },
+        "managedDisk": { "id": "", "storageAccountType": "Premium_LRS" },
+        "name": "azure-test-host_OsDisk",
+        "osType": "Windows",
+        "vhd": { "uri": "" },
+        "writeAcceleratorEnabled": "false"
+      },
+      "dataDisks": [],
+      "resourceDisk": { "size": "32768" }
+    },
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "tags": "",
+    "tagsList": [],
+    "userData": "",
+    "version": "20348.2031.231006",
+    "vmId": "11111111-2222-3333-4444-555555555555",
+    "vmScaleSetName": "",
+    "vmSize": "Standard_D2s_v3",
+    "zone": "1"
+  },
+  "network": {
+    "interface": [
+      {
+        "ipv4": {
+          "ipAddress": [
+            {
+              "privateIpAddress": "10.0.0.4",
+              "publicIpAddress": "20.0.0.4"
+            }
+          ],
+          "subnet": [
+            {
+              "address": "10.0.0.0",
+              "prefix": "24"
+            }
+          ]
+        },
+        "ipv6": { "ipAddress": [] },
+        "macAddress": "000D3AAAAAAA"
+      }
+    ]
+  }
+}

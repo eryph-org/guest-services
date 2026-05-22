@@ -34,4 +34,18 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real-world fixtures captured from upstream (Azure-documented format).
+         Copied to bin/.../fixtures/azure/ at build so tests can load them via
+         relative paths under AppContext.BaseDirectory. -->
+    <None Include="..\fixtures\azure\*.*" Link="fixtures\azure\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Network-config fixtures (cloud-init v1/v2 captures + synthetic). The
+         eryph-v1-dhcp.yaml sample mirrors what eryph-zero emits today. -->
+    <None Include="..\fixtures\network-config\*.*" Link="fixtures\network-config\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
