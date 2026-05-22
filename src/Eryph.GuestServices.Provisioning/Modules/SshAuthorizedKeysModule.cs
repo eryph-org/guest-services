@@ -5,7 +5,7 @@ using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Config, Order = 2)]
+[Stage(Stage.Config, Order = 2, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class SshAuthorizedKeysModule(ILogger<SshAuthorizedKeysModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(

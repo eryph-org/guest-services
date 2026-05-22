@@ -24,6 +24,27 @@ internal static class ProvisioningPaths
 
     public static string LogsDirectory => Path.Combine(Root, "logs");
 
+    /// <summary>
+    /// Per-instance scope root. Mirrors cloud-init's
+    /// <c>/var/lib/cloud/instance</c> — one directory per instance-id,
+    /// containing the per-instance semaphore subdirectory plus any other
+    /// instance-scoped artefacts we add later.
+    /// </summary>
+    public static string InstanceRoot => Path.Combine(Root, "instance");
+
+    /// <summary>
+    /// Global semaphore directory hosting per-boot and per-once markers.
+    /// Mirrors cloud-init's <c>/var/lib/cloud/sem</c>.
+    /// </summary>
+    public static string GlobalSemaphoreDir => Path.Combine(Root, "sem");
+
+    /// <summary>
+    /// Marker file used by <c>BootSessionDetector</c> to remember the boot
+    /// id of the previous run. Deleted on full reset so the next agent run
+    /// treats itself as a new boot.
+    /// </summary>
+    public static string LastSeenBootFile => Path.Combine(Root, "last-seen-boot.json");
+
     public static string ScriptsDirectory(ProvisioningSettings settings) =>
         Environment.ExpandEnvironmentVariables(settings.Scripts.PerInstanceDirectory);
 }

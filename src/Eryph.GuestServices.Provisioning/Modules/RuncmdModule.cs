@@ -6,7 +6,7 @@ using RuncmdEntryModel = Eryph.GuestServices.CloudConfig.RuncmdEntry;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Config, Order = 4)]
+[Stage(Stage.Config, Order = 4, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class RuncmdModule(ILogger<RuncmdModule> logger) : IModule
 {
     /// <summary>

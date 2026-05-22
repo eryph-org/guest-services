@@ -3,9 +3,11 @@ using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
+using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.Tests.Semaphores;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -101,10 +103,17 @@ public sealed class EndToEndProvisioningTests : IDisposable
             new RuncmdModule(NullLogger<RuncmdModule>.Instance),
         };
 
+        var semaphoreStore = new FileSemaphoreStore(
+            NullLogger<FileSemaphoreStore>.Instance,
+            _stateDirectory);
+        var bootDetector = new StubBootSessionDetector { NextResult = true };
+
         var runner = new StageRunner(
             locator,
             pipeline,
             stateStore,
+            semaphoreStore,
+            bootDetector,
             modules,
             reporter,
             windowsOs,

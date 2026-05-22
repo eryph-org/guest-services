@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Config, Order = 3)]
+[Stage(Stage.Config, Order = 3, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class WriteFilesModule(ILogger<WriteFilesModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(

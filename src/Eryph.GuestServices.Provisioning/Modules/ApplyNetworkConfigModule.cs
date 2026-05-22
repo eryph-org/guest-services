@@ -17,7 +17,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// after <c>SetHostnameModule</c> (Order=1) so the hostname change isn't
 /// disturbed by a possible network drop during DHCP-to-static transitions.
 /// </remarks>
-[Stage(Stage.Network, Order = 2)]
+[Stage(Stage.Network, Order = 2, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(

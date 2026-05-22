@@ -119,4 +119,77 @@ public sealed class ResetCommandTests : IDisposable
         exit.Should().Be(0);
         Directory.Exists(logsDir).Should().BeFalse();
     }
+
+    // RFC 0010: reset wipes per-instance + state.json + per-boot, but keeps
+    // per-once unless --reset-once is passed. This matches cloud-init's
+    // `cloud-init clean` defaults.
+    [Fact]
+    public async Task ExecuteAsync_PerOnce_SurvivesDefaultReset()
+    {
+        var globalSem = Path.Combine(_root, "sem");
+        Directory.CreateDirectory(globalSem);
+        var perOnceMarker = Path.Combine(globalSem, "Mod.per-once");
+        var perBootMarker = Path.Combine(globalSem, "Mod.per-boot");
+        await File.WriteAllTextAsync(perOnceMarker, "{}");
+        await File.WriteAllTextAsync(perBootMarker, "{}");
+
+        var sut = new ResetCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("reset"),
+            new ResetCommand.Settings { Yes = true });
+
+        exit.Should().Be(0);
+        File.Exists(perBootMarker).Should().BeFalse("per-boot is transient and cleared by default");
+        File.Exists(perOnceMarker).Should().BeTrue("per-once survives default reset");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ResetOnce_RemovesPerOnceMarkers()
+    {
+        var globalSem = Path.Combine(_root, "sem");
+        Directory.CreateDirectory(globalSem);
+        var perOnceMarker = Path.Combine(globalSem, "Mod.per-once");
+        await File.WriteAllTextAsync(perOnceMarker, "{}");
+
+        var sut = new ResetCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("reset"),
+            new ResetCommand.Settings { Yes = true, ResetOnce = true });
+
+        exit.Should().Be(0);
+        File.Exists(perOnceMarker).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_KeepPerBoot_LeavesPerBootMarkersInPlace()
+    {
+        var globalSem = Path.Combine(_root, "sem");
+        Directory.CreateDirectory(globalSem);
+        var perBootMarker = Path.Combine(globalSem, "Mod.per-boot");
+        await File.WriteAllTextAsync(perBootMarker, "{}");
+
+        var sut = new ResetCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("reset"),
+            new ResetCommand.Settings { Yes = true, KeepPerBoot = true });
+
+        exit.Should().Be(0);
+        File.Exists(perBootMarker).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DeletesPerInstanceDirectory()
+    {
+        var instanceDir = Path.Combine(_root, "instance", "i-1", "sem");
+        Directory.CreateDirectory(instanceDir);
+        await File.WriteAllTextAsync(Path.Combine(instanceDir, "Mod.per-instance"), "{}");
+
+        var sut = new ResetCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("reset"),
+            new ResetCommand.Settings { Yes = true });
+
+        exit.Should().Be(0);
+        Directory.Exists(Path.Combine(_root, "instance")).Should().BeFalse();
+    }
 }

@@ -7,8 +7,12 @@ namespace Eryph.GuestServices.Provisioning.Cli;
 
 /// <summary>
 /// Clears persistent provisioning state so the next agent run treats the
-/// guest as a fresh instance. <c>--logs</c> and <c>--scripts</c> also wipe
-/// the corresponding directories under <c>%ProgramData%\eryph\provisioning</c>.
+/// guest as a fresh instance. Mirrors <c>cloud-init clean</c>:
+/// per-instance semaphores + state.json are always cleared; per-boot
+/// semaphores are cleared unless <c>--keep-per-boot</c> is passed; per-once
+/// semaphores survive unless <c>--reset-once</c> is passed.
+/// <c>--logs</c> and <c>--scripts</c> also wipe the corresponding directories
+/// under <c>%ProgramData%\eryph\provisioning</c>.
 /// </summary>
 public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
 {
@@ -21,6 +25,14 @@ public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
         [CommandOption("--scripts")]
         [Description("Also delete the staged scripts directory.")]
         public bool ClearScripts { get; init; }
+
+        [CommandOption("--reset-once")]
+        [Description("Also clear per-once semaphores (otherwise they survive a reset, matching cloud-init).")]
+        public bool ResetOnce { get; init; }
+
+        [CommandOption("--keep-per-boot")]
+        [Description("Keep per-boot semaphores. Per-boot is conceptually transient and is cleared by default.")]
+        public bool KeepPerBoot { get; init; }
 
         [CommandOption("--state-dir <DIR>")]
         [Description("Override the state directory (default: %ProgramData%\\eryph\\provisioning).")]
@@ -40,17 +52,35 @@ public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
         if (!string.IsNullOrWhiteSpace(settings.StateDir))
             ProvisioningPaths.RootOverride = settings.StateDir;
 
-        var items = new List<string> { ProvisioningPaths.StateFile };
-        if (settings.ClearLogs) items.Add(ProvisioningPaths.LogsDirectory);
+        // Build the deletion list. Items are tagged with a description so we
+        // can give the operator a precise log line for each.
+        var items = new List<(string Path, string Description)>
+        {
+            (ProvisioningPaths.StateFile, "state file"),
+            (ProvisioningPaths.InstanceRoot, "per-instance semaphores + cache"),
+            (ProvisioningPaths.LastSeenBootFile, "boot session marker"),
+        };
+
+        // Per-boot semaphores: cleared by default. The whole global sem
+        // directory is selectively pruned (per-once kept unless --reset-once).
+        if (!settings.KeepPerBoot)
+            items.AddRange(EnumeratePerFrequencyFiles(ProvisioningPaths.GlobalSemaphoreDir, "per-boot",
+                "per-boot semaphore"));
+
+        if (settings.ResetOnce)
+            items.AddRange(EnumeratePerFrequencyFiles(ProvisioningPaths.GlobalSemaphoreDir, "per-once",
+                "per-once semaphore"));
+
+        if (settings.ClearLogs) items.Add((ProvisioningPaths.LogsDirectory, "logs"));
         if (settings.ClearScripts)
-            items.Add(ProvisioningPaths.ScriptsDirectory(ProvisioningSettings.LoadOrDefault()));
+            items.Add((ProvisioningPaths.ScriptsDirectory(ProvisioningSettings.LoadOrDefault()), "scripts"));
 
         AnsiConsole.MarkupLine("[yellow]Removing:[/]");
-        foreach (var p in items)
-            AnsiConsole.MarkupLineInterpolated($"  {p}");
+        foreach (var (p, d) in items)
+            AnsiConsole.MarkupLineInterpolated($"  {p} ({d})");
 
         var removed = 0;
-        foreach (var path in items)
+        foreach (var (path, _) in items)
         {
             try
             {
@@ -80,5 +110,15 @@ public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
 
         AnsiConsole.MarkupLineInterpolated($"[green]Removed {removed} item(s).[/]");
         return Task.FromResult(0);
+    }
+
+    private static IEnumerable<(string Path, string Description)> EnumeratePerFrequencyFiles(
+        string root, string frequencySuffix, string description)
+    {
+        if (!Directory.Exists(root))
+            yield break;
+
+        foreach (var file in Directory.EnumerateFiles(root, "*." + frequencySuffix))
+            yield return (file, description);
     }
 }

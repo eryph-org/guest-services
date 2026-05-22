@@ -16,7 +16,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// this Final-stage module runs the user-supplied scripts after everything
 /// else is settled.
 /// </summary>
-[Stage(Stage.Final, Order = 0)]
+[Stage(Stage.Final, Order = 0, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class ScriptsUserModule(
     ILogger<ScriptsUserModule> logger,
     ProvisioningSettings settings,

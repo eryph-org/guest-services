@@ -10,7 +10,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 // (Order=0). If a user is named in both `users[].passwd`/`plain_text_passwd` and in
 // `chpasswd.users`, the chpasswd entry takes effect because it runs later and
 // overwrites the password set by UsersGroupsModule. This matches cloud-init.
-[Stage(Stage.Config, Order = 1)]
+[Stage(Stage.Config, Order = 1, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : IModule
 {
     private const string RandomType = "RANDOM";

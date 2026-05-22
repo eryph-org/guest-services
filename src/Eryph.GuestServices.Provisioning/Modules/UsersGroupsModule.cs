@@ -6,7 +6,7 @@ using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Config, Order = 0)]
+[Stage(Stage.Config, Order = 0, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(

@@ -6,7 +6,7 @@ using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
 
-[Stage(Stage.Network)]
+[Stage(Stage.Network, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(
