@@ -29,7 +29,6 @@ The hook is wrapped in `try/catch (Exception)` with cancellation re-thrown. If t
 | `AzureDataSource`  | `File.Delete(C:\AzureData\CustomData.bin)`; then remove the parent directory iff it is now empty. Mirrors cbi's `AzureCustomDataService.provisioning_completed()`.       | cbi-equivalent. Cloud-init's Azure datasource doesn't manage CustomData.bin (Linux uses ovf-env on /dev/sr0). |
 | `NoCloudDataSource` | No-op. eryph-zero keeps the `cidata` ISO attached so `egs-tool reset` can re-read the same payload. cloud-init's NoCloud datasource doesn't eject either.             | Matches cloud-init NoCloud `clean()` — no-op.                                                                |
 | `ConfigDriveDataSource` | No-op. Same rationale as NoCloud: host owns the `config-2` ISO lifetime.                                                                                            | Matches cloud-init ConfigDrive `clean()` — no-op.                                                            |
-| `HyperVKvpDataSource` | No-op. KVP is host-pushed via the Hyper-V data exchange channel; the guest doesn't own the entries and clearing them would race with the host.                       | No direct parity (KVP is not a cloud-init concept on Linux).                                                  |
 
 ## Idempotency
 

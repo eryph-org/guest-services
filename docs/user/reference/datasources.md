@@ -16,7 +16,6 @@ with `NoDataSource` — no provisioning happens, no failure is reported.
 | `EC2` | 20 | yes (stub) |
 | `NoCloud` | 30 | no |
 | `ConfigDrive` | 40 | no |
-| `Hyper-V KVP` | 50 | no (stub) |
 
 The `OverrideDataSource` used by `egs-service run --user-data` is
 synthetic and short-circuits discovery entirely.
@@ -110,25 +109,6 @@ Azure for the same reason as NoCloud.
 Bytes are read raw, same as NoCloud.
 
 **Cleanup hook.** No-op. Same rationale as NoCloud.
-
----
-
-## Hyper-V KVP
-
-**Priority:** 50. **Requires network:** no.
-
-**Detection (v1).** Registry value
-`HKLM\SOFTWARE\Microsoft\Virtual Machine\Guest\Parameters\VirtualMachineId`
-exists and is non-empty.
-
-**Status:** **STUB.** Even when detection succeeds, the source returns
-`NotApplicable` and logs Debug — the full implementation (reading
-user-data over the Hyper-V data-exchange KVP channel) is not in v1.
-The host-pushed KVP plumbing is used today only for *reporting*, not
-for user-data ingestion.
-
-**Cleanup hook.** No-op. KVP entries are host-owned; the guest has no
-business clearing them.
 
 ---
 

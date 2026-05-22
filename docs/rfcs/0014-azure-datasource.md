@@ -89,7 +89,7 @@ So the v1 read path is almost always (a) + (b). (c) is a fallback for edge cases
 
 ## Priority
 
-Azure = 10 in `DataSourceLocator`. Already documented in `ProvisioningContainerBuilder` and unchanged. NoCloud (30), ConfigDrive (40), Hyper-V KVP (50) defensively decline when `PlatformProbes.IsRunningOnAzure()` is true.
+Azure = 10 in `DataSourceLocator`. Already documented in `ProvisioningContainerBuilder` and unchanged. NoCloud (30) and ConfigDrive (40) defensively decline when `PlatformProbes.IsRunningOnAzure()` is true.
 
 ## Coexistence with PA + WinGA (HARD CONSTRAINT)
 

@@ -67,7 +67,7 @@ internal static class ProvisioningContainerBuilder
         container.RegisterInstance(ProvisioningSettings.LoadOrDefault());
 
         // Data sources. The locator orders by IDataSource.Priority, not registration
-        // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40) -> Hyper-V KVP(50).
+        // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40).
         container.Register<IVolumeProbe, DriveInfoVolumeProbe>(Lifestyle.Singleton);
 
         // An override datasource (e.g. --user-data / --instance-id from the CLI)
@@ -86,7 +86,6 @@ internal static class ProvisioningContainerBuilder
         container.Collection.Append<IDataSource, Ec2DataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, NoCloudDataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, ConfigDriveDataSource>(Lifestyle.Singleton);
-        container.Collection.Append<IDataSource, HyperVKvpDataSource>(Lifestyle.Singleton);
         container.Register<IDataSourceLocator, DataSourceLocator>(Lifestyle.Singleton);
 
         // State. FileStateStore exposes a second public constructor for tests

@@ -39,7 +39,7 @@ warning or fall through to NoDataSource.
 
 | Missing | Status | RFC |
 | --- | --- | --- |
-| Hyper-V KVP user-data ingestion | Stub: detection works, payload read is a TODO. KVP is used for *reporting* (egs-tool get-status) — not for delivering user-data. | (no RFC; in source) |
+| Hyper-V KVP user-data ingestion | Not implemented. KVP is used for *reporting* (egs-tool get-status) only — there is no canonical KVP-as-userdata-channel format we'd target. | n/a |
 | EC2 datasource | Stub: returns NotApplicable always. | [0008](../../rfcs/0008-platform-native-provisioner-coexistence.md) |
 | GCP datasource | Not implemented. | [0008](../../rfcs/0008-platform-native-provisioner-coexistence.md) |
 | Azure wireserver Ready POST | **Deliberately never** (PA + WinGA own it). If you run the agent **without** PA, the Azure fabric will time out. Out of scope. | [0008](../../rfcs/0008-platform-native-provisioner-coexistence.md) / [0014](../../rfcs/0014-azure-datasource.md) |
@@ -75,8 +75,11 @@ for cbi) **have not been tested**. In particular:
 
 - We have not validated against the full OpenStack metadata surface
   (`vendor_data2.json`, networking schema variations, etc.).
-- The Hyper-V KVP user-data path is not implemented; if your host
-  pushes user-data via KVP, the agent will not consume it.
+- No Hyper-V KVP user-data ingestion: KVP is used for *reporting* (the
+  guest writes `eryph.provisioning.*` keys back to the host), never for
+  receiving user-data. If your host pushes user-data via KVP, the agent
+  will not consume it — feed user-data via NoCloud / ConfigDrive / Azure
+  instead.
 - Datasource detection is conservative; real-world quirks (missing
   files, partial layouts, encoding edge cases) may produce
   `NotApplicable` where cbi or cloud-init would succeed.
