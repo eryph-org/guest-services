@@ -192,7 +192,6 @@ public class AzureDataSourceTests
         // Base64 of "#cloud-config\nhostname: azure-test-host\n" — confirms the
         // fixture is a faithful cloud-config payload shape, not an opaque blob.
         Convert.FromBase64String(env.CustomDataBase64!).Length.Should().BeGreaterThan(0);
-        env.CustomDataCertificateThumbprint.Should().BeNull();
     }
 
     [Fact]
@@ -231,7 +230,6 @@ public class AzureDataSourceTests
                   <wa:HostName>linux-host</wa:HostName>
                   <wa:UserName>azureuser</wa:UserName>
                   <wa:CustomData>aGVsbG8=</wa:CustomData>
-                  <wa:CustomDataCertificateThumbprint>ABCDEF</wa:CustomDataCertificateThumbprint>
                 </wa:LinuxProvisioningConfigurationSet>
               </wa:ProvisioningSection>
             </Environment>
@@ -241,7 +239,6 @@ public class AzureDataSourceTests
 
         env.Hostname.Should().Be("linux-host");
         env.CustomDataBase64.Should().Be("aGVsbG8=");
-        env.CustomDataCertificateThumbprint.Should().Be("ABCDEF");
     }
 
     // ---- end-to-end ReadAsync via the IMDS fake + file IO injection ----

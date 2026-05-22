@@ -9,20 +9,24 @@ using Microsoft.Win32;
 namespace Eryph.GuestServices.Provisioning.DataSources;
 
 /// <summary>
-/// Azure datasource — coexists with Microsoft's Provisioning Agent (PA) per
-/// RFC 0008 (mandatory) and RFC 0014. PA owns the wireserver Ready handshake
-/// and applies HostName/AdminPassword/RDP during oobeSystem; we run after PA
-/// completes and consume:
+/// Azure datasource — coexists with Microsoft's Provisioning Agent (PA) and
+/// the long-running Windows Guest Agent (WinGA, <c>WindowsAzureGuestAgent.exe</c>)
+/// per RFC 0008 + RFC 0014. PA owns the first wireserver Ready POST during
+/// OOBE; WinGA owns every Ready/heartbeat/extension/telemetry call after that
+/// indefinitely. The wireserver channel is never idle on a Microsoft-Windows
+/// image, so we never touch it. We run after PA completes and consume:
 ///
-///   (a) <c>C:\AzureData\CustomData.bin</c> — raw bytes PA persists from
-///       ovf-env.xml's CustomData element. v1 surfaces these as
-///       <see cref="DataSourceResult.UserData"/> WITHOUT decryption (see
-///       RFC 0015).
-///   (b) IMDS instance metadata for live <c>compute.*</c> fields.
+///   (a) <c>C:\AzureData\CustomData.bin</c> — PA base64-decodes the ovf-env
+///       CustomData element and writes the bytes verbatim. Not encrypted at
+///       any layer (verified, see docs/research/azure-customdata-encryption.md).
+///       Surfaced as <see cref="DataSourceResult.UserData"/> directly.
+///   (b) IMDS at <c>169.254.169.254</c> for live <c>compute.*</c> fields.
+///       Distinct from wireserver (<c>168.63.129.16</c>), which we do NOT call.
 ///   (c) ovf-env.xml from a still-mounted ConfigDrive — fallback for cases
 ///       where PA hasn't yet ejected the drive (rare on Azure post-PA).
 ///
-/// We MUST NOT signal Ready to the wireserver — PA already did that.
+/// We MUST NOT signal Ready to the wireserver, post telemetry, or call any
+/// other wireserver endpoint — PA + WinGA own that channel.
 /// </summary>
 public sealed class AzureDataSource : IDataSource
 {
@@ -113,8 +117,11 @@ public sealed class AzureDataSource : IDataSource
     // a non-Azure CI host where the IsRunningOnAzure gate would short-circuit.
     internal async Task<DataSourceProbeResult> ReadAsync(CancellationToken cancellationToken)
     {
-        // (1) CustomData.bin — raw bytes; never round-trip through ReadAllText
-        // (the file may be encrypted PKCS#7 or gzip; both have non-UTF-8 bytes).
+        // (1) CustomData.bin — raw bytes; never round-trip through ReadAllText.
+        // PA already base64-decoded the ovf-env CustomData element; the bytes
+        // here are exactly what the user submitted (may be gzipped multipart
+        // MIME, plain #cloud-config, etc.). CustomData is not encrypted at any
+        // layer — see docs/research/azure-customdata-encryption.md.
         byte[]? userData = null;
         if (_fileExists(CustomDataPath))
         {
@@ -174,14 +181,6 @@ public sealed class AzureDataSource : IDataSource
             metaData[k] = v;
         if (!string.IsNullOrEmpty(instanceId) && !metaData.ContainsKey("vmId"))
             metaData["vmId"] = instanceId;
-
-        if (ovfEnv?.CustomDataCertificateThumbprint is { Length: > 0 } thumbprint)
-        {
-            metaData["customDataCertificateThumbprint"] = thumbprint;
-            _logger.LogInformation(
-                "Azure: ovf-env reports encrypted CustomData (thumbprint {Thumb}); v1 surfaces the raw bytes (RFC 0015 will decrypt)",
-                thumbprint);
-        }
 
         var result = new DataSourceResult
         {

@@ -52,14 +52,11 @@ internal static class AzureOvfEnvParser
             ?? (string?)configSet.Element(Wa + "ComputerName");
 
         var customData = (string?)configSet.Element(Wa + "CustomData");
-        var certThumbprint = (string?)configSet.Element(Wa + "CustomDataCertificateThumbprint");
 
         return new AzureOvfEnv
         {
             Hostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname.Trim(),
             CustomDataBase64 = string.IsNullOrWhiteSpace(customData) ? null : customData.Trim(),
-            CustomDataCertificateThumbprint =
-                string.IsNullOrWhiteSpace(certThumbprint) ? null : certThumbprint.Trim(),
         };
     }
 }
@@ -69,15 +66,15 @@ internal sealed record AzureOvfEnv
     public string? Hostname { get; init; }
 
     /// <summary>
-    /// Raw base64 CustomData string as embedded in the XML. May be encrypted —
-    /// see RFC 0015. v1 does NOT decode/decrypt this; the canonical
-    /// post-PA source is <c>C:\AzureData\CustomData.bin</c> instead.
+    /// Raw base64 CustomData string as embedded in the XML. PA base64-decodes
+    /// it once before writing <c>C:\AzureData\CustomData.bin</c>, so the
+    /// canonical post-PA source is the file, not this property. The XML form
+    /// is kept for the rare case where the ConfigDrive is still mounted when
+    /// our agent reads it. CustomData is NOT encrypted at any layer — the
+    /// <c>&lt;CertificateThumbprint&gt;</c> element under <c>&lt;UserPassword&gt;</c>
+    /// in the same configset wraps AdminPassword, not CustomData (verified
+    /// against cloud-init / WALinuxAgent / cloudbase-init in
+    /// docs/research/azure-customdata-encryption.md).
     /// </summary>
     public string? CustomDataBase64 { get; init; }
-
-    /// <summary>
-    /// When set, CustomData is encrypted with the matching certificate in
-    /// <c>Cert:\LocalMachine\My</c>. Decryption is deferred to RFC 0015.
-    /// </summary>
-    public string? CustomDataCertificateThumbprint { get; init; }
 }
