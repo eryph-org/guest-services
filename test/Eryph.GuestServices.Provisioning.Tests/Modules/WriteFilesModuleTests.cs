@@ -155,6 +155,123 @@ public sealed class WriteFilesModuleTests
         await os.DidNotReceive().SetFileOwnerAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    // Regression: WriteFilesModule used to LogWarning('permissions ... are
+    // ignored on Windows beyond basic ACLs') and skip the field entirely,
+    // despite WindowsOs.SetPosixPermissionsAsync being implemented and wired
+    // for exactly this translation (commit 0635c5c, "POSIX file permissions:
+    // translate to NTFS ACLs"). The cloud-config wrapper existed but the call
+    // site didn't invoke it — the user docs agent flagged this as an
+    // implementation gap. This test makes the gap visible: cloud-config
+    // permissions reach the OS layer, where the existing wrapper handles
+    // the POSIX → NTFS-ACL translation.
+    [Fact]
+    public async Task Applies_posix_permissions_via_SetPosixPermissionsAsync()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/etc/marker.txt").Returns(@"C:\etc\marker.txt");
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles =
+            [
+                new WriteFileConfig
+                {
+                    Path = "/etc/marker.txt",
+                    Content = "hello",
+                    Permissions = "0644",
+                },
+            ],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetPosixPermissionsAsync(
+            @"C:\etc\marker.txt",
+            "0644",
+            null,
+            Arg.Any<CancellationToken>());
+        // Falls through SetFileOwnerAsync — the comprehensive PosixPermissions
+        // call already sets the owner if provided.
+        await os.DidNotReceive().SetFileOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Applies_posix_permissions_and_owner_in_one_call()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/etc/marker.txt").Returns(@"C:\etc\marker.txt");
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles =
+            [
+                new WriteFileConfig
+                {
+                    Path = "/etc/marker.txt",
+                    Content = "hello",
+                    Permissions = "0600",
+                    Owner = "alice",
+                },
+            ],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        // Single call carries both permissions and owner — no separate
+        // SetFileOwnerAsync (would race against the ACL reset inside
+        // SetPosixPermissionsAsync).
+        await os.Received().SetPosixPermissionsAsync(
+            @"C:\etc\marker.txt",
+            "0600",
+            "alice",
+            Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetFileOwnerAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Owner_only_falls_through_to_SetFileOwnerAsync()
+    {
+        // When the user supplied owner but no permissions, we use the
+        // narrower SetFileOwnerAsync so the existing ACL is preserved —
+        // SetPosixPermissionsAsync would reset it.
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/etc/marker.txt").Returns(@"C:\etc\marker.txt");
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles =
+            [
+                new WriteFileConfig
+                {
+                    Path = "/etc/marker.txt",
+                    Content = "hello",
+                    Owner = "alice",
+                },
+            ],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetFileOwnerAsync(
+            @"C:\etc\marker.txt", "alice", Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetPosixPermissionsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Fails_when_path_translation_throws_for_traversal()
     {

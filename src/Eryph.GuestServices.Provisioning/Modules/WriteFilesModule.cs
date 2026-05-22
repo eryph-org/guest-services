@@ -64,12 +64,29 @@ internal sealed class WriteFilesModule(ILogger<WriteFilesModule> logger) : IModu
                 content.Length, windowsPath, append);
             await context.Os.WriteFileAsync(windowsPath, content, append, cancellationToken).ConfigureAwait(false);
 
+            // When `permissions` is set, route through SetPosixPermissionsAsync —
+            // it does the POSIX-mode → NTFS-ACL translation (commit 0635c5c) AND
+            // sets the owner if provided. When ONLY `owner` is set, we want to
+            // leave the existing ACL untouched, so we use the narrower
+            // SetFileOwnerAsync.
             if (!string.IsNullOrWhiteSpace(entry.Permissions))
-                logger.LogWarning(
-                    "File permissions '{Perms}' on '{Path}' are ignored on Windows beyond basic ACLs.",
-                    entry.Permissions, windowsPath);
-
-            if (!string.IsNullOrWhiteSpace(entry.Owner))
+            {
+                logger.LogInformation(
+                    "Applying POSIX permissions '{Perms}' (owner '{Owner}') to '{Path}'.",
+                    entry.Permissions, entry.Owner ?? "<unchanged>", windowsPath);
+                try
+                {
+                    await context.Os.SetPosixPermissionsAsync(
+                        windowsPath, entry.Permissions, entry.Owner, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "Failed to apply permissions '{Perms}' on '{Path}'.",
+                        entry.Permissions, windowsPath);
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(entry.Owner))
             {
                 logger.LogInformation("Setting owner of '{Path}' to '{Owner}'.", windowsPath, entry.Owner);
                 try
