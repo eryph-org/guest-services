@@ -69,6 +69,9 @@ public sealed class UserDataPipelineTests : IDisposable
     [Fact]
     public async Task ResolveAsync_MultipartWithCloudConfigAndScript_BothLand()
     {
+        // Filename-led detection (RFC 0007): the .ps1 extension wins over body
+        // shape, so a text/x-shellscript part with filename="setup.ps1" maps
+        // to ScriptKind.PowerShell on Windows — matching cbi's dispatch.
         var pipeline = BuildPipeline(out _);
         const string raw =
             "MIME-Version: 1.0\r\n" +
@@ -81,8 +84,9 @@ public sealed class UserDataPipelineTests : IDisposable
             "\r\n" +
             "--B\r\n" +
             "Content-Type: text/x-shellscript\r\n" +
+            "Content-Disposition: attachment; filename=\"setup.ps1\"\r\n" +
             "\r\n" +
-            "#!/bin/bash\necho mp\n" +
+            "Write-Host mp\n" +
             "\r\n" +
             "--B--\r\n";
 
@@ -90,7 +94,7 @@ public sealed class UserDataPipelineTests : IDisposable
 
         result.CloudConfig.Hostname.Should().Be("mp");
         result.Scripts.Should().ContainSingle()
-            .Which.Kind.Should().Be(ScriptKind.ShellScript);
+            .Which.Kind.Should().Be(ScriptKind.PowerShell);
     }
 
     [Fact]

@@ -1,5 +1,7 @@
 using System.Text;
 using Eryph.GuestServices.Provisioning.Configuration;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -17,13 +19,22 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 [Stage(Stage.Final, Order = 0)]
 internal sealed class ScriptsUserModule(
     ILogger<ScriptsUserModule> logger,
-    ProvisioningSettings settings) : IModule
+    ProvisioningSettings settings,
+    IReportingDispatcher reporter) : IModule
 {
     /// <summary>
     /// Exit code reserved by the cloudbase-init "reboot and continue"
     /// convention. Same value the RuncmdModule honors.
     /// </summary>
     public const int RebootRequestedExitCode = 1003;
+
+    /// <summary>
+    /// Directory where per-script stdout/stderr logs are written. One log
+    /// file per script, named after the staged script (so an operator can
+    /// trivially correlate <c>001-enable_rd.ps1</c> in the scripts dir with
+    /// <c>001-enable_rd.ps1.log</c> in the logs dir).
+    /// </summary>
+    private const string LogsDirectory = @"%ProgramData%\eryph\provisioning\logs";
 
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
@@ -37,14 +48,32 @@ internal sealed class ScriptsUserModule(
         }
 
         var scriptDirectory = Environment.ExpandEnvironmentVariables(settings.Scripts.PerInstanceDirectory);
+        var logDirectory = Environment.ExpandEnvironmentVariables(LogsDirectory);
         await context.Os.EnsureDirectoryAsync(scriptDirectory, cancellationToken).ConfigureAwait(false);
+        await context.Os.EnsureDirectoryAsync(logDirectory, cancellationToken).ConfigureAwait(false);
 
         for (var index = 0; index < userData.Scripts.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             var script = userData.Scripts[index];
-            var scriptPath = StagePath(scriptDirectory, index, script);
+            var ordinal = index + 1;
+
+            // ScriptKind.Other parts were classified by ScriptKindDetector as
+            // unrunnable on Windows (e.g. .sh extension, POSIX shebang, or
+            // genuinely unrecognised). The detector already logged a warning
+            // at classification time; the module just skips them.
+            if (script.Kind == ScriptKind.Other)
+            {
+                logger.LogInformation(
+                    "Skipping script #{Index} ('{Filename}') — kind Other (see earlier warning).",
+                    ordinal,
+                    script.Filename ?? "<root>");
+                continue;
+            }
+
+            var scriptName = BuildScriptName(ordinal, script);
+            var scriptPath = Path.Combine(scriptDirectory, scriptName);
 
             try
             {
@@ -53,7 +82,7 @@ internal sealed class ScriptsUserModule(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to stage script #{Index} to '{Path}'; skipping.", index + 1, scriptPath);
+                logger.LogError(ex, "Failed to stage script #{Index} to '{Path}'; skipping.", ordinal, scriptPath);
                 continue;
             }
 
@@ -65,36 +94,50 @@ internal sealed class ScriptsUserModule(
             catch (NotSupportedException ex)
             {
                 logger.LogWarning(ex, "Script #{Index} ({Path}) has unsupported kind {Kind}; skipping.",
-                    index + 1, scriptPath, script.Kind);
+                    ordinal, scriptPath, script.Kind);
                 continue;
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Script #{Index} ({Path}) failed to start.", index + 1, scriptPath);
+                logger.LogError(ex, "Script #{Index} ({Path}) failed to start.", ordinal, scriptPath);
                 continue;
             }
 
-            LogResult(index + 1, scriptPath, result);
+            await WriteLogAsync(context.Os, logDirectory, scriptName, scriptPath, result, cancellationToken)
+                .ConfigureAwait(false);
+            LogResult(ordinal, scriptPath, result);
+            await ReportProgressAsync(scriptName, result, cancellationToken).ConfigureAwait(false);
 
             if (result.ExitCode == RebootRequestedExitCode)
             {
                 logger.LogInformation(
                     "Script #{Index} ({Path}) requested reboot-and-continue (exit {Code}).",
-                    index + 1, scriptPath, RebootRequestedExitCode);
-                return ModuleOutcome.Reboot($"user-data script '{scriptPath}' requested reboot (exit {RebootRequestedExitCode}).");
+                    ordinal, scriptPath, RebootRequestedExitCode);
+                return ModuleOutcome.Reboot(
+                    $"script #{ordinal} ('{scriptName}') requested reboot (exit {RebootRequestedExitCode}).");
             }
 
             if (result.ExitCode != 0)
                 logger.LogError(
                     "Script #{Index} ({Path}) exited with code {Code}; continuing with remaining scripts.",
-                    index + 1, scriptPath, result.ExitCode);
+                    ordinal, scriptPath, result.ExitCode);
         }
 
         return ModuleOutcome.Ok();
     }
 
-    private static string StagePath(string directory, int index, ScriptPayload script)
+    // Preserves the operator-authored filename (extension included) prefixed
+    // with the declaration order. Eryph genes ship meaningful filenames like
+    // "enable_rd.ps1" — keep them so guest-side logs match what was written.
+    private static string BuildScriptName(int ordinal, ScriptPayload script)
     {
+        var sanitized = SanitizeName(script.Filename);
+        if (sanitized is not null)
+            return $"{ordinal:000}-{sanitized}";
+
+        // No filename — generate one from the inferred kind so we can still
+        // place it on disk with an appropriate extension. The detector has
+        // already filtered out ScriptKind.Other before we get here.
         var extension = script.Kind switch
         {
             ScriptKind.PowerShell => ".ps1",
@@ -102,8 +145,7 @@ internal sealed class ScriptsUserModule(
             ScriptKind.ShellScript => ".sh",
             _ => ".txt",
         };
-        var baseName = SanitizeName(script.Filename) ?? $"script-{index + 1}";
-        return Path.Combine(directory, $"{index + 1:000}-{baseName}{extension}");
+        return $"{ordinal:000}-script{extension}";
     }
 
     private static string? SanitizeName(string? filename)
@@ -114,11 +156,11 @@ internal sealed class ScriptsUserModule(
         var sb = new StringBuilder(filename.Length);
         foreach (var c in filename)
             sb.Append(invalid.Contains(c) ? '_' : c);
-        var name = Path.GetFileNameWithoutExtension(sb.ToString());
+        var name = sb.ToString().Trim();
         return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
-    private async Task<RunCommandResult> ExecuteAsync(
+    private static async Task<RunCommandResult> ExecuteAsync(
         string scriptPath,
         ScriptKind kind,
         IModuleContext context,
@@ -134,16 +176,62 @@ internal sealed class ScriptsUserModule(
                 ["cmd.exe", "/c", scriptPath],
                 cancellationToken).ConfigureAwait(false),
 
-            // Windows guests may not have a POSIX shell. We attempt cmd.exe but the
-            // script body is unlikely to be sh-compatible. The user-data pipeline
-            // should normally classify Windows scripts as PowerShell or Cmd; a
-            // ShellScript here means the shebang was #!/bin/sh which is alien.
-            ScriptKind.ShellScript => await context.Os.RunArgvCommandAsync(
-                ["cmd.exe", "/c", scriptPath],
-                cancellationToken).ConfigureAwait(false),
-
+            // ScriptKind.ShellScript should never reach this point on Windows
+            // because ScriptKindDetector resolves POSIX scripts to
+            // ScriptKind.Other. The branch is retained defensively for
+            // non-Windows test runs / future cross-platform support.
             _ => throw new NotSupportedException($"Script kind {kind} cannot be executed on Windows."),
         };
+    }
+
+    private async Task WriteLogAsync(
+        IWindowsOs os,
+        string logDirectory,
+        string scriptName,
+        string scriptPath,
+        RunCommandResult result,
+        CancellationToken cancellationToken)
+    {
+        var logPath = Path.Combine(logDirectory, scriptName + ".log");
+        var sb = new StringBuilder();
+        sb.Append("script: ").AppendLine(scriptPath);
+        sb.Append("exit-code: ").AppendLine(result.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        sb.AppendLine();
+        sb.AppendLine("---- stdout ----");
+        sb.AppendLine(result.StdOut ?? string.Empty);
+        sb.AppendLine("---- stderr ----");
+        sb.AppendLine(result.StdErr ?? string.Empty);
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+
+        try
+        {
+            await os.WriteFileAsync(logPath, bytes, append: false, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Log-file write failure must not break the run — the in-memory
+            // log + reporting event still carry the information.
+            logger.LogWarning(ex, "Failed to write script log to '{Path}'.", logPath);
+        }
+    }
+
+    private async Task ReportProgressAsync(
+        string scriptName,
+        RunCommandResult result,
+        CancellationToken cancellationToken)
+    {
+        var sb = new StringBuilder();
+        sb.Append("script '").Append(scriptName).Append("' exit=").Append(result.ExitCode);
+        if (!string.IsNullOrEmpty(result.StdOut))
+            sb.AppendLine().Append("stdout: ").Append(result.StdOut);
+        if (!string.IsNullOrEmpty(result.StdErr))
+            sb.AppendLine().Append("stderr: ").Append(result.StdErr);
+        await reporter.EmitAsync(
+            new ReportingEvent.Progress(sb.ToString())
+            {
+                Origin = $"module:{nameof(ScriptsUserModule)}",
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private void LogResult(int index, string scriptPath, RunCommandResult result)

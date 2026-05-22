@@ -2,6 +2,8 @@ using System.Text;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -20,11 +22,16 @@ public sealed class ScriptsUserModuleTests
         },
     };
 
+    private static ScriptsUserModule CreateModule(IReportingDispatcher? reporter = null) =>
+        new(NullLogger<ScriptsUserModule>.Instance,
+            TestSettings,
+            reporter ?? Substitute.For<IReportingDispatcher>());
+
     [Fact]
     public async Task ApplyAsync_NoScripts_NoOp()
     {
         var os = Substitute.For<IWindowsOs>();
-        var module = new ScriptsUserModule(NullLogger<ScriptsUserModule>.Instance, TestSettings);
+        var module = CreateModule();
 
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig());
         var outcome = await module.ApplyAsync(resolved, new TestModuleContext(os), CancellationToken.None);
@@ -40,7 +47,7 @@ public sealed class ScriptsUserModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "ok", ""));
-        var module = new ScriptsUserModule(NullLogger<ScriptsUserModule>.Instance, TestSettings);
+        var module = CreateModule();
 
         var script = new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("Write-Host hi"), "do-thing.ps1");
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
@@ -50,7 +57,7 @@ public sealed class ScriptsUserModuleTests
 
         outcome.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().WriteFileAsync(
-            Arg.Is<string>(p => p.EndsWith("001-do-thing.ps1")),
+            Arg.Is<string>(p => p.EndsWith(@"\001-do-thing.ps1")),
             Arg.Any<byte[]>(),
             false,
             Arg.Any<CancellationToken>());
@@ -66,7 +73,7 @@ public sealed class ScriptsUserModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
-        var module = new ScriptsUserModule(NullLogger<ScriptsUserModule>.Instance, TestSettings);
+        var module = CreateModule();
 
         var script = new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# reboot"), null);
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
@@ -83,7 +90,7 @@ public sealed class ScriptsUserModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
-        var module = new ScriptsUserModule(NullLogger<ScriptsUserModule>.Instance, TestSettings);
+        var module = CreateModule();
 
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
             with
@@ -100,14 +107,110 @@ public sealed class ScriptsUserModuleTests
 
         outcome.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().WriteFileAsync(
-            Arg.Is<string>(p => p.EndsWith("001-first.ps1")),
+            Arg.Is<string>(p => p.EndsWith(@"\001-first.ps1")),
             Arg.Any<byte[]>(), false, Arg.Any<CancellationToken>());
         await os.Received().WriteFileAsync(
-            Arg.Is<string>(p => p.EndsWith("002-second.cmd")),
+            Arg.Is<string>(p => p.EndsWith(@"\002-second.cmd")),
             Arg.Any<byte[]>(), false, Arg.Any<CancellationToken>());
         await os.Received().WriteFileAsync(
-            Arg.Is<string>(p => p.EndsWith("003-script-3.ps1")),
+            Arg.Is<string>(p => p.EndsWith(@"\003-script.ps1")),
             Arg.Any<byte[]>(), false, Arg.Any<CancellationToken>());
+    }
+
+    // Regression: real eryph gene fodder (enable_rd.ps1) ships as
+    //   Content-Type: text/x-shellscript
+    //   Content-Disposition: attachment; filename="enable_rd.ps1"
+    //   <body starts with Set-ItemProperty ... — NO shebang>
+    // Under the OLD shebang-led detection this was silently classified as
+    // ScriptKind.Other and dropped. cbi runs it as PowerShell because the
+    // filename extension is .ps1; we must do the same. This test fails
+    // under the old code and passes under the filename-led detector.
+    [Fact]
+    public async Task ApplyAsync_CbiShape_ShellscriptPartWithPs1FilenameAndNoShebang_DispatchesAsPowerShell()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+        var module = CreateModule();
+
+        // Simulate the user-data pipeline: a text/x-shellscript part with a
+        // .ps1 filename and a body that has no shebang. The ShellScriptPartHandler
+        // would classify this as ScriptKind.PowerShell via the filename-led
+        // detector and append it to ResolvedUserData.Scripts.
+        var body = Encoding.UTF8.GetBytes(
+            "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' "
+            + "-Name 'fDenyTSConnections' -Value 0\n");
+        var script = new ScriptPayload(ScriptKind.PowerShell, body, "enable_rd.ps1");
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [script] };
+
+        var outcome = await module.ApplyAsync(resolved, new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().WriteFileAsync(
+            Arg.Is<string>(p => p.EndsWith(@"\001-enable_rd.ps1")),
+            Arg.Any<byte[]>(),
+            false,
+            Arg.Any<CancellationToken>());
+        await os.Received().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv =>
+                argv[0] == "powershell.exe"
+                && argv.Contains("-NoProfile")
+                && argv.Contains("-NonInteractive")
+                && argv.Contains("-ExecutionPolicy")
+                && argv.Contains("Bypass")
+                && argv.Contains("-File")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ApplyAsync_ScriptKindOther_IsSkippedWithoutExecution()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = CreateModule();
+
+        var script = new ScriptPayload(ScriptKind.Other, Encoding.UTF8.GetBytes("#!/bin/bash\necho hi\n"), "garbage.sh");
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [script] };
+
+        var outcome = await module.ApplyAsync(resolved, new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().WriteFileAsync(
+            Arg.Is<string>(p => p.Contains("garbage")),
+            Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ApplyAsync_OnSuccess_EmitsProgressEventAndWritesPerScriptLog()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "captured-stdout", "captured-stderr"));
+        var reporter = Substitute.For<IReportingDispatcher>();
+        var module = CreateModule(reporter);
+
+        var script = new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# x"), "hello.ps1");
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [script] };
+
+        await module.ApplyAsync(resolved, new TestModuleContext(os), CancellationToken.None);
+
+        // Per-script log under %ProgramData%\eryph\provisioning\logs.
+        await os.Received().WriteFileAsync(
+            Arg.Is<string>(p => p.EndsWith(@"\logs\001-hello.ps1.log")),
+            Arg.Is<byte[]>(b => Encoding.UTF8.GetString(b).Contains("captured-stdout")
+                                && Encoding.UTF8.GetString(b).Contains("captured-stderr")),
+            false,
+            Arg.Any<CancellationToken>());
+
+        await reporter.Received().EmitAsync(
+            Arg.Is<ReportingEvent>(e =>
+                (e as ReportingEvent.Progress) != null
+                && ((ReportingEvent.Progress)e).Message.Contains("001-hello.ps1")
+                && ((ReportingEvent.Progress)e).Message.Contains("captured-stdout")),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

@@ -81,20 +81,6 @@ internal static class UserDataContentTypeSniffer
         return PlainText;
     }
 
-    public static ScriptKind DetectScriptKind(byte[] body)
-    {
-        var firstLine = FirstNonEmptyLine(SafeDecode(body));
-        if (firstLine.StartsWith("#ps1", StringComparison.Ordinal))
-            return ScriptKind.PowerShell;
-        if (firstLine.StartsWith("#!/bin/sh", StringComparison.Ordinal)
-            || firstLine.StartsWith("#!/bin/bash", StringComparison.Ordinal)
-            || firstLine.StartsWith("#!/usr/bin/env bash", StringComparison.Ordinal))
-            return ScriptKind.ShellScript;
-        if (firstLine.StartsWith("#!", StringComparison.Ordinal))
-            return ScriptKind.Other;
-        return ScriptKind.Other;
-    }
-
     public static bool IsGzipped(byte[] body) =>
         body.Length >= GzipMagic.Length
         && body[0] == GzipMagic[0]

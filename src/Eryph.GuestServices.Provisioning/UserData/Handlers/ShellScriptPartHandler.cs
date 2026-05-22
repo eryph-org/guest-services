@@ -11,7 +11,10 @@ internal sealed class ShellScriptPartHandler(ILogger<ShellScriptPartHandler> log
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var kind = UserDataContentTypeSniffer.DetectScriptKind(part.Body);
+        // Filename-led detection — see ScriptKindDetector / RFC 0007. The
+        // detector logs a warning whenever it cannot confidently classify
+        // (or has to fall back on content-type), so the handler stays quiet.
+        var kind = ScriptKindDetector.Detect(part.Filename, part.Body, part.ContentType, logger);
         ctx.AddScript(new ScriptPayload(kind, part.Body, part.Filename));
         logger.LogDebug(
             "Captured shell script '{Filename}' ({Kind}, {Bytes} bytes)",

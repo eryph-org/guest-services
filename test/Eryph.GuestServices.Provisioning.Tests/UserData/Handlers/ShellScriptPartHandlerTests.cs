@@ -24,8 +24,11 @@ public sealed class ShellScriptPartHandlerTests
         ctx.Scripts[0].Body.Should().Equal(body);
     }
 
+    // POSIX shebang on a Windows guest: detector resolves to ScriptKind.Other
+    // (no POSIX shell available). Part is still captured — the module logs
+    // and skips it.
     [Fact]
-    public async Task ProcessAsync_CapturesBashScript()
+    public async Task ProcessAsync_BashShebangOnWindows_CapturesAsOther()
     {
         var handler = new ShellScriptPartHandler(NullLogger<ShellScriptPartHandler>.Instance);
         var body = Encoding.UTF8.GetBytes("#!/bin/bash\necho hello\n");
@@ -35,6 +38,6 @@ public sealed class ShellScriptPartHandlerTests
         await handler.ProcessAsync(part, ctx, CancellationToken.None);
 
         ctx.Scripts.Should().ContainSingle();
-        ctx.Scripts[0].Kind.Should().Be(ScriptKind.ShellScript);
+        ctx.Scripts[0].Kind.Should().Be(ScriptKind.Other);
     }
 }
