@@ -400,6 +400,7 @@ public sealed class StageRunnerTests
             modules ?? [],
             reporter,
             Substitute.For<IWindowsOs>(),
+            new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings(),
             NullLogger<StageRunner>.Instance);
     }
 

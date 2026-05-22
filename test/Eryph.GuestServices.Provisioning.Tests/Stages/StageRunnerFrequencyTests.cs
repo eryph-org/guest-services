@@ -192,6 +192,7 @@ public sealed class StageRunnerFrequencyTests : IDisposable
             modules,
             Substitute.For<IReportingDispatcher>(),
             Substitute.For<IWindowsOs>(),
+            new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings(),
             NullLogger<StageRunner>.Instance);
     }
 

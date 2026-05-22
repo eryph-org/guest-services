@@ -1,3 +1,4 @@
+using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
@@ -20,6 +21,7 @@ public sealed class StageRunner(
     IEnumerable<IModule> modules,
     IReportingDispatcher reporter,
     IWindowsOs os,
+    ProvisioningSettings settings,
     ILogger<StageRunner> logger) : IStageRunner
 {
     private static readonly Stage[] StageOrder =
@@ -62,7 +64,7 @@ public sealed class StageRunner(
             cancellationToken).ConfigureAwait(false);
 
         var context = new ModuleContext(os, data);
-        var buckets = BuildStageBuckets(modules);
+        var buckets = BuildStageBuckets(modules, settings, logger);
 
         // userData is resolved lazily at the start of the Network stage so that
         // any platform setup done in Local (e.g. raising the network) can
@@ -349,9 +351,13 @@ public sealed class StageRunner(
         return frequency == ModuleFrequency.PerInstance ? AddTo(source, moduleKey) : source;
     }
 
-    // Reflect over each module once, group by stage, and sort by (Order, FullName).
-    // The result is reused for every stage in StageOrder.
-    private static Dictionary<Stage, List<StageEntry>> BuildStageBuckets(IEnumerable<IModule> modules)
+    // Reflect over each module once, group by stage, sort by (Order, FullName),
+    // and apply the per-stage allowlist / denylist from ProvisioningSettings
+    // (RFC 0009). The result is reused for every stage in StageOrder.
+    private static Dictionary<Stage, List<StageEntry>> BuildStageBuckets(
+        IEnumerable<IModule> modules,
+        ProvisioningSettings settings,
+        ILogger logger)
     {
         var entries = modules
             .Select(m => new
@@ -365,6 +371,14 @@ public sealed class StageRunner(
             .Where(t => t.Attribute is not null)
             .ToList();
 
+        var unknownNames = ValidateModuleNames(settings, entries.Select(t => t.Module.GetType()));
+        foreach (var (stageName, unknown) in unknownNames)
+        {
+            logger.LogWarning(
+                "RFC 0009: settings reference unknown module(s) {Names} for stage '{Stage}'; ignored.",
+                string.Join(", ", unknown), stageName);
+        }
+
         return entries
             .GroupBy(t => t.Attribute!.Stage)
             .ToDictionary(
@@ -372,8 +386,111 @@ public sealed class StageRunner(
                 g => g
                     .OrderBy(t => t.Attribute!.Order)
                     .ThenBy(t => t.Module.GetType().FullName, StringComparer.Ordinal)
+                    .Where(t => IsModuleEnabled(g.Key, t.Module.GetType(), settings, logger))
                     .Select(t => new StageEntry(t.Module, t.Attribute!.Frequency))
                     .ToList());
+    }
+
+    private static bool IsModuleEnabled(
+        Stage stage,
+        Type moduleType,
+        ProvisioningSettings settings,
+        ILogger logger)
+    {
+        var stageSettings = LookupStage(settings, stage);
+        if (stageSettings is null)
+            return true;
+
+        var shortName = moduleType.Name;
+
+        if (stageSettings.EnabledModules is { Count: > 0 } enabled
+            && !enabled.Any(n => NameMatches(n, shortName)))
+        {
+            logger.LogDebug(
+                "RFC 0009: skipping {Module} in stage {Stage} (not in EnabledModules).",
+                shortName, stage);
+            return false;
+        }
+
+        if (stageSettings.DisabledModules is { Count: > 0 } disabled
+            && disabled.Any(n => NameMatches(n, shortName)))
+        {
+            logger.LogDebug(
+                "RFC 0009: skipping {Module} in stage {Stage} (in DisabledModules).",
+                shortName, stage);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static StageSettings? LookupStage(ProvisioningSettings settings, Stage stage)
+    {
+        if (settings.Stages is null || settings.Stages.Count == 0)
+            return null;
+
+        foreach (var kv in settings.Stages)
+        {
+            if (string.Equals(kv.Key, stage.ToString(), StringComparison.OrdinalIgnoreCase))
+                return kv.Value;
+        }
+
+        return null;
+    }
+
+    // Case-insensitive match that tolerates the "Module" suffix.
+    // "SetHostnameModule" and "SetHostname" both match SetHostnameModule.
+    private static bool NameMatches(string configured, string moduleShortName)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+            return false;
+
+        var trimmed = configured.Trim();
+        if (string.Equals(trimmed, moduleShortName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (moduleShortName.EndsWith("Module", StringComparison.Ordinal)
+            && string.Equals(
+                trimmed,
+                moduleShortName[..^"Module".Length],
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    // Returns the configured-but-unrecognised names per stage so the caller
+    // can log a single Warning per stage instead of one per offending entry.
+    private static IEnumerable<(string Stage, IReadOnlyList<string> Unknown)> ValidateModuleNames(
+        ProvisioningSettings settings,
+        IEnumerable<Type> discoveredModules)
+    {
+        if (settings.Stages is null || settings.Stages.Count == 0)
+            yield break;
+
+        var shortNames = discoveredModules
+            .Select(t => t.Name)
+            .ToList();
+
+        foreach (var kv in settings.Stages)
+        {
+            var configured = (kv.Value.EnabledModules ?? Enumerable.Empty<string>())
+                .Concat(kv.Value.DisabledModules ?? Enumerable.Empty<string>())
+                .Select(n => n?.Trim())
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Cast<string>()
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var unknown = configured
+                .Where(n => !shortNames.Any(s => NameMatches(n, s)))
+                .ToList();
+
+            if (unknown.Count > 0)
+                yield return (kv.Key, unknown);
+        }
     }
 
     private readonly record struct StageEntry(IModule Module, ModuleFrequency Frequency);

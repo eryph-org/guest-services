@@ -22,7 +22,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0006](0006-multi-handler-reporting-cloud-backends.md) | Multi-handler reporting — Azure / AWS cloud backends | Draft |
 | [0007](0007-scripts-per-frequency-edge-cases.md) | `scripts/per-*` semantics edge cases | Implemented |
 | [0008](0008-platform-native-provisioner-coexistence.md) | Platform-native provisioner coexistence (Azure PA, EC2Launch v2) | Draft |
-| [0009](0009-module-list-split.md) | Module-list split (`cloud_init_modules` / `cloud_config_modules` / `cloud_final_modules`) | Draft |
+| [0009](0009-module-list-split.md) | Module-list split (`cloud_init_modules` / `cloud_config_modules` / `cloud_final_modules`) | Implemented |
 | [0010](0010-semaphore-design.md) | Semaphore design — single JSON vs per-module files | Implemented |
 | [0011](0011-jinja2-templating.md) | Jinja2 templating in user-data | Draft |
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |

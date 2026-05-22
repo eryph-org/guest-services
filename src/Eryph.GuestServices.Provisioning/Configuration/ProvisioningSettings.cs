@@ -16,6 +16,15 @@ public sealed class ProvisioningSettings
 
     public ScriptSettings Scripts { get; init; } = new();
 
+    /// <summary>
+    /// Per-stage allowlist / denylist of modules. Keys are stage names
+    /// (<c>"Local"</c>, <c>"Network"</c>, <c>"Config"</c>, <c>"Final"</c>;
+    /// case-insensitive). When a stage is absent, all discovered modules
+    /// for that stage run. See <see cref="StageSettings"/> for matching
+    /// semantics. RFC 0009 — module-list split.
+    /// </summary>
+    public Dictionary<string, StageSettings>? Stages { get; init; }
+
     public static ProvisioningSettings LoadOrDefault()
     {
         foreach (var candidate in CandidatePaths())
@@ -91,6 +100,40 @@ public sealed class DataSourceSettings
     /// minute even on a long deadline. Default 60s.
     /// </summary>
     public int MaxBackoffSeconds { get; init; } = 60;
+}
+
+/// <summary>
+/// Operator-controlled allowlist / denylist of modules for a single stage.
+/// Mirrors cloud-init's <c>cloud_init_modules</c> / <c>cloud_config_modules</c>
+/// / <c>cloud_final_modules</c> lists.
+///
+/// Module-name matching is case-insensitive and tolerates the <c>Module</c>
+/// suffix (so both <c>"SetHostnameModule"</c> and <c>"SetHostname"</c>
+/// match the <see cref="Modules.SetHostnameModule"/> type).
+///
+/// Resolution order when both lists are set:
+/// 1. Start with all discovered modules in the stage.
+/// 2. If <see cref="EnabledModules"/> is non-null, narrow to that set.
+/// 3. If <see cref="DisabledModules"/> is non-null, remove those.
+///
+/// Unknown names are logged at Warning but do not fail the run — typo in a
+/// settings file should not crash provisioning.
+/// </summary>
+public sealed class StageSettings
+{
+    /// <summary>
+    /// When set, only modules whose short class name (case-insensitive,
+    /// optional <c>Module</c> suffix) appears here run in this stage.
+    /// When null, all discovered modules are considered for this stage.
+    /// </summary>
+    public List<string>? EnabledModules { get; init; }
+
+    /// <summary>
+    /// When set, modules whose short class name matches an entry are
+    /// removed from the stage's run list (applied after
+    /// <see cref="EnabledModules"/> if both are set).
+    /// </summary>
+    public List<string>? DisabledModules { get; init; }
 }
 
 public sealed class ScriptSettings

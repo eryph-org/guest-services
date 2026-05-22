@@ -117,6 +117,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
             modules,
             reporter,
             windowsOs,
+            new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings(),
             NullLogger<StageRunner>.Instance);
 
         var outcome = await runner.RunAsync(CancellationToken.None);
