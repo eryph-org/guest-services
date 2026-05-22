@@ -38,7 +38,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0022](0022-chef-module.md) | `chef` cloud-config module (orchestrator bootstrap) | Draft |
 | [0023](0023-extend-volumes-module.md) | Windows `extend_volumes` cloud-config module | Draft |
 | [0024](0024-power-state-module.md) | `power_state` cloud-config module | Draft |
-| [0025](0025-dsc-runner-deferred.md) | DSC runner (deferred) | Draft |
+| [0025](0025-dsc-module.md) | `dsc` cloud-config module (DSCv3, retires the `windsc` gene workarounds) | Draft |
 | [0026](0026-winrm-listener-deferred.md) | WinRM listener / certificate auth (deferred) | Draft |
 
 ## Authoring
