@@ -28,6 +28,8 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |
 | [0013](0013-boothook-execution.md) | Boothook execution | Draft |
 | [0014](0014-azure-datasource.md) | Azure datasource (probe + CustomData.bin + IMDS + ovf-env) | Draft |
+| [0015](0015-set-timezone-module.md) | `set_timezone` cloud-config module on Windows | Draft |
+| [0016](0016-ntp-module.md) | `ntp` cloud-config module on Windows | Draft |
 
 ## Authoring
 
