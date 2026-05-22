@@ -334,6 +334,39 @@ internal sealed class WindowsOs : IWindowsOs
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.EnumerateAdapters(), cancellationToken);
+
+    public Task EnableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDhcp(interfaceIndex, enabled: true), cancellationToken);
+
+    public Task DisableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDhcp(interfaceIndex, enabled: false), cancellationToken);
+
+    public Task SetStaticIpv4AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetStaticIpv4Addresses(interfaceIndex, addresses), cancellationToken);
+
+    public Task SetIpv4DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetIpv4DefaultGateway(interfaceIndex, gateway), cancellationToken);
+
+    public Task SetDnsServersAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> dnsServers,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDnsServers(interfaceIndex, dnsServers), cancellationToken);
+
+    public Task SetInterfaceMtuAsync(
+        int interfaceIndex,
+        int mtu,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetInterfaceMtu(interfaceIndex, mtu), cancellationToken);
+
     public string TranslateUnixPath(string unixPath)
     {
         if (string.IsNullOrWhiteSpace(unixPath))

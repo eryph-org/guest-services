@@ -149,15 +149,17 @@ public class NetworkConfigYamlSerializerTests
     }
 
     [Fact]
-    public void Deserialize_v1_returns_version_only()
+    public void Deserialize_v1_physical_with_dhcp_subnet_projects_to_ethernets()
     {
-        // v1 has a 'config' list rather than top-level ethernets/.. — for now we
-        // only surface the version. Full v1 fidelity is a TODO in the serializer.
+        // v1 has a 'config' list rather than top-level ethernets/..; physical
+        // entries are projected into the v2-shape Ethernets dictionary keyed
+        // by name so a single applier can handle both schemas.
         const string yaml = """
                             version: 1
                             config:
                               - type: physical
                                 name: eth0
+                                mac_address: d2:ab:04:5a:29:47
                                 subnets:
                                   - type: dhcp
                             """;
@@ -165,7 +167,70 @@ public class NetworkConfigYamlSerializerTests
         var result = NetworkConfigYamlSerializer.Deserialize(yaml);
 
         result.Version.Should().Be(1);
-        result.Ethernets.Should().BeNull();
+        result.Ethernets.Should().ContainKey("eth0");
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Dhcp4.Should().BeTrue();
+        eth0.MacAddress.Should().Be("d2:ab:04:5a:29:47");
+        eth0.Addresses.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_v1_physical_with_static_subnet_and_dns()
+    {
+        const string yaml = """
+                            version: 1
+                            config:
+                              - type: physical
+                                name: eth0
+                                mac_address: 00:11:22:33:44:55
+                                mtu: 1400
+                                subnets:
+                                  - type: static
+                                    address: 10.0.0.5/24
+                                    gateway: 10.0.0.1
+                                    dns_nameservers:
+                                      - 1.1.1.1
+                                    dns_search:
+                                      - corp.local
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Version.Should().Be(1);
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Dhcp4.Should().BeNull();
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        eth0.Gateway4.Should().Be("10.0.0.1");
+        eth0.Mtu.Should().Be(1400);
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["1.1.1.1"]);
+        eth0.Nameservers!.Search.Should().BeEquivalentTo(["corp.local"]);
+    }
+
+    [Fact]
+    public void Deserialize_v1_global_nameserver_entry_is_inherited_by_physicals()
+    {
+        // Cloud-init v1: a top-level type=nameserver entry supplies DNS that
+        // applies to physical adapters that don't carry their own.
+        const string yaml = """
+                            version: 1
+                            config:
+                              - type: physical
+                                name: eth0
+                                subnets:
+                                  - type: static
+                                    address: 10.0.0.5/24
+                              - type: nameserver
+                                address:
+                                  - 9.9.9.9
+                                search:
+                                  - corp.local
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["9.9.9.9"]);
+        eth0.Nameservers!.Search.Should().BeEquivalentTo(["corp.local"]);
     }
 
     [Fact]

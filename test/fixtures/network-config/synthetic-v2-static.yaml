@@ -1,0 +1,14 @@
+version: 2
+ethernets:
+  eth0:
+    macaddress: "00:11:22:33:44:55"
+    addresses:
+      - 10.0.0.5/24
+    gateway4: 10.0.0.1
+    mtu: 1400
+    nameservers:
+      addresses:
+        - 1.1.1.1
+        - 8.8.8.8
+      search:
+        - corp.local

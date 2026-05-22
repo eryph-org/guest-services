@@ -29,6 +29,9 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
 
     public string TranslateUnixPath(string unixPath) => inner.TranslateUnixPath(unixPath);
 
+    public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>
+        inner.GetNetworkAdaptersAsync(cancellationToken);
+
     // ---- Writes are intercepted ----
 
     public Task<SetComputerNameResult> SetComputerNameAsync(string newName, CancellationToken cancellationToken)
@@ -137,5 +140,58 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
     {
         logger.LogInformation("DRY-RUN would run argv command: {Argv}", string.Join(" ", argv));
         return Task.FromResult(new RunCommandResult(0, "", ""));
+    }
+
+    public Task EnableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would enable DHCP on interface index {Index}", interfaceIndex);
+        return Task.CompletedTask;
+    }
+
+    public Task DisableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would disable DHCP on interface index {Index}", interfaceIndex);
+        return Task.CompletedTask;
+    }
+
+    public Task SetStaticIpv4AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set static IPv4 addresses on interface index {Index}: {Addresses}",
+            interfaceIndex, string.Join(", ", addresses));
+        return Task.CompletedTask;
+    }
+
+    public Task SetIpv4DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set IPv4 default gateway on interface index {Index} to {Gateway}",
+            interfaceIndex, gateway ?? "<clear>");
+        return Task.CompletedTask;
+    }
+
+    public Task SetDnsServersAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> dnsServers,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set DNS servers on interface index {Index} to {Servers}",
+            interfaceIndex,
+            dnsServers.Count == 0 ? "<reset>" : string.Join(", ", dnsServers));
+        return Task.CompletedTask;
+    }
+
+    public Task SetInterfaceMtuAsync(int interfaceIndex, int mtu, CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set MTU on interface index {Index} to {Mtu}", interfaceIndex, mtu);
+        return Task.CompletedTask;
     }
 }

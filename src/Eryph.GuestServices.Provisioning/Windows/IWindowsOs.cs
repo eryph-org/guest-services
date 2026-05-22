@@ -91,4 +91,68 @@ public interface IWindowsOs
     /// implementation header for the exact mapping.
     /// </summary>
     string TranslateUnixPath(string unixPath);
+
+    // Networking — used by ApplyNetworkConfigModule. See RFC 0002.
+
+    /// <summary>
+    /// Enumerates the network adapters on this guest. The result is intended
+    /// for MAC-matching against cloud-init network-config and includes both
+    /// physical and virtual adapters; callers should filter on
+    /// <see cref="NetworkAdapterInfo.IsPhysical"/> when only hardware NICs
+    /// are relevant.
+    /// </summary>
+    Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Puts the IPv4 client on the given adapter back into DHCP mode and
+    /// removes any explicit static addresses / gateways carried over from a
+    /// previous static configuration. Idempotent.
+    /// </summary>
+    Task EnableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Switches the IPv4 client on the given adapter to manual addressing and
+    /// removes any DHCP-leased addresses. Idempotent — calling twice is a no-op.
+    /// </summary>
+    Task DisableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the IPv4 addresses on the given adapter so that the resulting set
+    /// equals <paramref name="addresses"/>. Each entry is a CIDR string (e.g.
+    /// <c>"10.0.0.5/24"</c>). Existing addresses that are not in the desired
+    /// set are removed. Implies DHCP-off for IPv4.
+    /// </summary>
+    Task SetStaticIpv4AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the IPv4 default gateway on the given adapter. Removes any
+    /// pre-existing default route on the same interface so the result is the
+    /// single requested gateway. Pass null to clear the default route.
+    /// </summary>
+    Task SetIpv4DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the DNS server list on the given adapter. Empty list resets the
+    /// adapter to "obtain DNS automatically" (DHCP-driven). Address family is
+    /// inferred from each entry.
+    /// </summary>
+    Task SetDnsServersAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> dnsServers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the MTU on the given adapter (IPv4 + IPv6 interface). No-op when
+    /// <paramref name="mtu"/> already matches the current value.
+    /// </summary>
+    Task SetInterfaceMtuAsync(
+        int interfaceIndex,
+        int mtu,
+        CancellationToken cancellationToken);
 }

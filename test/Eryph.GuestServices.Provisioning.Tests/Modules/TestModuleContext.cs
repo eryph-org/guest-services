@@ -4,13 +4,19 @@ using Eryph.GuestServices.Provisioning.Windows;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
-internal sealed class TestModuleContext(IWindowsOs os) : IModuleContext
+internal sealed class TestModuleContext : IModuleContext
 {
-    public IWindowsOs Os { get; } = os;
-
-    public DataSourceResult DataSource { get; } = new()
+    public TestModuleContext(IWindowsOs os, DataSourceResult? dataSource = null)
     {
-        SourceName = "test",
-        InstanceId = "test-instance",
-    };
+        Os = os;
+        DataSource = dataSource ?? new DataSourceResult
+        {
+            SourceName = "test",
+            InstanceId = "test-instance",
+        };
+    }
+
+    public IWindowsOs Os { get; }
+
+    public DataSourceResult DataSource { get; }
 }

@@ -1,6 +1,11 @@
 # RFC 0002 — Network-config v1/v2 application on Windows
 
-Status: Draft
+Status: Implemented
+
+Shipped as `ApplyNetworkConfigModule` in the Network stage (Order=2): the
+NetworkConfig YAML deserializer now projects v1 physical entries into the
+v2-shape `Ethernets` dictionary, and the module applies static IP / DNS / MTU
+/ default route per MAC-matched adapter via the CIM NetTCPIP providers.
 
 ## Problem
 

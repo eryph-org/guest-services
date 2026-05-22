@@ -5,9 +5,11 @@ using YamlDotNet.Serialization.NamingConventions;
 namespace Eryph.GuestServices.CloudConfig.Yaml;
 
 // Parses cloud-init network-config YAML (v1 + v2) into the structured POCO.
-// v2 is the primary format and is modelled accurately; v1 is parsed in a lossy
-// shape that still surfaces version + nameserver / address strings — full v1
-// fidelity is a TODO once a handler actually consumes it.
+// v2 is the primary format and is modelled accurately; v1 entries are projected
+// into the same v2-shape (Ethernets keyed by interface name) so downstream
+// handlers can treat both schemas uniformly. Only the v1 subset that the
+// Windows applier supports is projected today — bonds/bridges/vlans are
+// preserved as Version=1 but not flattened.
 public static class NetworkConfigYamlSerializer
 {
     private static readonly Lazy<IDeserializer> Deserializer = new(() =>
@@ -25,12 +27,13 @@ public static class NetworkConfigYamlSerializer
 
         var raw = Deserializer.Value.Deserialize<RawNetworkConfig?>(yaml) ?? new RawNetworkConfig();
 
-        // v1 carries a 'config' list rather than top-level ethernets/bonds/.. — for now
-        // we just expose the version. TODO: project the v1 'config' list into the v2
-        // shape (or a sibling field) once a handler is added.
+        // v1 carries a 'config' list rather than top-level ethernets/bonds/.. —
+        // project the physical entries to the v2-shape Ethernets dictionary so
+        // a single applier can serve both schemas. Non-physical entries (vlan,
+        // bond, bridge, nameserver) are deferred.
         if (raw.Version == 1)
         {
-            return new NetworkConfig { Version = 1 };
+            return ConvertV1(raw);
         }
 
         return new NetworkConfig
@@ -41,6 +44,126 @@ public static class NetworkConfigYamlSerializer
             Bridges = raw.Bridges?.ToDictionary(kvp => kvp.Key, kvp => ConvertBridge(kvp.Value)),
             Vlans = raw.Vlans?.ToDictionary(kvp => kvp.Key, kvp => ConvertVlan(kvp.Value)),
             Renderer = ParseRenderer(raw.Renderer),
+        };
+    }
+
+    private static NetworkConfig ConvertV1(RawNetworkConfig raw)
+    {
+        if (raw.Config is null || raw.Config.Count == 0)
+            return new NetworkConfig { Version = 1 };
+
+        // v1 standalone "nameserver" entries supply global DNS that applies to
+        // all physical interfaces (cloud-init's behavior). Collect them first
+        // so each projected ethernet inherits them when its own subnet block
+        // doesn't provide more specific DNS.
+        var globalDnsAddresses = new List<string>();
+        var globalDnsSearch = new List<string>();
+        foreach (var entry in raw.Config)
+        {
+            if (string.Equals(entry.Type, "nameserver", StringComparison.OrdinalIgnoreCase))
+            {
+                if (entry.Address is { Count: > 0 })
+                    globalDnsAddresses.AddRange(entry.Address);
+                if (entry.Search is { Count: > 0 })
+                    globalDnsSearch.AddRange(entry.Search);
+            }
+        }
+
+        var ethernets = new Dictionary<string, NetworkEthernetConfig>(StringComparer.Ordinal);
+        foreach (var entry in raw.Config)
+        {
+            if (!string.Equals(entry.Type, "physical", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Without a stable handle (name) we cannot key the adapter; skip.
+            if (string.IsNullOrWhiteSpace(entry.Name))
+                continue;
+
+            ethernets[entry.Name] = ProjectV1Physical(entry, globalDnsAddresses, globalDnsSearch);
+        }
+
+        return new NetworkConfig
+        {
+            Version = 1,
+            Ethernets = ethernets.Count == 0 ? null : ethernets,
+        };
+    }
+
+    private static NetworkEthernetConfig ProjectV1Physical(
+        RawV1ConfigEntry entry,
+        IReadOnlyList<string> globalDnsAddresses,
+        IReadOnlyList<string> globalDnsSearch)
+    {
+        bool? dhcp4 = null;
+        var addresses = new List<string>();
+        string? gateway4 = null;
+        var dnsAddresses = new List<string>();
+        var dnsSearch = new List<string>();
+        var routes = new List<NetworkRoute>();
+
+        if (entry.Subnets is { Count: > 0 })
+        {
+            foreach (var subnet in entry.Subnets)
+            {
+                // cloud-init v1 subnet types: dhcp / dhcp4 / dhcp6 / static / static6 / manual.
+                // We only project the v4 forms today; v6 follows the same shape if
+                // someone adds it later.
+                var subnetType = (subnet.Type ?? string.Empty).Trim().ToLowerInvariant();
+                if (subnetType is "dhcp" or "dhcp4")
+                {
+                    dhcp4 = true;
+                }
+                else if (subnetType is "static" or "static4")
+                {
+                    if (!string.IsNullOrWhiteSpace(subnet.Address))
+                        addresses.Add(subnet.Address);
+                    if (!string.IsNullOrWhiteSpace(subnet.Gateway))
+                        gateway4 ??= subnet.Gateway;
+                }
+
+                if (subnet.DnsNameservers is { Count: > 0 })
+                    dnsAddresses.AddRange(subnet.DnsNameservers);
+                if (subnet.DnsSearch is { Count: > 0 })
+                    dnsSearch.AddRange(subnet.DnsSearch);
+
+                if (subnet.Routes is { Count: > 0 })
+                {
+                    foreach (var r in subnet.Routes)
+                        routes.Add(new NetworkRoute { To = r.Network, Via = r.Gateway, Metric = r.Metric });
+                }
+            }
+        }
+        else
+        {
+            // No subnets block at all -> default cloud-init behaviour is DHCP.
+            dhcp4 = true;
+        }
+
+        // Inherit global DNS only when the subnet block did not specify any.
+        if (dnsAddresses.Count == 0 && globalDnsAddresses.Count > 0)
+            dnsAddresses.AddRange(globalDnsAddresses);
+        if (dnsSearch.Count == 0 && globalDnsSearch.Count > 0)
+            dnsSearch.AddRange(globalDnsSearch);
+
+        NetworkNameservers? nameservers = null;
+        if (dnsAddresses.Count > 0 || dnsSearch.Count > 0)
+        {
+            nameservers = new NetworkNameservers
+            {
+                Addresses = dnsAddresses.Count == 0 ? null : dnsAddresses,
+                Search = dnsSearch.Count == 0 ? null : dnsSearch,
+            };
+        }
+
+        return new NetworkEthernetConfig
+        {
+            Dhcp4 = dhcp4,
+            Addresses = addresses.Count == 0 ? null : addresses,
+            Gateway4 = gateway4,
+            Nameservers = nameservers,
+            Mtu = entry.Mtu,
+            MacAddress = entry.MacAddress,
+            Routes = routes.Count == 0 ? null : routes,
         };
     }
 
@@ -136,6 +259,42 @@ public static class NetworkConfigYamlSerializer
         public Dictionary<string, RawBondConfig>? Bonds { get; set; }
         public Dictionary<string, RawBridgeConfig>? Bridges { get; set; }
         public Dictionary<string, RawVlanConfig>? Vlans { get; set; }
+        // v1 only: top-level 'config' list of typed entries.
+        public List<RawV1ConfigEntry>? Config { get; set; }
+    }
+
+    // v1 'config' list entry. The schema is a discriminated union via `type`;
+    // we only consume the fields relevant to physical adapters and standalone
+    // nameserver records today.
+    private sealed class RawV1ConfigEntry
+    {
+        public string? Type { get; set; }
+        public string? Name { get; set; }
+        // v1 spells it 'mac_address' (with underscore); the underscored naming
+        // convention maps MacAddress -> mac_address automatically.
+        public string? MacAddress { get; set; }
+        public int? Mtu { get; set; }
+        public List<RawV1Subnet>? Subnets { get; set; }
+        // For type=nameserver entries.
+        public List<string>? Address { get; set; }
+        public List<string>? Search { get; set; }
+    }
+
+    private sealed class RawV1Subnet
+    {
+        public string? Type { get; set; }
+        public string? Address { get; set; }
+        public string? Gateway { get; set; }
+        public List<string>? DnsNameservers { get; set; }
+        public List<string>? DnsSearch { get; set; }
+        public List<RawV1Route>? Routes { get; set; }
+    }
+
+    private sealed class RawV1Route
+    {
+        public string? Network { get; set; }
+        public string? Gateway { get; set; }
+        public int? Metric { get; set; }
     }
 
     private sealed class RawEthernetConfig
