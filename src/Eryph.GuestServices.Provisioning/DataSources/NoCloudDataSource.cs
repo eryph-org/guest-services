@@ -51,8 +51,14 @@ public sealed class NoCloudDataSource(
         }
     }
 
-    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken)
+    {
+        // RFC 0005: cloud-init's NoCloud datasource doesn't unmount/eject the
+        // cidata ISO either — eryph-zero deliberately keeps the drive attached
+        // so a `egs-tool reset` can re-read the same payload. Cleanup here would
+        // also race with the host's storage stack on Windows. No-op by design.
+        return Task.CompletedTask;
+    }
 
     internal static async Task<DataSourceResult?> ReadAsync(string root, CancellationToken cancellationToken)
     {

@@ -52,8 +52,14 @@ public sealed class ConfigDriveDataSource(
         }
     }
 
-    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken)
+    {
+        // RFC 0005: same rationale as NoCloud — eryph-zero keeps the config-2
+        // ISO attached so a `egs-tool reset` can re-read the same payload.
+        // cloud-init's OpenStack ConfigDrive datasource doesn't eject the
+        // volume on success either; the host owns its lifetime.
+        return Task.CompletedTask;
+    }
 
     internal static async Task<DataSourceResult?> ReadAsync(string root, CancellationToken cancellationToken)
     {

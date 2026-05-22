@@ -151,4 +151,28 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
 
         result.Should().BeOfType<DataSourceProbeResult.Failed>();
     }
+
+    [Fact]
+    public async Task OnCompletedAsync_is_a_noop_and_does_not_touch_filesystem()
+    {
+        // RFC 0005: ConfigDrive cleanup is a no-op by design — eryph-zero keeps
+        // the config-2 ISO attached so `egs-tool reset` can re-read the same
+        // payload. Verify nothing on the temp tree is removed.
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"abc\"}");
+
+        var probe = Substitute.For<IVolumeProbe>();
+        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+
+        await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "ConfigDrive", InstanceId = "abc" },
+            CancellationToken.None);
+
+        // Calling it twice must also be safe — idempotency.
+        await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "ConfigDrive", InstanceId = "abc" },
+            CancellationToken.None);
+
+        File.Exists(Path.Combine(_openstackDir, "meta_data.json")).Should().BeTrue();
+    }
 }

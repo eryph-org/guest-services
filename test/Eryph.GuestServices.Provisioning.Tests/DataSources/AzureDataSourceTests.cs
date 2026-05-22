@@ -53,18 +53,156 @@ public class AzureDataSourceTests
         result.Should().BeOfType<DataSourceProbeResult.NotApplicable>();
     }
 
-    [Fact]
-    public async Task OnCompletedAsync_is_a_noop()
+    // ---- OnCompletedAsync cleanup (RFC 0005) ----
+
+    // The Azure cleanup tests use a real-shape temp directory with a uniquely
+    // named root, mirroring cbi's AzureCustomDataService layout
+    // (<root>\CustomData.bin sitting alone in <root>). The fixture is created
+    // per-test and torn down so we never touch the real C:\AzureData.
+    private sealed class AzureCleanupFixture : IDisposable
     {
-        var source = new AzureDataSource(
+        public string Root { get; }
+        public string CustomDataPath { get; }
+
+        public AzureCleanupFixture()
+        {
+            Root = Path.Combine(
+                Path.GetTempPath(),
+                "egs-prov-azure-cleanup-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Root);
+            CustomDataPath = Path.Combine(Root, "CustomData.bin");
+        }
+
+        public void WritePayload(byte[] bytes) => File.WriteAllBytes(CustomDataPath, bytes);
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Root))
+                Directory.Delete(Root, recursive: true);
+        }
+    }
+
+    private static AzureDataSource MakeSourceForCleanup(string customDataPath) =>
+        new(
             Substitute.For<IVolumeProbe>(),
-            NullLogger<AzureDataSource>.Instance);
+            NullLogger<AzureDataSource>.Instance,
+            imdsClientFactory: () => new AzureImdsClient(
+                new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)),
+                disposeHandler: false,
+                TimeSpan.FromSeconds(1),
+                NullLogger<AzureImdsClient>.Instance),
+            fileExists: File.Exists,
+            readFileBytes: (p, ct) => File.ReadAllBytesAsync(p, ct),
+            customDataPath: customDataPath);
+
+    [Fact]
+    public async Task OnCompletedAsync_deletes_CustomData_bin_and_empty_parent_directory()
+    {
+        // Cbi parity: AzureCustomDataService.provisioning_completed() removes
+        // CustomData.bin so a re-run on the same VM can't replay stale user-data.
+        // We mirror that here, and additionally remove the now-empty parent
+        // directory so the file system reflects "no Azure payload pending".
+        using var fixture = new AzureCleanupFixture();
+        fixture.WritePayload(new byte[] { 0x01, 0x02, 0x03 });
+
+        var source = MakeSourceForCleanup(fixture.CustomDataPath);
+
+        await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "Azure", InstanceId = "vmid" },
+            CancellationToken.None);
+
+        File.Exists(fixture.CustomDataPath).Should().BeFalse();
+        Directory.Exists(fixture.Root).Should().BeFalse(
+            "the parent dir was left empty by the file delete, so cleanup removes it too");
+    }
+
+    [Fact]
+    public async Task OnCompletedAsync_is_idempotent_when_CustomData_bin_already_absent()
+    {
+        // RFC 0005 explicit requirement: a second call must succeed without
+        // throwing. PA only writes CustomData.bin once per instance — if a
+        // previous successful provisioning already deleted it, the next reset
+        // / rerun must not crash.
+        using var fixture = new AzureCleanupFixture();
+        // Deliberately do NOT create CustomData.bin.
+
+        var source = MakeSourceForCleanup(fixture.CustomDataPath);
 
         var act = async () => await source.OnCompletedAsync(
-            new DataSourceResult { SourceName = "Azure", InstanceId = "x" },
+            new DataSourceResult { SourceName = "Azure", InstanceId = "vmid" },
             CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+        File.Exists(fixture.CustomDataPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OnCompletedAsync_called_twice_succeeds_and_leaves_filesystem_consistent()
+    {
+        // The strongest idempotency check: real file removed, then a second
+        // call with the file already gone. Must not throw, must not re-create,
+        // must leave the parent dir cleaned up after the first call.
+        using var fixture = new AzureCleanupFixture();
+        fixture.WritePayload(new byte[] { 0x10, 0x20 });
+
+        var source = MakeSourceForCleanup(fixture.CustomDataPath);
+        var data = new DataSourceResult { SourceName = "Azure", InstanceId = "vmid" };
+
+        await source.OnCompletedAsync(data, CancellationToken.None);
+        var act = async () => await source.OnCompletedAsync(data, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        File.Exists(fixture.CustomDataPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OnCompletedAsync_swallows_IO_exceptions_and_does_not_throw()
+    {
+        // Best-effort cleanup contract (RFC 0005 + memory rule): provisioning
+        // has already succeeded by the time we get here, so a bad file delete
+        // must NOT propagate as a failure. We simulate the failure by
+        // injecting a deleteFile that throws — production wraps File.Delete
+        // unchecked, so this is the realistic shape.
+        var source = new AzureDataSource(
+            Substitute.For<IVolumeProbe>(),
+            NullLogger<AzureDataSource>.Instance,
+            imdsClientFactory: () => new AzureImdsClient(
+                new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)),
+                disposeHandler: false,
+                TimeSpan.FromSeconds(1),
+                NullLogger<AzureImdsClient>.Instance),
+            fileExists: _ => true,
+            readFileBytes: (_, _) => Task.FromResult(Array.Empty<byte>()),
+            deleteFile: _ => throw new IOException("simulated I/O denial"),
+            customDataPath: @"C:\AzureData\CustomData.bin");
+
+        var act = async () => await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "Azure", InstanceId = "vmid" },
+            CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task OnCompletedAsync_does_not_delete_parent_when_directory_still_has_other_files()
+    {
+        // Safety: if anyone else dropped a file under C:\AzureData (PA or a
+        // future agent), we must not remove the directory out from under them.
+        // cbi has the same guard implicitly via the per-file delete pattern.
+        using var fixture = new AzureCleanupFixture();
+        fixture.WritePayload(new byte[] { 0x42 });
+        var sibling = Path.Combine(fixture.Root, "OtherAgentMarker.txt");
+        File.WriteAllText(sibling, "not ours");
+
+        var source = MakeSourceForCleanup(fixture.CustomDataPath);
+
+        await source.OnCompletedAsync(
+            new DataSourceResult { SourceName = "Azure", InstanceId = "vmid" },
+            CancellationToken.None);
+
+        File.Exists(fixture.CustomDataPath).Should().BeFalse();
+        Directory.Exists(fixture.Root).Should().BeTrue("the dir was not empty after the file delete");
+        File.Exists(sibling).Should().BeTrue();
     }
 
     // ---- IMDS JSON parsing ----

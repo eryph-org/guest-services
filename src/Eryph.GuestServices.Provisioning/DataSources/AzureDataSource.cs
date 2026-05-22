@@ -39,6 +39,10 @@ public sealed class AzureDataSource : IDataSource
     private readonly Func<AzureImdsClient> _imdsClientFactory;
     private readonly Func<string, bool> _fileExists;
     private readonly Func<string, CancellationToken, Task<byte[]>> _readFileBytes;
+    private readonly Action<string> _deleteFile;
+    private readonly Func<string, bool> _directoryExists;
+    private readonly Action<string> _deleteDirectoryIfEmpty;
+    private readonly string _customDataPath;
 
     /// <summary>
     /// Production constructor.
@@ -49,7 +53,11 @@ public sealed class AzureDataSource : IDataSource
             logger,
             imdsClientFactory: () => new AzureImdsClient(logger),
             fileExists: File.Exists,
-            readFileBytes: (p, ct) => File.ReadAllBytesAsync(p, ct))
+            readFileBytes: (p, ct) => File.ReadAllBytesAsync(p, ct),
+            deleteFile: File.Delete,
+            directoryExists: Directory.Exists,
+            deleteDirectoryIfEmpty: DeleteDirectoryIfEmpty,
+            customDataPath: CustomDataPath)
     {
     }
 
@@ -63,13 +71,30 @@ public sealed class AzureDataSource : IDataSource
         ILogger<AzureDataSource> logger,
         Func<AzureImdsClient> imdsClientFactory,
         Func<string, bool> fileExists,
-        Func<string, CancellationToken, Task<byte[]>> readFileBytes)
+        Func<string, CancellationToken, Task<byte[]>> readFileBytes,
+        Action<string>? deleteFile = null,
+        Func<string, bool>? directoryExists = null,
+        Action<string>? deleteDirectoryIfEmpty = null,
+        string? customDataPath = null)
     {
         _volumeProbe = volumeProbe;
         _logger = logger;
         _imdsClientFactory = imdsClientFactory;
         _fileExists = fileExists;
         _readFileBytes = readFileBytes;
+        _deleteFile = deleteFile ?? File.Delete;
+        _directoryExists = directoryExists ?? Directory.Exists;
+        _deleteDirectoryIfEmpty = deleteDirectoryIfEmpty ?? DeleteDirectoryIfEmpty;
+        _customDataPath = customDataPath ?? CustomDataPath;
+    }
+
+    private static void DeleteDirectoryIfEmpty(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+        if (Directory.EnumerateFileSystemEntries(path).Any())
+            return;
+        Directory.Delete(path);
     }
 
     public string Name => "Azure";
@@ -106,10 +131,46 @@ public sealed class AzureDataSource : IDataSource
 
     public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken)
     {
-        // TODO (RFC 0005): delete C:\AzureData\CustomData.bin (and empty parent
-        // dir) once we have signed off on cbi-equivalent
-        // AzureCustomDataService.provisioning_completed() semantics. Keeping the
-        // file around in v1 is harmless — PA only writes it once per instance.
+        // RFC 0005: cbi's AzureCustomDataService.provisioning_completed() deletes
+        // CustomData.bin once provisioning succeeds, so a re-run on the same VM
+        // can't accidentally re-consume stale user-data. Mirroring that here:
+        // delete the file and remove the parent dir if it's left empty. PA only
+        // writes the file once per instance, so a missing file on a second call
+        // is the idempotent path — log Debug and continue.
+        try
+        {
+            if (_fileExists(_customDataPath))
+            {
+                _deleteFile(_customDataPath);
+                _logger.LogInformation(
+                    "Azure: deleted {Path} after successful provisioning",
+                    _customDataPath);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Azure: {Path} already absent; cleanup is a no-op",
+                    _customDataPath);
+            }
+
+            var parent = Path.GetDirectoryName(_customDataPath);
+            if (!string.IsNullOrEmpty(parent) && _directoryExists(parent))
+            {
+                _deleteDirectoryIfEmpty(parent);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: provisioning has succeeded by the time we run; an IO
+            // error here must not turn that into a Failed run. The StageRunner
+            // also wraps OnProvisioningCompletedAsync in try/catch — this inner
+            // catch keeps the logging close to the action that failed.
+            _logger.LogWarning(
+                ex,
+                "Azure: cleanup of {Path} failed (best-effort); continuing",
+                _customDataPath);
+        }
+
         return Task.CompletedTask;
     }
 

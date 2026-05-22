@@ -23,8 +23,13 @@ public sealed class HyperVKvpDataSource(ILogger<HyperVKvpDataSource> logger) : I
     public Task<DataSourceProbeResult> ProbeAsync(CancellationToken cancellationToken) =>
         Task.FromResult(Probe());
 
-    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken) =>
-        Task.CompletedTask;
+    public Task OnCompletedAsync(DataSourceResult data, CancellationToken cancellationToken)
+    {
+        // RFC 0005: KVP is host-pushed via the Hyper-V data exchange channel;
+        // the guest doesn't own the entries and clearing them would be a no-op
+        // anyway (the host can re-push at any time). No-op by design.
+        return Task.CompletedTask;
+    }
 
     private DataSourceProbeResult Probe()
     {

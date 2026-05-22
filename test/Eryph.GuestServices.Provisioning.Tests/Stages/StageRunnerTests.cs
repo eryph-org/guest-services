@@ -3,8 +3,10 @@ using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
+using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.Tests.Semaphores;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -253,6 +255,84 @@ public sealed class StageRunnerTests
         await pipeline.DidNotReceiveWithAnyArgs().ResolveAsync(default, default);
     }
 
+    // ---- RFC 0005 cleanup hook ----
+
+    [Fact]
+    public async Task RunAsync_invokes_data_source_cleanup_only_on_full_Success()
+    {
+        // Per RFC 0005: OnProvisioningCompletedAsync must be invoked when the
+        // Final stage completes successfully. The locator routes the call to
+        // the originating datasource. The runner only owns the dispatch — we
+        // verify it happens exactly once and the success path is not impacted.
+        var data = MakeData("i-cleanup");
+        var locator = LocatorReturning(data);
+
+        var runner = BuildRunner(locator);
+        var result = await runner.RunAsync(CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Success>();
+        await locator.Received(1).OnProvisioningCompletedAsync(data, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_does_not_invoke_cleanup_on_RebootRequested()
+    {
+        // Reboot-and-continue must keep the datasource alive across the boot —
+        // the second-half pass needs to read the same payload. Cleanup is for
+        // *terminal* success only.
+        var data = MakeData("i-1");
+        var locator = LocatorReturning(data);
+
+        var modules = new IModule[] { new RebootingModule("needs-reboot") };
+
+        var runner = BuildRunner(locator, modules: modules);
+        var result = await runner.RunAsync(CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.RebootRequested>();
+        await locator.DidNotReceive().OnProvisioningCompletedAsync(
+            Arg.Any<DataSourceResult>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_does_not_invoke_cleanup_on_Failed()
+    {
+        // A failed module returns Failed; the datasource may still be needed
+        // for diagnostics / re-run. Cleanup must NOT fire.
+        var data = MakeData("i-1");
+        var locator = LocatorReturning(data);
+
+        var modules = new IModule[] { new FailingModule("boom") };
+
+        var runner = BuildRunner(locator, modules: modules);
+        var result = await runner.RunAsync(CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Failed>();
+        await locator.DidNotReceive().OnProvisioningCompletedAsync(
+            Arg.Any<DataSourceResult>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_keeps_Success_when_cleanup_hook_throws()
+    {
+        // RFC 0005 explicit requirement: a throwing cleanup hook must not
+        // flip provisioning to Failed. We model the locator throwing because
+        // a misbehaving datasource forwards exceptions through the locator's
+        // try/catch. The StageRunner wraps the call so the outcome stays
+        // Success.
+        var data = MakeData("i-1");
+        var locator = Substitute.For<IDataSourceLocator>();
+        locator.LocateAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<DataSourceResult?>(data));
+        locator.OnProvisioningCompletedAsync(Arg.Any<DataSourceResult>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("cleanup failed"));
+
+        var runner = BuildRunner(locator);
+        var result = await runner.RunAsync(CancellationToken.None);
+
+        result.Should().BeOfType<StageRunOutcome.Success>(
+            "cleanup is best-effort; provisioning already succeeded by the time it runs");
+    }
+
     [Fact]
     public async Task RunAsync_returns_Failed_when_userdata_cannot_be_parsed()
     {
@@ -290,7 +370,9 @@ public sealed class StageRunnerTests
         IUserDataPipeline? pipeline = null,
         IStateStore? stateStore = null,
         IModule[]? modules = null,
-        IReportingDispatcher? reporter = null)
+        IReportingDispatcher? reporter = null,
+        ISemaphoreStore? semaphoreStore = null,
+        IBootSessionDetector? bootSessionDetector = null)
     {
         locator ??= Substitute.For<IDataSourceLocator>();
         if (pipeline is null)
@@ -301,11 +383,20 @@ public sealed class StageRunnerTests
         }
         stateStore ??= new InMemoryStateStore();
         reporter ??= Substitute.For<IReportingDispatcher>();
+        semaphoreStore ??= new NullSemaphoreStore();
+        if (bootSessionDetector is null)
+        {
+            bootSessionDetector = Substitute.For<IBootSessionDetector>();
+            bootSessionDetector.IsNewBootAsync(Arg.Any<CancellationToken>())
+                .Returns(Task.FromResult(false));
+        }
 
         return new StageRunner(
             locator,
             pipeline,
             stateStore,
+            semaphoreStore,
+            bootSessionDetector,
             modules ?? [],
             reporter,
             Substitute.For<IWindowsOs>(),

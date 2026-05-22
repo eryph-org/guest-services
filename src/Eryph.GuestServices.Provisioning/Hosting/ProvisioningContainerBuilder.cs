@@ -5,6 +5,7 @@ using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.Reporting;
 using Eryph.GuestServices.Provisioning.Reporting.Handlers;
+using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
@@ -94,13 +95,32 @@ internal static class ProvisioningContainerBuilder
         if (options.DryRun)
         {
             container.Register<IStateStore, NullStateStore>(Lifestyle.Singleton);
+            container.Register<ISemaphoreStore, NullSemaphoreStore>(Lifestyle.Singleton);
         }
         else
         {
             container.Register<IStateStore>(
                 () => new FileStateStore(container.GetInstance<ILogger<FileStateStore>>()),
                 Lifestyle.Singleton);
+            // Same FileSemaphoreStore secondary constructor issue — pin the DI
+            // constructor explicitly via a factory.
+            container.Register<ISemaphoreStore>(
+                () => new FileSemaphoreStore(container.GetInstance<ILogger<FileSemaphoreStore>>()),
+                Lifestyle.Singleton);
         }
+
+        // Boot session detection. Win32BootClock reads Win32_OperatingSystem.LastBootUpTime
+        // via CIM. In dry-run mode we still register it so the container verifies
+        // cleanly — the detector itself is harmless to invoke.
+        container.Register<IBootClock, Win32BootClock>(Lifestyle.Singleton);
+        // BootSessionDetector exposes a second public constructor for tests
+        // (with explicit marker path) which SimpleInjector cannot disambiguate;
+        // use a factory to pin the DI constructor.
+        container.Register<IBootSessionDetector>(
+            () => new BootSessionDetector(
+                container.GetInstance<IBootClock>(),
+                container.GetInstance<ILogger<BootSessionDetector>>()),
+            Lifestyle.Singleton);
 
         // Stage runner.
         container.Register<IStageRunner, StageRunner>(Lifestyle.Singleton);

@@ -66,8 +66,31 @@ public sealed class UserDataSettings
 
 public sealed class DataSourceSettings
 {
-    /// <summary>Per-datasource cap on total time spent in <c>WaitForReady</c> retries.</summary>
-    public int ProbeTimeoutMinutes { get; init; } = 10;
+    /// <summary>
+    /// Total wall-clock budget (in minutes) <see cref="DataSources.DataSourceLocator"/>
+    /// will spend across all probes — including <c>WaitForReady</c> backoffs — before
+    /// giving up and returning <c>NoDataSource</c>. Mirrors cloud-init's per-datasource
+    /// <c>wait_for_metadata_service</c> deadline but is global (one timer for the entire
+    /// LocateAsync call), since we round-robin probes between sources rather than
+    /// blocking on a single slow one. Default 5 minutes — Azure PA usually completes
+    /// in under 5; longer means something is wrong.
+    /// </summary>
+    public int ReadinessTimeoutMinutes { get; init; } = 5;
+
+    /// <summary>
+    /// Minimum backoff (seconds) between consecutive <c>WaitForReady</c> probes of the
+    /// same source. The datasource's own <see cref="DataSources.DataSourceProbeResult.WaitForReady.Backoff"/>
+    /// is treated as a hint; the locator clamps it to [<see cref="MinBackoffSeconds"/>,
+    /// <see cref="MaxBackoffSeconds"/>] and doubles after each retry. Default 1s.
+    /// </summary>
+    public int MinBackoffSeconds { get; init; } = 1;
+
+    /// <summary>
+    /// Maximum backoff (seconds) between consecutive <c>WaitForReady</c> probes of the
+    /// same source. Caps the exponential growth so we keep checking at least once a
+    /// minute even on a long deadline. Default 60s.
+    /// </summary>
+    public int MaxBackoffSeconds { get; init; } = 60;
 }
 
 public sealed class ScriptSettings
