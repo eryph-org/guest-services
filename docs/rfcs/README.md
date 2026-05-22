@@ -16,14 +16,14 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 |---|---|---|
 | [0001](0001-vendor-data-merge-policy.md) | Vendor-data merge policy | Draft |
 | [0002](0002-network-config-v1-v2-application.md) | Network-config v1/v2 application on Windows | Implemented |
-| [0003](0003-module-frequencies.md) | Module frequencies (per-instance / per-boot / per-once) | Draft |
-| [0004](0004-datasource-readiness-timeout.md) | Datasource readiness — probe timeout, retry backoff | Draft |
-| [0005](0005-datasource-cleanup-hook.md) | Datasource cleanup hook timing | Draft |
+| [0003](0003-module-frequencies.md) | Module frequencies (per-instance / per-boot / per-once) | Implemented |
+| [0004](0004-datasource-readiness-timeout.md) | Datasource readiness — probe timeout, retry backoff | Implemented |
+| [0005](0005-datasource-cleanup-hook.md) | Datasource cleanup hook timing | Implemented |
 | [0006](0006-multi-handler-reporting-cloud-backends.md) | Multi-handler reporting — Azure / AWS cloud backends | Draft |
-| [0007](0007-scripts-per-frequency-edge-cases.md) | `scripts/per-*` semantics edge cases | Draft |
+| [0007](0007-scripts-per-frequency-edge-cases.md) | `scripts/per-*` semantics edge cases | Implemented |
 | [0008](0008-platform-native-provisioner-coexistence.md) | Platform-native provisioner coexistence (Azure PA, EC2Launch v2) | Draft |
 | [0009](0009-module-list-split.md) | Module-list split (`cloud_init_modules` / `cloud_config_modules` / `cloud_final_modules`) | Draft |
-| [0010](0010-semaphore-design.md) | Semaphore design — single JSON vs per-module files | Draft |
+| [0010](0010-semaphore-design.md) | Semaphore design — single JSON vs per-module files | Implemented |
 | [0011](0011-jinja2-templating.md) | Jinja2 templating in user-data | Draft |
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |
 | [0013](0013-boothook-execution.md) | Boothook execution | Draft |
