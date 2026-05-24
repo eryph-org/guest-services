@@ -126,17 +126,27 @@ internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IMo
         }
     }
 
-    private static bool IsSudoEnabled(string? sudo)
+    // Cloud-init's `sudo` is a string-or-list union. The schema layer carries
+    // it as IReadOnlyList<string>?; this runtime compile-shim preserves the
+    // pre-list behaviour ("any non-'false' truthy entry promotes to admin").
+    // Phase 3 wires the full per-entry sudoers semantics on Linux; on Windows
+    // the binary "is the user an admin" answer collapses the list back down.
+    private static bool IsSudoEnabled(IReadOnlyList<string>? sudo)
     {
-        if (sudo is null)
+        if (sudo is null || sudo.Count == 0)
             return false;
 
-        var trimmed = sudo.Trim();
-        if (trimmed.Length == 0)
-            return false;
+        foreach (var entry in sudo)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+                continue;
+            var trimmed = entry.Trim();
+            // cloud-init treats anything other than "false" (case-insensitive) as
+            // "this user gets sudo". On Windows that means Administrators.
+            if (!string.Equals(trimmed, "false", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
 
-        // cloud-init treats anything other than "false" (case-insensitive) as
-        // "this user gets sudo". On Windows that means Administrators.
-        return !string.Equals(trimmed, "false", StringComparison.OrdinalIgnoreCase);
+        return false;
     }
 }

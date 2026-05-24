@@ -28,6 +28,7 @@ public static partial class CloudConfigMerge
         Name = right.Name ?? left.Name,
         Passwd = right.Passwd ?? left.Passwd,
         PlainTextPasswd = right.PlainTextPasswd ?? left.PlainTextPasswd,
+        HashedPasswd = right.HashedPasswd ?? left.HashedPasswd,
         LockPasswd = right.LockPasswd ?? left.LockPasswd,
         Groups = Concat(left.Groups, right.Groups),
         SshAuthorizedKeys = Concat(left.SshAuthorizedKeys, right.SshAuthorizedKeys),
@@ -35,14 +36,28 @@ public static partial class CloudConfigMerge
         Shell = right.Shell ?? left.Shell,
         HomeDir = right.HomeDir ?? left.HomeDir,
         PrimaryGroup = right.PrimaryGroup ?? left.PrimaryGroup,
-        Sudo = right.Sudo ?? left.Sudo,
+        // Sudo widened from string? to IReadOnlyList<string>? — cloud-init
+        // accepts a single string OR a list of strings, and stacking two
+        // fragments that each carry sudoers lines concatenates them.
+        Sudo = Concat(left.Sudo, right.Sudo),
         System = right.System ?? left.System,
+        Gecos = right.Gecos ?? left.Gecos,
+        SshImportId = Concat(left.SshImportId, right.SshImportId),
+        SshRedirectUser = right.SshRedirectUser ?? left.SshRedirectUser,
+        Expiredate = right.Expiredate ?? left.Expiredate,
+        NoCreateHome = right.NoCreateHome ?? left.NoCreateHome,
+        NoUserGroup = right.NoUserGroup ?? left.NoUserGroup,
+        NoLogInit = right.NoLogInit ?? left.NoLogInit,
+        SelinuxUser = right.SelinuxUser ?? left.SelinuxUser,
+        Uid = right.Uid ?? left.Uid,
+        Snapuser = right.Snapuser ?? left.Snapuser,
     };
 
     private static GroupConfig MergeGroup(GroupConfig left, GroupConfig right) => new()
     {
         Name = right.Name ?? left.Name,
         Members = Concat(left.Members, right.Members),
+        Gid = right.Gid ?? left.Gid,
     };
 
     private static ChpasswdListEntry MergeChpasswdEntry(ChpasswdListEntry left, ChpasswdListEntry right) => new()

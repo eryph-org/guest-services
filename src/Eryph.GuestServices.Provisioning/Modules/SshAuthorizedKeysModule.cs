@@ -65,10 +65,28 @@ internal sealed class SshAuthorizedKeysModule(ILogger<SshAuthorizedKeysModule> l
 
     private static string PickAdminUser(CloudConfigModel config)
     {
+        // Cloud-init's `sudo` is a string-or-list union. Treat any entry that
+        // isn't explicitly "false" as the truthy signal — same compile-shim
+        // policy as UsersGroupsModule.IsSudoEnabled. Phase 3 wires the
+        // full per-entry sudoers semantics; on Windows we collapse the list
+        // back to the binary "is this user an admin" answer.
         var sudoUser = config.Users?.FirstOrDefault(u =>
             !string.IsNullOrWhiteSpace(u.Name)
-            && !string.IsNullOrWhiteSpace(u.Sudo)
-            && !string.Equals(u.Sudo!.Trim(), "false", StringComparison.OrdinalIgnoreCase));
+            && HasTruthySudoEntry(u.Sudo));
         return sudoUser?.Name ?? "Administrator";
+    }
+
+    private static bool HasTruthySudoEntry(IReadOnlyList<string>? sudo)
+    {
+        if (sudo is null || sudo.Count == 0)
+            return false;
+        foreach (var entry in sudo)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+                continue;
+            if (!string.Equals(entry.Trim(), "false", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 }

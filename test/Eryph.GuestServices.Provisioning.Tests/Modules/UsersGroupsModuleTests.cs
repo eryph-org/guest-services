@@ -166,7 +166,7 @@ public sealed class UsersGroupsModuleTests
         var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
-            Users = [new UserConfig { Name = "alice", Sudo = sudo }],
+            Users = [new UserConfig { Name = "alice", Sudo = [sudo] }],
         };
 
         await module.ApplyAsync(
@@ -189,7 +189,7 @@ public sealed class UsersGroupsModuleTests
         var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
         var config = new CloudConfigModel
         {
-            Users = [new UserConfig { Name = "alice", Sudo = sudo }],
+            Users = [new UserConfig { Name = "alice", Sudo = [sudo] }],
         };
 
         await module.ApplyAsync(

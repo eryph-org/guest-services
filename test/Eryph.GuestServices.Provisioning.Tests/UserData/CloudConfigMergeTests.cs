@@ -170,6 +170,111 @@ public sealed class CloudConfigMergeTests
         }
     }
 
+    // Sibling of Merge_EveryCloudConfigProperty_SurvivesFromRight that walks
+    // every property declared on UserConfig. Phase 2A widened UserConfig's
+    // schema from 12 to 23 fields; this tripwire catches a future addition
+    // that the hand-rolled MergeUser helper forgets to wire (the helper is
+    // hand-written because it's called via KeyedByName on Users, not by the
+    // source-gen merge emitter directly).
+    [Fact]
+    public void Merge_EveryUserConfigProperty_SurvivesFromRight()
+    {
+        var populated = BuildPopulatedUserConfig();
+        // Run the user through the same KeyedByName path the production code
+        // takes — wrap in a single-user CloudConfig and merge from empty.
+        var merged = CloudConfigMergeProxy.Merge(
+            new CloudConfig.CloudConfig(),
+            new CloudConfig.CloudConfig { Users = [populated] });
+
+        merged.Users.Should().ContainSingle();
+        var mergedUser = merged.Users![0];
+
+        foreach (var prop in typeof(UserConfig).GetProperties())
+        {
+            if (prop.Name == "EqualityContract") continue;
+
+            var expected = prop.GetValue(populated);
+            var actual = prop.GetValue(mergedUser);
+
+            actual.Should().NotBeNull(
+                $"property '{prop.Name}' was populated on the right-hand UserConfig but came back null after merge — " +
+                $"MergeUser does not cover this property.");
+            actual.Should().BeEquivalentTo(expected,
+                $"merged value of UserConfig.'{prop.Name}' should match the right-hand input.");
+        }
+    }
+
+    // Walks every property on WriteFileConfig. Phase 2A attributed all the
+    // existing fields with [CloudInitField]; this test pins the generator's
+    // emit coverage for the nested write_files record.
+    [Fact]
+    public void Merge_EveryWriteFileConfigProperty_SurvivesFromRight()
+    {
+        var populated = new WriteFileConfig
+        {
+            Path = "/etc/example",
+            Content = "hello\n",
+            Owner = "root:root",
+            Permissions = "0644",
+            Encoding = "text/plain",
+            Append = true,
+            Defer = true,
+        };
+
+        // WriteFiles is a Concat-merged list at the root, so a left of empty
+        // and a right with one entry gives a single-entry merged list whose
+        // member is the source-gen MergeWriteFileConfig output via deep merge
+        // — except WriteFiles is Concat (per the generator), so the entry
+        // itself is the right entry verbatim. We assert by reflection across
+        // the entry's properties either way.
+        var merged = CloudConfigMergeProxy.Merge(
+            new CloudConfig.CloudConfig(),
+            new CloudConfig.CloudConfig { WriteFiles = [populated] });
+
+        merged.WriteFiles.Should().ContainSingle();
+        var mergedEntry = merged.WriteFiles![0];
+
+        foreach (var prop in typeof(WriteFileConfig).GetProperties())
+        {
+            if (prop.Name == "EqualityContract") continue;
+
+            var expected = prop.GetValue(populated);
+            var actual = prop.GetValue(mergedEntry);
+
+            actual.Should().NotBeNull(
+                $"property '{prop.Name}' was populated on the right-hand WriteFileConfig but came back null after merge.");
+            actual.Should().BeEquivalentTo(expected,
+                $"merged value of WriteFileConfig.'{prop.Name}' should match the right-hand input.");
+        }
+    }
+
+    private static UserConfig BuildPopulatedUserConfig() => new()
+    {
+        Name = "alice",
+        Passwd = "$6$rounds$hash",
+        PlainTextPasswd = "plain",
+        HashedPasswd = "$6$rounds$hash",
+        LockPasswd = false,
+        Groups = ["users"],
+        SshAuthorizedKeys = ["ssh-ed25519 key"],
+        Inactive = "30",
+        Shell = "/bin/bash",
+        HomeDir = "/home/alice",
+        PrimaryGroup = "alice",
+        Sudo = ["ALL=(ALL) NOPASSWD:ALL"],
+        System = false,
+        Gecos = "Alice Wonderland",
+        SshImportId = ["gh:alice"],
+        SshRedirectUser = false,
+        Expiredate = "2099-12-31",
+        NoCreateHome = false,
+        NoUserGroup = false,
+        NoLogInit = false,
+        SelinuxUser = "user_u",
+        Uid = 4242,
+        Snapuser = "alice@example.com",
+    };
+
     private static CloudConfig.CloudConfig BuildPopulatedCloudConfig() => new()
     {
         Hostname = "host",
