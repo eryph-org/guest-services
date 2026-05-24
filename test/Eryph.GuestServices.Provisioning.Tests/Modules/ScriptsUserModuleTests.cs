@@ -30,10 +30,29 @@ public sealed class ScriptsUserModuleTests
             reporter ?? Substitute.For<IReportingDispatcher>(),
             checkpointStore ?? new InMemoryScriptCheckpointStore());
 
+    // Creates an IWindowsOs mock with deterministic %VAR% expansion so the
+    // module's path assembly is host-OS independent. Without this the real
+    // Environment.ExpandEnvironmentVariables (now routed through IWindowsOs)
+    // would no-op on a non-Windows host and the staged-script / log paths
+    // would lose their %ProgramData% root.
+    private static IWindowsOs CreateOs()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        // The module passes PerInstanceDirectory (no env vars) and the logs
+        // directory ("%ProgramData%\eryph\provisioning\logs") through
+        // ExpandEnvironmentVariables. Pin both to deterministic Windows paths
+        // so the staged-script / log path assembly is host-OS independent.
+        os.ExpandEnvironmentVariables(TestSettings.Scripts.PerInstanceDirectory)
+            .Returns(TestSettings.Scripts.PerInstanceDirectory);
+        os.ExpandEnvironmentVariables(@"%ProgramData%\eryph\provisioning\logs")
+            .Returns(@"C:\ProgramData\eryph\provisioning\logs");
+        return os;
+    }
+
     [Fact]
     public async Task ApplyAsync_NoScripts_NoOp()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         var module = CreateModule();
 
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig());
@@ -47,7 +66,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_PowerShellScript_StagesAndExecutesViaPowerShell()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "ok", ""));
         var module = CreateModule();
@@ -73,7 +92,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_ScriptExitCode1003_ReturnsRebootRequested()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
         var module = CreateModule();
@@ -90,7 +109,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_MultipleScripts_StagesWithSequentialNamesAndIndices()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
         var module = CreateModule();
@@ -131,7 +150,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_CbiShape_ShellscriptPartWithPs1FilenameAndNoShebang_DispatchesAsPowerShell()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
         var module = CreateModule();
@@ -169,7 +188,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_ScriptKindOther_IsSkippedWithoutExecution()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         var module = CreateModule();
 
         var script = new ScriptPayload(ScriptKind.Other, Encoding.UTF8.GetBytes("#!/bin/bash\necho hi\n"), "garbage.sh");
@@ -188,7 +207,7 @@ public sealed class ScriptsUserModuleTests
     [Fact]
     public async Task ApplyAsync_OnSuccess_EmitsProgressEventAndWritesPerScriptLog()
     {
-        var os = Substitute.For<IWindowsOs>();
+        var os = CreateOs();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "captured-stdout", "captured-stderr"));
         var reporter = Substitute.For<IReportingDispatcher>();

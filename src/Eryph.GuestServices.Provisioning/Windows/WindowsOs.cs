@@ -1157,7 +1157,7 @@ internal sealed class WindowsOs : IWindowsOs
             // UNC paths are returned as-is and are not anchored under C:\.
             // We still canonicalize to flush any stray separators or dot
             // segments that slipped past the early check.
-            return Path.GetFullPath(unixPath);
+            return WindowsPath.GetFullPath(unixPath);
         }
         else if (!unixPath.StartsWith('/'))
         {
@@ -1173,16 +1173,16 @@ internal sealed class WindowsOs : IWindowsOs
             candidate = segments[0] switch
             {
                 "home" when segments.Length >= 2 =>
-                    Path.Combine(["C:\\Users", .. segments[1..]]),
+                    WindowsPath.Combine(["C:\\Users", .. segments[1..]]),
                 "root" =>
-                    Path.Combine(["C:\\Users\\Administrator", .. segments[1..]]),
+                    WindowsPath.Combine(["C:\\Users\\Administrator", .. segments[1..]]),
                 "tmp" =>
-                    Path.Combine([Path.GetTempPath().TrimEnd('\\'), .. segments[1..]]),
+                    WindowsPath.Combine([Path.GetTempPath().TrimEnd('\\'), .. segments[1..]]),
                 "var" =>
-                    Path.Combine(
+                    WindowsPath.Combine(
                         [Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), .. segments[1..]]),
                 _ =>
-                    Path.Combine(["C:\\", .. segments]),
+                    WindowsPath.Combine(["C:\\", .. segments]),
             };
         }
 
@@ -1191,7 +1191,7 @@ internal sealed class WindowsOs : IWindowsOs
         // C:\ (including /tmp -> %TEMP% and /var -> %ProgramData%, both of
         // which are C:\ subtrees on a default Windows install). Anything that
         // canonicalizes elsewhere is rejected.
-        var full = Path.GetFullPath(candidate);
+        var full = WindowsPath.GetFullPath(candidate);
         if (!full.StartsWith(@"C:\", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException(
                 $"Translated path '{full}' is outside the allowed C:\\ root (input was '{unixPath}').",
@@ -1208,6 +1208,21 @@ internal sealed class WindowsOs : IWindowsOs
                 return true;
         }
         return false;
+    }
+
+    public string ExpandEnvironmentVariables(string value) =>
+        Environment.ExpandEnvironmentVariables(value);
+
+    public char? GetSystemDriveLetter()
+    {
+        // %SystemDrive% is "C:" on every supported Windows install but we
+        // still resolve it dynamically so reimaged guests with a non-C:
+        // system drive work correctly.
+        var sysDrive = Environment.GetEnvironmentVariable("SystemDrive");
+        if (string.IsNullOrWhiteSpace(sysDrive)) return null;
+        var ch = sysDrive[0];
+        if (ch is >= 'a' and <= 'z') ch = char.ToUpperInvariant(ch);
+        return ch is >= 'A' and <= 'Z' ? ch : null;
     }
 
     private async Task<RunCommandResult> RunAsync(ProcessStartInfo psi, CancellationToken cancellationToken)
