@@ -34,4 +34,13 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Real-world cloud-init fixtures (Apache-2.0; see fixtures/cloud-init/README.md).
+         Copied to bin/.../fixtures/cloud-init/ so RealWorldCloudInitFixtureTests can
+         load them via relative paths under AppContext.BaseDirectory. -->
+    <None Include="..\fixtures\cloud-init\*.yaml" Link="fixtures\cloud-init\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

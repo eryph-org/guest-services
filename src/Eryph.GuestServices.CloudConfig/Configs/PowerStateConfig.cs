@@ -38,12 +38,16 @@ public sealed record PowerStateConfig
     public int? Timeout { get; init; }
 
     /// <summary>
-    /// Boolean (literal <c>true</c>/<c>false</c>) or a shell command string.
+    /// Cloud-init <c>power_state.condition</c> — a bool (literal
+    /// <c>true</c>/<c>false</c>) or a shell command string.
     /// <list type="bullet">
-    ///   <item>literal <c>true</c> (or null): proceed.</item>
-    ///   <item>literal <c>false</c>: skip.</item>
+    ///   <item>bool <c>true</c> (or empty / omitted): proceed.</item>
+    ///   <item>bool <c>false</c>: skip.</item>
     ///   <item>string: run as a shell command; exit code 0 proceeds, anything else skips.</item>
     /// </list>
+    /// Modeled as <see cref="BoolOrString"/> so PyYAML's quoting
+    /// distinction survives — plain <c>true</c> is bool, quoted
+    /// <c>"true"</c> is a shell command (Linux's <c>true</c> exits 0).
     /// </summary>
-    public object? Condition { get; init; }
+    public BoolOrString Condition { get; init; }
 }

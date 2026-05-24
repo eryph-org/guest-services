@@ -94,20 +94,20 @@ internal sealed class PowerStateModule(ILogger<PowerStateModule> logger) : IModu
     }
 
     private async Task<bool> EvaluateConditionAsync(
-        object? condition,
+        BoolOrString condition,
         IModuleContext context,
         CancellationToken cancellationToken)
     {
-        // The YAML layer hands us native bool for plain (unquoted) YAML
-        // booleans and string for everything else, matching cloud-init's
-        // PyYAML-driven behaviour exactly. See YamlSchemaTypeResolver.
-        return condition switch
-        {
-            null => true,
-            bool literal => literal,
-            string command => await RunConditionCommandAsync(command, context, cancellationToken).ConfigureAwait(false),
-            _ => true,
-        };
+        // The YAML layer routes plain (unquoted) YAML 1.1 bool tokens to
+        // BoolOrString.FromBool and everything else (including quoted bool
+        // tokens — operator quoted intentionally) to BoolOrString.FromString,
+        // matching cloud-init's PyYAML-driven behaviour exactly. See
+        // Yaml11ScalarResolver / BoolOrStringYamlConverter.
+        if (condition.IsEmpty)
+            return true;
+        if (condition.IsBool)
+            return condition.Bool!.Value;
+        return await RunConditionCommandAsync(condition.String!, context, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> RunConditionCommandAsync(

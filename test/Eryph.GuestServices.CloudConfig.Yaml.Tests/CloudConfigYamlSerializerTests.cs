@@ -716,10 +716,12 @@ public class CloudConfigYamlSerializerTests
         config.PowerState.Delay.Should().Be("+5");
         config.PowerState.Message.Should().Be("Provisioning complete");
         config.PowerState.Timeout.Should().Be(30);
-        // Plain (unquoted) `true` → native bool. BoolOrStringYamlConverter
-        // restores the PyYAML / cloud-init behaviour that YamlDotNet's
-        // default object?-target deserialisation would otherwise lose.
-        config.PowerState.Condition.Should().Be(true);
+        // Plain (unquoted) `true` → bool variant of BoolOrString.
+        // BoolOrStringYamlConverter restores the PyYAML / cloud-init
+        // behaviour that YamlDotNet's default object?-target
+        // deserialisation would otherwise lose.
+        config.PowerState.Condition.IsBool.Should().BeTrue();
+        config.PowerState.Condition.Bool.Should().Be(true);
     }
 
     [Fact]
@@ -735,7 +737,8 @@ public class CloudConfigYamlSerializerTests
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.PowerState!.Condition.Should().BeOfType<string>().And.Be("true");
+        config.PowerState!.Condition.IsString.Should().BeTrue();
+        config.PowerState.Condition.String.Should().Be("true");
     }
 
     [Fact]
@@ -748,15 +751,16 @@ public class CloudConfigYamlSerializerTests
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.PowerState!.Condition.Should().Be(false);
+        config.PowerState!.Condition.IsBool.Should().BeTrue();
+        config.PowerState.Condition.Bool.Should().Be(false);
     }
 
     [Fact]
     public void Deserialize_power_state_condition_string_roundtrips()
     {
         // Cloud-init shape: condition may be a bool literal OR a shell
-        // command string. The POCO field is `object?`; we just need
-        // YamlDotNet to populate the right runtime type.
+        // command string. The POCO field is now BoolOrString; we need
+        // YamlDotNet to populate the right variant.
         const string yaml = """
                             power_state:
                               mode: poweroff
@@ -766,7 +770,8 @@ public class CloudConfigYamlSerializerTests
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
         config.PowerState.Should().NotBeNull();
-        config.PowerState!.Condition.Should().Be("exit 0");
+        config.PowerState!.Condition.IsString.Should().BeTrue();
+        config.PowerState.Condition.String.Should().Be("exit 0");
     }
 
     [Fact]

@@ -352,6 +352,23 @@ X". Today it's just dead config — either implement or drop the field.
 
 ### 16. `YamlSchemaTypeResolver` is labelled "PyYAML-equivalent YAML 1.2"; PyYAML defaults to 1.1
 
+**RESOLVED in this commit:** Option (a) — the resolver now implements
+PyYAML SafeLoader (YAML 1.1) bool semantics. `YamlSchemaTypeResolver` was
+renamed to `Yaml11ScalarResolver` and extended to recognise all 22 YAML
+1.1 bool tokens (`yes`/`no`/`on`/`off`/`y`/`n` + case variants) on
+`bool` / `bool?` / `object?` targets, with the token table centralised in
+`Yaml11BoolTokens`. The documented `bool | string` union fields
+(`manage_etc_hosts`, `resize_rootfs`, `power_state.condition`) moved to a
+new `BoolOrString` primitive that preserves PyYAML's quoting distinction
+(plain bool token → bool, quoted → string). `apt_pipelining` stays
+`object?` (3-way `bool | "none" | int` union, no-op). Integer parsing
+keeps YAML 1.2 rules so `write_files.permissions: 0644` does not become an
+octal int. Covered by `Yaml11BoolTokensTests`, `Bool11RoundTripTests`,
+`BoolOrStringTests`, `RealWorldCloudInitFixtureTests` (cloud-init upstream
+fixtures + a lowercase-token contribution), and the source-generator
+presence/merge tests for value-type `IsEmpty` primitives.
+`differences-from-cloud-init.md` documents the now-matching behaviour.
+
 `src/Eryph.GuestServices.CloudConfig.Yaml/Converters/YamlSchemaTypeResolver.cs`
 class-doc and `ResolvePlainScalar` implement the YAML 1.2 core schema:
 only `true`/`True`/`TRUE` and `false`/`False`/`FALSE` are bools.

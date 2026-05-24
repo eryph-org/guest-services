@@ -245,12 +245,45 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
 
     private static string BuildRightWinsExpression(PropertyInfo p)
     {
+        // Structured primitives — value-type structs with a public `IsEmpty`
+        // property — use IsEmpty as the "did the operator set this?" signal.
+        // Recognising the shape rather than hard-coding BoolOrString keeps
+        // future similar types (e.g. BoolOrIntOrString) plug-and-play.
+        if (HasIsEmptyProperty(p.TypeSymbol))
+            return $"(right.{p.Name}.IsEmpty ? left.{p.Name} : right.{p.Name})";
+
         // Non-nullable types (e.g. `required bool`) cannot fall back via `??`
         // — right's value is authoritative. Nullable types (the common case)
         // use the standard `right ?? left` merge.
         if (IsNullable(p.TypeSymbol))
             return $"right.{p.Name} ?? left.{p.Name}";
         return $"right.{p.Name}";
+    }
+
+    private static bool HasIsEmptyProperty(ITypeSymbol type)
+    {
+        // Only value types can be treated as "structured primitives" here —
+        // reference types use plain RightWins via `??`.
+        if (!type.IsValueType)
+            return false;
+        // Skip Nullable<T> wrappers (their IsEmpty-like notion is HasValue).
+        if (type is INamedTypeSymbol named
+            && named.IsGenericType
+            && named.OriginalDefinition.ToDisplayString() == "System.Nullable<T>")
+            return false;
+
+        foreach (var member in type.GetMembers("IsEmpty"))
+        {
+            if (member is IPropertySymbol prop
+                && prop.DeclaredAccessibility == Accessibility.Public
+                && !prop.IsStatic
+                && prop.Type.SpecialType == SpecialType.System_Boolean
+                && prop.GetMethod is not null)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static bool IsNullable(ITypeSymbol type)
@@ -447,6 +480,13 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         if (IsListLike(p.TypeSymbol) || IsDictLike(p.TypeSymbol))
         {
             return $"c.{p.Name} is not null && c.{p.Name}.Count > 0";
+        }
+
+        // Structured primitives (BoolOrString and any future value-type
+        // struct with a public IsEmpty bool property) → !IsEmpty.
+        if (HasIsEmptyProperty(p.TypeSymbol))
+        {
+            return $"!c.{p.Name}.IsEmpty";
         }
 
         // Everything else (reference types) → not null

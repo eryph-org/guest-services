@@ -163,29 +163,32 @@ public sealed class UnknownFieldProbeTests
     }
 
     [Fact]
-    public void ManageEtcHosts_plain_bool_stringifies()
+    public void ManageEtcHosts_plain_bool_resolves_to_bool()
     {
-        // Phase 2 retyped `manage_etc_hosts` to `string?` because cloud-init
-        // accepts a mixed union of bool literals (`true`/`false`) and string
-        // enums (`"localhost"`, `"template"`). YamlDotNet coerces a plain
-        // YAML bool to its invariant-culture string form when the target is
-        // `string` — operators get "True" / "False" back; the downstream
-        // (Linux) module would treat that the same as the original literal.
+        // Cloud-init documents `manage_etc_hosts` as a bool | string union
+        // (true / false / "localhost" / "template"). With BoolOrString
+        // typing, a plain YAML 1.1 bool token resolves to bool — matching
+        // PyYAML SafeLoader / cloud-init exactly. The downstream (Linux)
+        // module sees a real bool, not a stringified literal.
         const string yaml = "manage_etc_hosts: true";
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().BeOneOf("true", "True");
+        config.ManageEtcHosts.IsBool.Should().BeTrue();
+        config.ManageEtcHosts.Bool.Should().Be(true);
     }
 
     [Fact]
     public void ManageEtcHosts_quoted_bool_keeps_string()
     {
+        // Quoted scalars stay as strings even when the text is a bool token —
+        // operator quoted intentionally. Preserves the PyYAML distinction.
         const string yaml = "manage_etc_hosts: \"true\"";
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().Be("true");
+        config.ManageEtcHosts.IsString.Should().BeTrue();
+        config.ManageEtcHosts.String.Should().Be("true");
     }
 
     [Fact]
@@ -198,7 +201,8 @@ public sealed class UnknownFieldProbeTests
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().Be("localhost");
+        config.ManageEtcHosts.IsString.Should().BeTrue();
+        config.ManageEtcHosts.String.Should().Be("localhost");
     }
 
     [Fact]

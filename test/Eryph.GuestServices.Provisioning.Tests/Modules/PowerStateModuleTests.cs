@@ -142,7 +142,7 @@ public sealed class PowerStateModuleTests
         var module = new PowerStateModule(NullLogger<PowerStateModule>.Instance);
         var config = new CloudConfigModel
         {
-            PowerState = new PowerStateConfig { Mode = "reboot", Condition = false },
+            PowerState = new PowerStateConfig { Mode = "reboot", Condition = BoolOrString.FromBool(false) },
         };
 
         var result = await module.ApplyAsync(
@@ -161,7 +161,28 @@ public sealed class PowerStateModuleTests
         var module = new PowerStateModule(NullLogger<PowerStateModule>.Instance);
         var config = new CloudConfigModel
         {
-            PowerState = new PowerStateConfig { Mode = "reboot", Condition = true },
+            PowerState = new PowerStateConfig { Mode = "reboot", Condition = BoolOrString.FromBool(true) },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received(1).RequestPowerStateAsync(Arg.Any<PowerStateRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Condition_Empty_BoolOrString_proceeds()
+    {
+        // Default-constructed BoolOrString (operator omitted condition:)
+        // must default to "proceed" — matches cloud-init's behaviour when
+        // the key is absent.
+        var os = Substitute.For<IWindowsOs>();
+        var module = new PowerStateModule(NullLogger<PowerStateModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            PowerState = new PowerStateConfig { Mode = "reboot", Condition = BoolOrString.Empty },
         };
 
         await module.ApplyAsync(
@@ -188,7 +209,7 @@ public sealed class PowerStateModuleTests
         await module.ApplyAsync(
             ResolvedUserData.Empty(new CloudConfigModel
             {
-                PowerState = new PowerStateConfig { Mode = "reboot", Condition = "ok-cmd" },
+                PowerState = new PowerStateConfig { Mode = "reboot", Condition = BoolOrString.FromString("ok-cmd") },
             }),
             new TestModuleContext(os),
             CancellationToken.None);
@@ -199,7 +220,7 @@ public sealed class PowerStateModuleTests
         await module.ApplyAsync(
             ResolvedUserData.Empty(new CloudConfigModel
             {
-                PowerState = new PowerStateConfig { Mode = "reboot", Condition = "fail-cmd" },
+                PowerState = new PowerStateConfig { Mode = "reboot", Condition = BoolOrString.FromString("fail-cmd") },
             }),
             new TestModuleContext(os),
             CancellationToken.None);

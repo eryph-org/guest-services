@@ -54,6 +54,14 @@ public sealed class CloudConfigGeneratorTests
                 public string? Name { get; init; }
             }
 
+            // Mimics the BoolOrString primitive — a value-type struct with a
+            // public bool IsEmpty property. The generator must recognise the
+            // shape generically (not by name) for both presence and merge.
+            public readonly record struct UnionPrimitive
+            {
+                public bool IsEmpty => true;
+            }
+
             [CloudInitRoot]
             [CloudInitRecord]
             public sealed record CloudConfig
@@ -75,6 +83,9 @@ public sealed class CloudConfigGeneratorTests
 
                 [CloudInitField]
                 public IReadOnlyDictionary<string, SubConfig>? RecordDict { get; init; }
+
+                [CloudInitField]
+                public UnionPrimitive Union { get; init; }
             }
 
             public static partial class CloudConfigMerge { }
@@ -118,6 +129,8 @@ public sealed class CloudConfigGeneratorTests
             "IReadOnlyDictionary with a scalar value type defaults to plain DictMerge");
         mergeText.Should().Contain("RecordDict = MergeDict(left.RecordDict, right.RecordDict, MergeSubConfig)",
             "IReadOnlyDictionary with a [CloudInitRecord] value type passes the per-record merger");
+        mergeText.Should().Contain("Union = (right.Union.IsEmpty ? left.Union : right.Union)",
+            "structured primitives (value-type structs with a public IsEmpty bool) merge via IsEmpty, not ??");
 
         var inventoryText = sources.Single(s => s.HintName == "CloudConfigPlatformInventory.g.cs").SourceText.ToString();
         inventoryText.Should().Contain("\"hostname\"", "yaml key is snake_cased");
@@ -126,6 +139,8 @@ public sealed class CloudConfigGeneratorTests
             "platform flag is carried through");
         inventoryText.Should().Contain("Linux APT",
             "description survives");
+        inventoryText.Should().Contain("!c.Union.IsEmpty",
+            "structured primitives use !IsEmpty as the presence check");
     }
 
     [Fact]
@@ -140,7 +155,7 @@ public sealed class CloudConfigGeneratorTests
 
         // Every property declared on the root must be assigned in the
         // generated initializer.
-        foreach (var name in new[] { "Hostname", "Apt", "Keys", "Sub", "StringDict", "RecordDict" })
+        foreach (var name in new[] { "Hostname", "Apt", "Keys", "Sub", "StringDict", "RecordDict", "Union" })
         {
             mergeText.Should().Contain($"{name} = ", $"the generator must cover '{name}'");
         }

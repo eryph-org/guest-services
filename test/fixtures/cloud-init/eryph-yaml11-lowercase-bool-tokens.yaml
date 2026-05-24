@@ -1,0 +1,28 @@
+#cloud-config
+# eryph guest-services contribution (NOT copied from cloud-init).
+#
+# Cloud-init's own example corpus canonicalises bool fields to the
+# capitalised YAML 1.2 forms (True / False), so it does not directly
+# exercise the lowercase YAML 1.1 tokens (yes / no / on / off / y / n)
+# that PyYAML SafeLoader still resolves to bool. This fixture pins that
+# gap: every value below is an idiomatic lowercase YAML 1.1 bool token
+# that an operator might reasonably write and that cloud-init would
+# resolve to a real bool — so we must too.
+package_update: yes
+package_upgrade: no
+package_reboot_if_required: on
+preserve_hostname: off
+ssh_pwauth: y
+disable_root: n
+manage_etc_hosts: yes
+resize_rootfs: no
+ntp:
+  enabled: yes
+chpasswd:
+  expire: no
+users:
+  - name: alice
+    lock_passwd: no
+power_state:
+  mode: reboot
+  condition: yes

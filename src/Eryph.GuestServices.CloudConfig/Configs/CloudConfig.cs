@@ -90,7 +90,15 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux APT package source configuration; no-op on Windows")]
     public AptConfig? Apt { get; init; }
 
-    /// <summary>Linux APT pipelining flag. Accepted; no-op on Windows.</summary>
+    /// <summary>
+    /// Linux APT pipelining flag. Cloud-init's schema accepts a 3-way union
+    /// of <c>bool</c>, the string <c>"none"</c>, and a positive integer —
+    /// carved out from the <see cref="BoolOrString"/> migration (which
+    /// covers documented bool|string unions only). Stays <c>object?</c>;
+    /// the field is no-op on Windows so the runtime-type drift has no
+    /// operator-visible effect today. If a future module needs to act on
+    /// it, introduce a dedicated BoolOrIntOrString primitive.
+    /// </summary>
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux APT pipelining; no-op on Windows")]
     public object? AptPipelining { get; init; }
 
@@ -149,14 +157,15 @@ public sealed record CloudConfig
     public SwapConfig? Swap { get; init; }
 
     /// <summary>
-    /// <c>true</c>/<c>false</c>/<c>localhost</c>/<c>template</c>. Linux
-    /// /etc/hosts management. Accepted; no-op on Windows (Windows manages
-    /// hosts differently). Type is <c>string?</c> so the YAML 1.2 resolver
-    /// stringifies bool literals and the documented enum values both flow
-    /// through unchanged.
+    /// Cloud-init <c>manage_etc_hosts</c> — <c>bool</c> (true/false) or
+    /// one of the string literals <c>"localhost"</c> / <c>"template"</c>.
+    /// Accepted; no-op on Windows (Windows manages hosts differently).
+    /// Modeled as <see cref="BoolOrString"/> so the operator's quoting
+    /// intent decides — a plain YAML 1.1 bool token resolves to bool,
+    /// a quoted bool token or the documented string enums stay as string.
     /// </summary>
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux /etc/hosts management; no-op on Windows")]
-    public string? ManageEtcHosts { get; init; }
+    public BoolOrString ManageEtcHosts { get; init; }
 
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux /etc/resolv.conf management; no-op on Windows")]
     public bool? ManageResolvConf { get; init; }
@@ -263,13 +272,14 @@ public sealed record CloudConfig
     public string? ByobuByDefault { get; init; }
 
     /// <summary>
-    /// Resize the root filesystem at boot. Accepts <c>true</c>/<c>false</c>/
-    /// <c>"noblock"</c>; modeled as <c>string?</c> so the YAML 1.2 schema
-    /// resolver stringifies bool literals to <c>"True"</c>/<c>"False"</c>
-    /// (or the user quotes them explicitly) without losing fidelity.
+    /// Cloud-init <c>resize_rootfs</c> — <c>bool</c> (true/false) or the
+    /// string literal <c>"noblock"</c>. Modeled as <see cref="BoolOrString"/>
+    /// so a plain YAML 1.1 bool token resolves to bool while the documented
+    /// string enum and quoted bool tokens stay as string. Linux-only at
+    /// runtime; no-op on Windows.
     /// </summary>
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux root filesystem resize toggle; no-op on Windows")]
-    public string? ResizeRootfs { get; init; }
+    public BoolOrString ResizeRootfs { get; init; }
 
     /// <summary>Path of the locale config file (e.g. <c>/etc/default/locale</c>).</summary>
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, YamlName = "locale_configfile", Description = "Linux locale config file path; no-op on Windows")]

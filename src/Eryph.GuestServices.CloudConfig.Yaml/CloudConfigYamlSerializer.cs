@@ -86,14 +86,19 @@ public static class CloudConfigYamlSerializer
             .WithTypeConverter(new StringListYamlConverter())
             .WithTypeConverter(new RuncmdListYamlConverter())
             .WithTypeConverter(new WriteFilePermissionsYamlConverter())
-            // PyYAML-equivalent YAML 1.2 schema resolution for object?
-            // targets. Cloud-init relies on it for every bool-or-string
-            // union (power_state.condition is the canonical example);
-            // installing this at the parser layer means we get the same
-            // semantics for every present and future object? field
-            // without per-property attribute overrides.
+            // BoolOrString: cloud-init's documented bool|string union fields
+            // (manage_etc_hosts, resize_rootfs, power_state.condition). The
+            // converter is registered globally — every BoolOrString-typed
+            // property on the model gets the same PyYAML-compatible
+            // semantics without per-property attribute overrides.
+            .WithTypeConverter(new BoolOrStringYamlConverter())
+            // PyYAML SafeLoader-equivalent YAML 1.1 scalar resolution.
+            // Handles bool / bool? targets (PyYAML's 22-token bool set,
+            // not YamlDotNet's YAML 1.2 six-token subset), BoolOrString
+            // as a defensive fallback, and object? targets (cloud-init's
+            // bool|string|int unions on acknowledged-but-no-op keys).
             .WithNodeDeserializer(
-                new YamlSchemaTypeResolver(),
+                new Yaml11ScalarResolver(),
                 s => s.Before<ScalarNodeDeserializer>())
             .WithNodeDeserializer(
                 new ReadOnlyListNodeDeserializer(),

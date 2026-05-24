@@ -29,6 +29,8 @@ divergences**.
 | Configurable per-stage module lists | `cloud_init_modules`, `cloud_config_modules`, `cloud_final_modules` in `cloud.cfg` | Stages and ordering are fixed by `[Stage]` attributes | Eryph delivers a fixed module set; configurability deferred ([RFC 0009](../../rfcs/0009-module-list-split.md)). |
 | Quoted-printable transfer encoding in multipart | Decoded | Pass-through (treated as UTF-8 bytes of the body) | Real-world cloud-init multiparts use 7bit/8bit/base64; quoted-printable is rare. |
 | `power_state` module | Implemented | Implemented — see `PowerState` in [Modules](../reference/modules.md) | Mode `halt` falls back to hibernate (Windows has no clean halt analogue). |
+| YAML bool tokens | PyYAML `SafeLoader` (YAML **1.1**): `true`/`false`, `yes`/`no`, `on`/`off`, `y`/`n` and their case variants — 22 tokens total | **Matches** — all 22 YAML 1.1 bool tokens resolve to bool on `bool` / `bool?` fields, exactly as `yaml.safe_load` does | The agent reads cloud-config the same way cloud-init does. Idiomatic snippets like `package_update: yes` deserialize to a real bool, not the string `"yes"`. Integers keep YAML 1.2 rules (leading-zero octal like `0644` stays a string for `write_files.permissions`). |
+| `bool \| string` union fields | Plain YAML 1.1 bool token → bool; quoted scalar → string (PyYAML quoting distinction) | **Matches** via the `BoolOrString` type on `manage_etc_hosts`, `resize_rootfs`, and `power_state.condition` | The operator's quoting intent decides: plain `condition: true` is a bool (proceed/skip); quoted `condition: "true"` is the shell command `/bin/true`. `apt_pipelining` stays a 3-way `bool \| "none" \| int` union and is a no-op, so it keeps its opaque type. |
 
 ## Things that match deliberately
 
