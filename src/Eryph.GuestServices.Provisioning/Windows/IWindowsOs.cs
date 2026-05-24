@@ -1,3 +1,5 @@
+using Eryph.GuestServices.CloudConfig;
+
 namespace Eryph.GuestServices.Provisioning.Windows;
 
 /// <summary>
@@ -145,6 +147,69 @@ public interface IWindowsOs
     Task SetDnsServersAsync(
         int interfaceIndex,
         IReadOnlyList<string> dnsServers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// IPv6 counterpart to <see cref="EnableDhcpAsync"/>: turns DHCPv6 on for
+    /// the adapter and removes any explicit static IPv6 addresses carried over
+    /// from a previous run. Idempotent.
+    /// </summary>
+    Task EnableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// IPv6 counterpart to <see cref="DisableDhcpAsync"/>: switches the IPv6
+    /// client on the given adapter to manual addressing and removes any
+    /// DHCPv6-leased addresses. Idempotent.
+    /// </summary>
+    Task DisableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the IPv6 addresses on the given adapter so that the resulting set
+    /// equals <paramref name="addresses"/>. Each entry is a CIDR string (e.g.
+    /// <c>"2001:db8::1/64"</c>). Existing addresses that are not in the desired
+    /// set are removed. Implies DHCPv6-off for the adapter.
+    /// </summary>
+    Task SetStaticIpv6AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Sets the IPv6 default gateway on the given adapter. Removes any
+    /// pre-existing default route on the same interface so the result is the
+    /// single requested gateway. Pass null to clear the default route.
+    /// </summary>
+    Task SetIpv6DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies the per-interface route list. Address family is inferred from
+    /// each route's destination prefix (<c>":"</c> => IPv6, else IPv4). The
+    /// implementation removes any existing routes on the interface that match
+    /// a destination we're about to add (so re-runs with the same list produce
+    /// the same end state). Empty list is a no-op.
+    /// </summary>
+    Task SetInterfaceRoutesAsync(
+        int interfaceIndex,
+        IReadOnlyList<NetworkRoute> routes,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies cloud-init's per-interface DNS <c>search</c> list. On Windows
+    /// the model is a compromise:
+    /// <list type="bullet">
+    ///   <item>The first entry becomes the connection-specific suffix on the
+    ///   interface (the only per-NIC suffix Windows supports).</item>
+    ///   <item>Every entry is merged (deduped, order-preserving) into the
+    ///   machine-wide <c>SuffixSearchList</c> so resolvers actually consult them.</item>
+    /// </list>
+    /// Empty list is a no-op (we do NOT clear an operator-tuned search list).
+    /// </summary>
+    Task SetDnsSearchSuffixesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> searchDomains,
         CancellationToken cancellationToken);
 
     /// <summary>

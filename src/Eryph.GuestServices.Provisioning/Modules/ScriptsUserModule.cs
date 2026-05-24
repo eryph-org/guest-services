@@ -239,8 +239,18 @@ internal sealed class ScriptsUserModule(
     {
         return kind switch
         {
+            // We wrap the .ps1 in `-Command "& { ... ; & '<path>' ; exit $LASTEXITCODE }"`
+            // so we can force UTF-8 on PowerShell's output streams BEFORE the
+            // user script runs. Without this, PowerShell 5.1 emits in the OEM
+            // code page and the .NET-side StandardOutputEncoding=UTF-8 decoder
+            // mangles any non-ASCII characters the script writes (which then
+            // end up in the per-script .log file).
             ScriptKind.PowerShell => await context.Os.RunArgvCommandAsync(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+                [
+                    "powershell.exe", "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass",
+                    "-Command", PowerShellScriptWrapper.BuildScriptWrapper(scriptPath),
+                ],
                 cancellationToken).ConfigureAwait(false),
 
             ScriptKind.Cmd => await context.Os.RunArgvCommandAsync(

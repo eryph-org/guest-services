@@ -76,45 +76,21 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         NetworkEthernetConfig ethernet,
         CancellationToken cancellationToken)
     {
-        // DHCP-only is the OS default on a fresh adapter; treat it as a no-op
-        // for IPv4 even when the schema spells it explicitly. We do still
-        // honour MTU below.
-        var isDhcpOnly = ethernet.Dhcp4 == true
-            && (ethernet.Addresses is null || ethernet.Addresses.Count == 0);
+        // Split addresses by family so IPv4 and IPv6 entries flow through the
+        // appropriate OS calls. cloud-init's `addresses:` list mixes families
+        // and we honour that.
+        var (v4Addresses, v6Addresses) = SplitAddressesByFamily(ethernet.Addresses);
 
-        if (isDhcpOnly)
+        await ApplyIpv4Async(context, adapter, ethernet, v4Addresses, cancellationToken).ConfigureAwait(false);
+        await ApplyIpv6Async(context, adapter, ethernet, v6Addresses, cancellationToken).ConfigureAwait(false);
+
+        if (ethernet.Routes is { Count: > 0 } routes)
         {
             logger.LogInformation(
-                "Adapter '{Alias}' ({Mac}): DHCP requested — leaving IPv4 alone.",
-                adapter.InterfaceAlias, adapter.MacAddress);
-
-            // Ensure DHCP is actually on; previous runs may have disabled it.
-            await context.Os.EnableDhcpAsync(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
-        }
-        else if (ethernet.Addresses is { Count: > 0 })
-        {
-            logger.LogInformation(
-                "Adapter '{Alias}' ({Mac}): applying static addresses {Addresses}.",
-                adapter.InterfaceAlias, adapter.MacAddress, string.Join(", ", ethernet.Addresses));
-
-            // Order matters here: disable DHCP before adding static addresses
-            // so the manual addresses are the only configured ones. The
-            // gateway must come last because it references the freshly-added
-            // interface route.
-            await context.Os.DisableDhcpAsync(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
-            await context.Os.SetStaticIpv4AddressesAsync(
-                adapter.InterfaceIndex, ethernet.Addresses, cancellationToken).ConfigureAwait(false);
-            await context.Os.SetIpv4DefaultGatewayAsync(
-                adapter.InterfaceIndex, ethernet.Gateway4, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            // No addresses and not DHCP — treat as "leave IPv4 untouched" but
-            // still apply DNS / MTU below. This matches cloud-init's behaviour
-            // for an ethernet with only nameservers / mtu / routes specified.
-            logger.LogInformation(
-                "Adapter '{Alias}' ({Mac}): no IPv4 directive; leaving addresses untouched.",
-                adapter.InterfaceAlias, adapter.MacAddress);
+                "Adapter '{Alias}' ({Mac}): applying {Count} explicit route(s).",
+                adapter.InterfaceAlias, adapter.MacAddress, routes.Count);
+            await context.Os.SetInterfaceRoutesAsync(
+                adapter.InterfaceIndex, routes, cancellationToken).ConfigureAwait(false);
         }
 
         if (ethernet.Nameservers?.Addresses is { Count: > 0 } dns)
@@ -126,6 +102,15 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
                 adapter.InterfaceIndex, dns, cancellationToken).ConfigureAwait(false);
         }
 
+        if (ethernet.Nameservers?.Search is { Count: > 0 } search)
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): setting DNS search suffixes {Suffixes}.",
+                adapter.InterfaceAlias, adapter.MacAddress, string.Join(", ", search));
+            await context.Os.SetDnsSearchSuffixesAsync(
+                adapter.InterfaceIndex, search, cancellationToken).ConfigureAwait(false);
+        }
+
         if (ethernet.Mtu is int mtu && mtu > 0)
         {
             logger.LogInformation(
@@ -134,6 +119,111 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
             await context.Os.SetInterfaceMtuAsync(
                 adapter.InterfaceIndex, mtu, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task ApplyIpv4Async(
+        IModuleContext context,
+        NetworkAdapterInfo adapter,
+        NetworkEthernetConfig ethernet,
+        IReadOnlyList<string> v4Addresses,
+        CancellationToken cancellationToken)
+    {
+        // DHCP-only is the OS default on a fresh adapter; treat it as a no-op
+        // for IPv4 even when the schema spells it explicitly. We still honour
+        // MTU + DNS later in the caller.
+        var isDhcpOnly = ethernet.Dhcp4 == true && v4Addresses.Count == 0;
+
+        if (isDhcpOnly)
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): DHCP requested — leaving IPv4 alone.",
+                adapter.InterfaceAlias, adapter.MacAddress);
+
+            // Ensure DHCP is actually on; previous runs may have disabled it.
+            await context.Os.EnableDhcpAsync(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
+        }
+        else if (v4Addresses.Count > 0)
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): applying static IPv4 addresses {Addresses}.",
+                adapter.InterfaceAlias, adapter.MacAddress, string.Join(", ", v4Addresses));
+
+            // Order matters: disable DHCP before adding static addresses so
+            // the manual set is the only configured one. The gateway must come
+            // last because it references the freshly-added interface route.
+            await context.Os.DisableDhcpAsync(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
+            await context.Os.SetStaticIpv4AddressesAsync(
+                adapter.InterfaceIndex, v4Addresses, cancellationToken).ConfigureAwait(false);
+            await context.Os.SetIpv4DefaultGatewayAsync(
+                adapter.InterfaceIndex, ethernet.Gateway4, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // No v4 directive — leave the family alone. Matches cloud-init's
+            // behaviour for an ethernet with only nameservers / mtu / routes
+            // / IPv6 specified.
+            logger.LogDebug(
+                "Adapter '{Alias}' ({Mac}): no IPv4 directive; leaving IPv4 untouched.",
+                adapter.InterfaceAlias, adapter.MacAddress);
+        }
+    }
+
+    private async Task ApplyIpv6Async(
+        IModuleContext context,
+        NetworkAdapterInfo adapter,
+        NetworkEthernetConfig ethernet,
+        IReadOnlyList<string> v6Addresses,
+        CancellationToken cancellationToken)
+    {
+        var isDhcp6Only = ethernet.Dhcp6 == true && v6Addresses.Count == 0;
+
+        if (isDhcp6Only)
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): DHCPv6 requested — leaving IPv6 alone.",
+                adapter.InterfaceAlias, adapter.MacAddress);
+            await context.Os.EnableDhcp6Async(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
+        }
+        else if (v6Addresses.Count > 0)
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): applying static IPv6 addresses {Addresses}.",
+                adapter.InterfaceAlias, adapter.MacAddress, string.Join(", ", v6Addresses));
+
+            await context.Os.DisableDhcp6Async(adapter.InterfaceIndex, cancellationToken).ConfigureAwait(false);
+            await context.Os.SetStaticIpv6AddressesAsync(
+                adapter.InterfaceIndex, v6Addresses, cancellationToken).ConfigureAwait(false);
+            await context.Os.SetIpv6DefaultGatewayAsync(
+                adapter.InterfaceIndex, ethernet.Gateway6, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            logger.LogDebug(
+                "Adapter '{Alias}' ({Mac}): no IPv6 directive; leaving IPv6 untouched.",
+                adapter.InterfaceAlias, adapter.MacAddress);
+        }
+    }
+
+    // The presence of a ':' in the address part is a reliable family
+    // discriminator: IPv4 CIDRs never contain ':', IPv6 CIDRs always do.
+    private static (IReadOnlyList<string> V4, IReadOnlyList<string> V6) SplitAddressesByFamily(
+        IReadOnlyList<string>? addresses)
+    {
+        if (addresses is null || addresses.Count == 0)
+            return (Array.Empty<string>(), Array.Empty<string>());
+
+        var v4 = new List<string>();
+        var v6 = new List<string>();
+        foreach (var a in addresses)
+        {
+            if (string.IsNullOrWhiteSpace(a))
+                continue;
+            if (a.Contains(':'))
+                v6.Add(a);
+            else
+                v4.Add(a);
+        }
+        return (v4, v6);
     }
 
     // Normalise to colon-separated lowercase 6-byte form so v1's "d2:ab:.."

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Runtime.Versioning;
+using Eryph.GuestServices.CloudConfig;
 using Microsoft.Management.Infrastructure;
 
 namespace Eryph.GuestServices.Provisioning.Windows.Win32;
@@ -183,6 +184,214 @@ internal static class CimNetworking
             route.Instance.Dispose();
     }
 
+    public static void SetDhcp6(int interfaceIndex, bool enabled)
+    {
+        using var session = CimSession.Create(null);
+
+        var iface = FindIpInterface(session, interfaceIndex, addressFamily: 23 /* IPv6 */);
+        if (iface is null)
+            return;
+
+        using (iface)
+        {
+            var current = (byte?)iface.CimInstanceProperties["Dhcp"]?.Value;
+            var desired = (byte)(enabled ? 1 : 0); // 1=Enabled, 0=Disabled
+            if (current == desired)
+                return;
+
+            iface.CimInstanceProperties["Dhcp"].Value = desired;
+            session.ModifyInstance(StandardCimNamespace, iface);
+        }
+
+        if (!enabled)
+        {
+            // Clear DHCPv6-leased addresses so the manual set we'll apply next
+            // is the sole source of addresses on the interface.
+            RemoveDhcpAddresses(session, interfaceIndex, addressFamily: 23);
+        }
+    }
+
+    public static void SetStaticIpv6Addresses(int interfaceIndex, IReadOnlyList<string> desired)
+    {
+        using var session = CimSession.Create(null);
+
+        var existing = ListIpAddresses(session, interfaceIndex, addressFamily: 23)
+            .ToDictionary(a => $"{a.Address}/{a.PrefixLength}", StringComparer.OrdinalIgnoreCase);
+
+        var desiredSet = desired.Select(NormaliseCidr).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (key, addr) in existing)
+        {
+            if (!desiredSet.Contains(key))
+                session.DeleteInstance(StandardCimNamespace, addr.Instance);
+        }
+
+        foreach (var cidr in desiredSet)
+        {
+            if (existing.ContainsKey(cidr))
+                continue;
+
+            var (address, prefix) = ParseCidr(cidr);
+            using var parameters = new CimMethodParametersCollection
+            {
+                CimMethodParameter.Create("InterfaceIndex", (uint)interfaceIndex, CimType.UInt32, CimFlags.None),
+                CimMethodParameter.Create("IPAddress", address, CimType.String, CimFlags.None),
+                CimMethodParameter.Create("PrefixLength", (byte)prefix, CimType.UInt8, CimFlags.None),
+                CimMethodParameter.Create("AddressFamily", (ushort)23 /* IPv6 */, CimType.UInt16, CimFlags.None),
+            };
+            using var result = session.InvokeMethod(StandardCimNamespace, "MSFT_NetIPAddress", "Create", parameters);
+            CheckReturn(result, $"MSFT_NetIPAddress.Create({address}/{prefix} IPv6)");
+        }
+
+        foreach (var (_, addr) in existing)
+            addr.Instance.Dispose();
+    }
+
+    public static void SetIpv6DefaultGateway(int interfaceIndex, string? gateway)
+    {
+        using var session = CimSession.Create(null);
+
+        var existing = ListDefaultRoutes(session, interfaceIndex, addressFamily: 23).ToList();
+
+        CimInstance? keepInstance = null;
+        if (gateway is not null)
+        {
+            foreach (var r in existing)
+            {
+                if (string.Equals(r.NextHop, gateway, StringComparison.OrdinalIgnoreCase))
+                {
+                    keepInstance = r.Instance;
+                    break;
+                }
+            }
+        }
+
+        foreach (var route in existing)
+        {
+            if (keepInstance is not null && ReferenceEquals(route.Instance, keepInstance))
+                continue;
+            session.DeleteInstance(StandardCimNamespace, route.Instance);
+        }
+
+        if (gateway is not null && keepInstance is null)
+        {
+            using var parameters = new CimMethodParametersCollection
+            {
+                CimMethodParameter.Create("InterfaceIndex", (uint)interfaceIndex, CimType.UInt32, CimFlags.None),
+                CimMethodParameter.Create("DestinationPrefix", "::/0", CimType.String, CimFlags.None),
+                CimMethodParameter.Create("NextHop", gateway, CimType.String, CimFlags.None),
+                CimMethodParameter.Create("AddressFamily", (ushort)23, CimType.UInt16, CimFlags.None),
+            };
+            using var result = session.InvokeMethod(StandardCimNamespace, "MSFT_NetRoute", "Create", parameters);
+            CheckReturn(result, $"MSFT_NetRoute.Create(::/0 via {gateway})");
+        }
+
+        foreach (var route in existing)
+            route.Instance.Dispose();
+    }
+
+    public static void SetInterfaceRoutes(int interfaceIndex, IReadOnlyList<NetworkRoute> routes)
+    {
+        if (routes.Count == 0)
+            return;
+
+        using var session = CimSession.Create(null);
+
+        foreach (var route in routes)
+        {
+            if (string.IsNullOrWhiteSpace(route.To) || string.IsNullOrWhiteSpace(route.Via))
+                continue;
+
+            // "default" is cloud-init shorthand for 0.0.0.0/0 or ::/0; the
+            // family-inference below handles the IPv6 case via the "Via" string.
+            var destination = NormaliseRouteDestination(route.To!, route.Via!);
+            var family = destination.Contains(':') ? (ushort)23 : (ushort)2;
+
+            // Idempotency: remove any existing route on this interface with the
+            // same destination so re-runs don't duplicate or fail with
+            // ERROR_OBJECT_ALREADY_EXISTS.
+            var existing = ListRoutesByDestination(session, interfaceIndex, destination).ToList();
+            foreach (var r in existing)
+            {
+                using (r.Instance)
+                    session.DeleteInstance(StandardCimNamespace, r.Instance);
+            }
+
+            using var parameters = new CimMethodParametersCollection
+            {
+                CimMethodParameter.Create("InterfaceIndex", (uint)interfaceIndex, CimType.UInt32, CimFlags.None),
+                CimMethodParameter.Create("DestinationPrefix", destination, CimType.String, CimFlags.None),
+                CimMethodParameter.Create("NextHop", route.Via!, CimType.String, CimFlags.None),
+                CimMethodParameter.Create("AddressFamily", family, CimType.UInt16, CimFlags.None),
+            };
+            if (route.Metric is int metric)
+            {
+                parameters.Add(CimMethodParameter.Create(
+                    "RouteMetric", (ushort)metric, CimType.UInt16, CimFlags.None));
+            }
+
+            using var result = session.InvokeMethod(StandardCimNamespace, "MSFT_NetRoute", "Create", parameters);
+            CheckReturn(result, $"MSFT_NetRoute.Create({destination} via {route.Via})");
+        }
+    }
+
+    public static void SetDnsSearchSuffixes(int interfaceIndex, IReadOnlyList<string> searchDomains)
+    {
+        if (searchDomains.Count == 0)
+            return;
+
+        using var session = CimSession.Create(null);
+
+        // 1) Connection-specific suffix on the interface — only one slot, so
+        //    we take the first entry. MSFT_DNSClient is keyed by InterfaceIndex.
+        var clientQuery = $"SELECT * FROM MSFT_DNSClient WHERE InterfaceIndex={interfaceIndex}";
+        var client = session.QueryInstances(StandardCimNamespace, "WQL", clientQuery).FirstOrDefault();
+        if (client is not null)
+        {
+            using (client)
+            {
+                client.CimInstanceProperties["ConnectionSpecificSuffix"].Value = searchDomains[0];
+                session.ModifyInstance(StandardCimNamespace, client);
+            }
+        }
+
+        // 2) Global SuffixSearchList — additive merge with whatever the
+        //    operator already configured, deduplicated (case-insensitive,
+        //    order-preserving). This is the list resolvers actually consult.
+        var global = session.EnumerateInstances(StandardCimNamespace, "MSFT_DNSClientGlobalSetting").FirstOrDefault();
+        if (global is null)
+            return;
+
+        using (global)
+        {
+            var currentArray = global.CimInstanceProperties["SuffixSearchList"]?.Value as string[]
+                ?? Array.Empty<string>();
+            var merged = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in currentArray)
+            {
+                if (!string.IsNullOrWhiteSpace(s) && seen.Add(s))
+                    merged.Add(s);
+            }
+            foreach (var s in searchDomains)
+            {
+                if (!string.IsNullOrWhiteSpace(s) && seen.Add(s))
+                    merged.Add(s);
+            }
+
+            // Skip the write when nothing changed — ModifyInstance with the
+            // same array would be harmless but generates needless CIM traffic.
+            if (merged.Count == currentArray.Length
+                && merged.SequenceEqual(currentArray, StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            global.CimInstanceProperties["SuffixSearchList"].Value = merged.ToArray();
+            session.ModifyInstance(StandardCimNamespace, global);
+        }
+    }
+
     public static void SetDnsServers(int interfaceIndex, IReadOnlyList<string> dnsServers)
     {
         using var session = CimSession.Create(null);
@@ -288,16 +497,42 @@ internal static class CimNetworking
         }
     }
 
-    private static void RemoveDhcpAddresses(CimSession session, int interfaceIndex)
+    private static void RemoveDhcpAddresses(CimSession session, int interfaceIndex, ushort addressFamily = 0)
     {
         // PrefixOrigin=3 / SuffixOrigin=3 == DHCP. We delete those so the
-        // manual addresses we apply next are unambiguous.
-        var query = $"SELECT * FROM MSFT_NetIPAddress WHERE InterfaceIndex={interfaceIndex} AND PrefixOrigin=3";
+        // manual addresses we apply next are unambiguous. When addressFamily=0
+        // (default) both families are scrubbed (legacy v4-only callers).
+        var familyClause = addressFamily == 0 ? "" : $" AND AddressFamily={addressFamily}";
+        var query = $"SELECT * FROM MSFT_NetIPAddress WHERE InterfaceIndex={interfaceIndex} AND PrefixOrigin=3{familyClause}";
         foreach (var instance in session.QueryInstances(StandardCimNamespace, "WQL", query))
         {
             using (instance)
                 session.DeleteInstance(StandardCimNamespace, instance);
         }
+    }
+
+    private static IEnumerable<RouteEntry> ListRoutesByDestination(
+        CimSession session, int interfaceIndex, string destinationPrefix)
+    {
+        var query =
+            $"SELECT * FROM MSFT_NetRoute WHERE InterfaceIndex={interfaceIndex} AND DestinationPrefix='{destinationPrefix}'";
+        foreach (var instance in session.QueryInstances(StandardCimNamespace, "WQL", query))
+        {
+            var next = GetString(instance, "NextHop") ?? "";
+            yield return new RouteEntry(instance, next);
+        }
+    }
+
+    private static string NormaliseRouteDestination(string to, string via)
+    {
+        // cloud-init accepts the literal "default" as shorthand for the
+        // default route. Resolve to 0.0.0.0/0 or ::/0 based on the gateway's
+        // address family (since "to" doesn't tell us either way).
+        if (string.Equals(to, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            return via.Contains(':') ? "::/0" : "0.0.0.0/0";
+        }
+        return to;
     }
 
     private readonly record struct RouteEntry(CimInstance Instance, string NextHop);

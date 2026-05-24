@@ -96,6 +96,19 @@ public sealed class BuildLocaleScriptTests
     }
 
     [Fact]
+    public void Script_forces_utf8_console_encoding_so_REBOOT_marker_is_decoded_correctly()
+    {
+        // ApplyLocaleAsync sets StandardOutputEncoding=UTF-8 on the spawned
+        // powershell.exe; if PS5 emits in the OEM code page the .NET-side
+        // decoder mangles the line. The script must force UTF-8 BEFORE doing
+        // any Write-Output so the REBOOT_REQUIRED marker (and any error text)
+        // round-trips intact.
+        var script = WindowsOs.BuildLocaleScript(new LocaleSpec { Locale = "en-US" });
+        script.Should().Contain("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()");
+        script.Should().Contain("$OutputEncoding = [System.Text.UTF8Encoding]::new()");
+    }
+
+    [Fact]
     public void Script_uses_stop_on_error_so_a_cmdlet_failure_is_terminating()
     {
         // ErrorActionPreference=Stop makes any cmdlet failure terminating;

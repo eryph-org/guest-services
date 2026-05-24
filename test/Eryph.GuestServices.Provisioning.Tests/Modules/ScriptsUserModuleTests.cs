@@ -66,7 +66,7 @@ public sealed class ScriptsUserModuleTests
             Arg.Any<CancellationToken>());
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv =>
-                argv[0] == "powershell.exe" && argv.Contains("-File")),
+                argv[0] == "powershell.exe" && argv.Contains("-Command")),
             Arg.Any<CancellationToken>());
     }
 
@@ -162,7 +162,7 @@ public sealed class ScriptsUserModuleTests
                 && argv.Contains("-NonInteractive")
                 && argv.Contains("-ExecutionPolicy")
                 && argv.Contains("Bypass")
-                && argv.Contains("-File")),
+                && argv.Contains("-Command")),
             Arg.Any<CancellationToken>());
     }
 
