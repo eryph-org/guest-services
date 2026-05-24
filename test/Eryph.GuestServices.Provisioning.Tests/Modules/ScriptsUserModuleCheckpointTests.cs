@@ -30,9 +30,11 @@ public sealed class ScriptsUserModuleCheckpointTests
         Scripts = new ScriptSettings { PerInstanceDirectory = @"C:\temp\eryph-scripts-test" },
     };
 
-    private static ScriptsUserModule CreateModule(IScriptCheckpointStore checkpointStore) =>
+    private static ScriptsUserModule CreateModule(
+        IScriptCheckpointStore checkpointStore,
+        ProvisioningSettings? settings = null) =>
         new(NullLogger<ScriptsUserModule>.Instance,
-            TestSettings,
+            settings ?? TestSettings,
             Substitute.For<IReportingDispatcher>(),
             checkpointStore);
 
@@ -186,5 +188,39 @@ public sealed class ScriptsUserModuleCheckpointTests
         var third = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
         third.Should().BeOfType<ModuleOutcome.Failed>(
             "after MaxRebootsPerScript (=2) the quota fires and the module fails the run");
+    }
+
+    [Fact]
+    public async Task Per_script_reboot_quota_honors_custom_MaxPerScript_setting()
+    {
+        // A tighter cap of 1 must fail on the SECOND 1003 (after one reboot),
+        // proving the quota reads from ProvisioningSettings.Reboot.MaxPerScript.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1003, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var settings = new ProvisioningSettings
+        {
+            Scripts = new ScriptSettings { PerInstanceDirectory = @"C:\temp\eryph-scripts-test" },
+            Reboot = new RebootSettings { MaxPerScript = 1 },
+        };
+        var module = CreateModule(checkpoint, settings);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# always 1003"), "stuck.ps1")] };
+
+        var first = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+        first.Should().BeOfType<ModuleOutcome.RebootRequested>();
+
+        await checkpoint.SaveAsync(
+            "test-instance",
+            (await checkpoint.LoadAsync("test-instance", CancellationToken.None)) with { Executed = [] },
+            CancellationToken.None);
+
+        var second = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+        second.Should().BeOfType<ModuleOutcome.Failed>(
+            "with MaxPerScript=1 the second 1003 trips the quota");
     }
 }

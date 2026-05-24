@@ -16,6 +16,8 @@ public sealed class ProvisioningSettings
 
     public ScriptSettings Scripts { get; init; } = new();
 
+    public RebootSettings Reboot { get; init; } = new();
+
     /// <summary>
     /// Per-stage allowlist / denylist of modules. Keys are stage names
     /// (<c>"Local"</c>, <c>"Network"</c>, <c>"Config"</c>, <c>"Final"</c>;
@@ -71,6 +73,14 @@ public sealed class UserDataSettings
 
     /// <summary>Initial backoff between #include retries. Doubles up to a 4s cap.</summary>
     public int FetchInitialBackoffSeconds { get; init; } = 1;
+
+    /// <summary>
+    /// Maximum size (in bytes) of a single #include response. A server that
+    /// reports a larger <c>Content-Length</c>, or streams more bytes than this
+    /// (lying about / omitting the header), aborts the fetch. Guards against a
+    /// runaway or hostile URL exhausting memory. Default 10 MiB.
+    /// </summary>
+    public long FetchMaxBytes { get; init; } = 10L * 1024 * 1024;
 }
 
 public sealed class DataSourceSettings
@@ -146,6 +156,25 @@ public sealed class ScriptSettings
 
     /// <summary>Per-script execution timeout. Not enforced in v1; reserved for v2.</summary>
     public int ScriptTimeoutMinutes { get; init; } = 60;
+}
+
+/// <summary>
+/// Loop-safety caps for the cloudbase-init "reboot-and-continue" (exit 1003)
+/// convention. Two independent guards (see docs/bugs/0001 "loop-safety"):
+/// <see cref="MaxPerModule"/> bounds how often the StageRunner re-enters the
+/// same module, while <see cref="MaxPerScript"/> bounds reboots for a single
+/// (ordinal, body-hash) script inside ScriptsUser. The per-script cap is the
+/// tighter inner guard; the per-module cap is the outer backstop. Defaults
+/// match the historical hard-coded values, so behaviour is unchanged unless
+/// configured.
+/// </summary>
+public sealed class RebootSettings
+{
+    /// <summary>Max times a single module may return RebootRequested before the run fails.</summary>
+    public int MaxPerModule { get; init; } = 3;
+
+    /// <summary>Max reboots a single (ordinal, body-hash) script may request before it fails.</summary>
+    public int MaxPerScript { get; init; } = 2;
 }
 
 [JsonSerializable(typeof(ProvisioningSettings))]

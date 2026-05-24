@@ -20,7 +20,8 @@ re-run.
     "maxRecursionDepth": 10,
     "fetchTimeoutSeconds": 30,
     "fetchMaxAttempts": 4,
-    "fetchInitialBackoffSeconds": 1
+    "fetchInitialBackoffSeconds": 1,
+    "fetchMaxBytes": 10485760
   },
   "dataSources": {
     "readinessTimeoutMinutes": 5,
@@ -30,6 +31,10 @@ re-run.
   "scripts": {
     "perInstanceDirectory": "%ProgramData%\\eryph\\provisioning\\scripts\\per-instance",
     "scriptTimeoutMinutes": 60
+  },
+  "reboot": {
+    "maxPerModule": 3,
+    "maxPerScript": 2
   }
 }
 ```
@@ -45,6 +50,7 @@ are allowed.
 | `fetchTimeoutSeconds` | `30` | Per-attempt timeout when fetching `#include` URLs. |
 | `fetchMaxAttempts` | `4` | Total attempts (initial + retries) per URL. |
 | `fetchInitialBackoffSeconds` | `1` | Doubles up to a 4s cap between retries. |
+| `fetchMaxBytes` | `10485760` (10 MiB) | Max size of a single `#include` response. A larger `Content-Length`, or a body that streams past this cap (server lying about / omitting the header), aborts the fetch. |
 
 ## `dataSources` — locator tunables
 
@@ -63,6 +69,25 @@ Per-source overrides are not exposed in v1. See
 | --- | --- | --- |
 | `perInstanceDirectory` | `%ProgramData%\eryph\provisioning\scripts\per-instance` | Where user-data scripts are staged before execution. Environment variables are expanded. |
 | `scriptTimeoutMinutes` | `60` | Per-script timeout. **Not enforced in v1** — reserved. |
+
+## `reboot` — loop-safety caps
+
+Two independent guards against a runaway "reboot-and-continue" (exit
+code 1003) loop. See
+[bug 0001](../../bugs/0001-scriptsusermodule-skips-queue-after-reboot.md)
+"loop-safety".
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `maxPerModule` | `3` | Max times a single module may return `RebootRequested` before the `StageRunner` fails the run rather than re-entering it. The **outer** backstop. |
+| `maxPerScript` | `2` | Max reboots a single `ScriptsUser` script (keyed by ordinal + body hash) may request before that script is failed. The **inner**, tighter guard. |
+
+The two caps are deliberately separate: `maxPerScript` bounds one
+script, while `maxPerModule` bounds the whole `ScriptsUser` module
+across all of its scripts. A module reaching `maxPerModule` while no
+individual script has hit `maxPerScript` (e.g. three different scripts
+each reboot once) still trips the outer cap. Keep `maxPerScript` ≤
+`maxPerModule`.
 
 ## What's not in v1
 
