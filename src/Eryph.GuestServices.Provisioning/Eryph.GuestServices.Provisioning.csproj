@@ -20,6 +20,7 @@
     <PackageReference Include="SimpleInjector.Integration.ServiceCollection" Version="5.5.0" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
+    <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
   <ItemGroup>

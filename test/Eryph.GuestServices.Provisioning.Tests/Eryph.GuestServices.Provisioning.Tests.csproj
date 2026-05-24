@@ -52,6 +52,12 @@
     <None Include="..\fixtures\userdata\*.*" Link="fixtures\userdata\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- NoCloud meta-data fixture: representative cidata meta-data with a
+         nested public-keys map and a network-interfaces block scalar, modeled
+         on cloud-init's documented NoCloud datasource shape. -->
+    <None Include="..\fixtures\nocloud\*" Link="fixtures\nocloud\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

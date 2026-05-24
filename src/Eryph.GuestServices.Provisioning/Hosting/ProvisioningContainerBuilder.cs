@@ -85,6 +85,9 @@ internal static class ProvisioningContainerBuilder
 
         container.Collection.Append<IDataSource, AzureDataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, Ec2DataSource>(Lifestyle.Singleton);
+        // NoCloud consumes IUrlHelper to follow a meta-data `seedfrom:` pointer
+        // (registered below in the user-data pipeline section). SimpleInjector
+        // resolves the dependency regardless of registration order.
         container.Collection.Append<IDataSource, NoCloudDataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, ConfigDriveDataSource>(Lifestyle.Singleton);
         container.Register<IDataSourceLocator, DataSourceLocator>(Lifestyle.Singleton);
