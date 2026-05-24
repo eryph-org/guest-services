@@ -285,23 +285,22 @@ internal sealed class WindowsOs : IWindowsOs
         // robust pattern (also used by cloudbase-init) is to write the command
         // verbatim to a temporary .cmd file and run cmd.exe /c on the FILE —
         // there's no quoting at the parent level, so nothing can be mangled.
+        //
+        // `chcp 65001 >nul` makes cmd.exe emit UTF-8 so the StandardOutputEncoding
+        // we set on the ProcessStartInfo decodes correctly. UTF-8 console support
+        // has shipped since Windows 7 SP1 — no fallback is needed for our supported
+        // platforms.
         var tempScript = Path.Combine(
             Path.GetTempPath(),
             "egs-runcmd-" + Guid.NewGuid().ToString("N") + ".cmd");
         await File.WriteAllTextAsync(
             tempScript,
-            "@echo off\r\n" + command + "\r\n",
+            "@echo off\r\nchcp 65001 >nul\r\n" + command + "\r\n",
             cancellationToken).ConfigureAwait(false);
 
         try
         {
-            var psi = new ProcessStartInfo("cmd.exe")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+            var psi = CreateUtf8Psi("cmd.exe");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
 
@@ -320,14 +319,7 @@ internal sealed class WindowsOs : IWindowsOs
         if (argv.Count == 0)
             throw new ArgumentException("argv must contain at least one element.", nameof(argv));
 
-        var psi = new ProcessStartInfo(argv[0])
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
+        var psi = CreateUtf8Psi(argv[0]);
         for (var i = 1; i < argv.Count; i++)
             psi.ArgumentList.Add(argv[i]);
 
@@ -360,6 +352,36 @@ internal sealed class WindowsOs : IWindowsOs
         IReadOnlyList<string> dnsServers,
         CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetDnsServers(interfaceIndex, dnsServers), cancellationToken);
+
+    public Task EnableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDhcp6(interfaceIndex, enabled: true), cancellationToken);
+
+    public Task DisableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDhcp6(interfaceIndex, enabled: false), cancellationToken);
+
+    public Task SetStaticIpv6AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetStaticIpv6Addresses(interfaceIndex, addresses), cancellationToken);
+
+    public Task SetIpv6DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetIpv6DefaultGateway(interfaceIndex, gateway), cancellationToken);
+
+    public Task SetInterfaceRoutesAsync(
+        int interfaceIndex,
+        IReadOnlyList<CloudConfig.NetworkRoute> routes,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetInterfaceRoutes(interfaceIndex, routes), cancellationToken);
+
+    public Task SetDnsSearchSuffixesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> searchDomains,
+        CancellationToken cancellationToken) =>
+        Task.Run(() => CimNetworking.SetDnsSearchSuffixes(interfaceIndex, searchDomains), cancellationToken);
 
     public Task SetInterfaceMtuAsync(
         int interfaceIndex,
@@ -468,13 +490,7 @@ internal sealed class WindowsOs : IWindowsOs
         // COM-based underpinnings are awkward to call directly from .NET, so
         // we drive them via powershell.exe with a tightly-scoped script.
         var script = BuildLocaleScript(spec);
-        var psi = new ProcessStartInfo("powershell.exe")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var psi = CreateUtf8Psi("powershell.exe");
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-ExecutionPolicy");
         psi.ArgumentList.Add("Bypass");
@@ -640,19 +656,21 @@ internal sealed class WindowsOs : IWindowsOs
         return Path.Combine(systemRoot, "System32", "slmgr.vbs");
     }
 
+    // RunOrThrowAsync is invoked for a handful of native tools (tzutil.exe,
+    // w32tm.exe, slmgr.vbs via cscript.exe, shutdown.exe, sc.exe). Those tools
+    // emit their (often localized) output in the OEM code page. We still set
+    // StandardOutputEncoding = UTF-8 here for consistency with the rest of the
+    // codebase: only exit codes and short status strings drive control flow,
+    // and the rare mojibake-on-error in a localized stderr is preferable to a
+    // per-tool encoding matrix. If we ever need accurate stderr for one of
+    // these tools, switch *that* spawn site to Console.OutputEncoding.
     private async Task RunOrThrowAsync(
         string fileName,
         IReadOnlyList<string> argv,
         CancellationToken cancellationToken,
         bool ignoreNonZero = false)
     {
-        var psi = new ProcessStartInfo(fileName)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var psi = CreateUtf8Psi(fileName);
         foreach (var a in argv) psi.ArgumentList.Add(a);
         var result = await RunAsync(psi, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0 && !ignoreNonZero)
@@ -661,6 +679,21 @@ internal sealed class WindowsOs : IWindowsOs
                 $"{fileName} {string.Join(' ', argv)} exited {result.ExitCode}: {result.StdErr.Trim()}");
         }
     }
+
+    // Common ProcessStartInfo factory: redirected stdout/stderr, no window,
+    // UTF-8 decoding on both streams. Callers that spawn PowerShell or cmd.exe
+    // must ALSO ensure the child writes UTF-8 (chcp 65001 / [Console]::OutputEncoding);
+    // this helper only governs how .NET decodes what the child emits.
+    private static ProcessStartInfo CreateUtf8Psi(string fileName) =>
+        new(fileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
 
     // internal for unit testing — the PowerShell-string-building logic is a
     // non-trivial composition root that we want exercised directly.
@@ -671,6 +704,13 @@ internal sealed class WindowsOs : IWindowsOs
         // for the caller to parse. Any cmdlet failure terminates via -ErrorAction
         // Stop so RunAsync sees a non-zero exit.
         var sb = new StringBuilder();
+        // Force UTF-8 on every stream so the stdout we parse (REBOOT_REQUIRED=...)
+        // and any error text we surface are decoded correctly by .NET's
+        // StandardOutputEncoding=UTF8. Without this, PowerShell 5.1 emits in
+        // the OEM code page and the .NET-side UTF-8 decoder mangles non-ASCII.
+        sb.AppendLine("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()");
+        sb.AppendLine("$OutputEncoding = [System.Text.UTF8Encoding]::new()");
+        sb.AppendLine("[Console]::InputEncoding = [System.Text.UTF8Encoding]::new()");
         sb.AppendLine("$ErrorActionPreference = 'Stop'");
         sb.AppendLine("$rebootRequired = $false");
 
@@ -711,7 +751,7 @@ internal sealed class WindowsOs : IWindowsOs
         return sb.ToString();
     }
 
-    private static string EscapePsSingleQuoted(string value) => value.Replace("'", "''");
+    private static string EscapePsSingleQuoted(string value) => PowerShellScriptWrapper.EscapeSingleQuoted(value);
 
     public string TranslateUnixPath(string unixPath)
     {

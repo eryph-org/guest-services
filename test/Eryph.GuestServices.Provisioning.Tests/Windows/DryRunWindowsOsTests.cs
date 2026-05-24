@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -202,5 +203,56 @@ public sealed class DryRunWindowsOsTests
         result.StdOut.Should().BeEmpty();
         result.StdErr.Should().BeEmpty();
         await inner.DidNotReceiveWithAnyArgs().RunArgvCommandAsync(default!, default);
+    }
+
+    // ---- networking writes (IPv6 / routes / DNS search) skip inner ----
+
+    [Fact]
+    public async Task EnableDhcp6Async_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.EnableDhcp6Async(7, CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().EnableDhcp6Async(default, default);
+    }
+
+    [Fact]
+    public async Task DisableDhcp6Async_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.DisableDhcp6Async(7, CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().DisableDhcp6Async(default, default);
+    }
+
+    [Fact]
+    public async Task SetStaticIpv6AddressesAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.SetStaticIpv6AddressesAsync(7, ["2001:db8::1/64"], CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().SetStaticIpv6AddressesAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task SetIpv6DefaultGatewayAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.SetIpv6DefaultGatewayAsync(7, "2001:db8::254", CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().SetIpv6DefaultGatewayAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task SetInterfaceRoutesAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        var routes = new[] { new NetworkRoute { To = "10.0.0.0/24", Via = "192.168.0.1" } };
+        await sut.SetInterfaceRoutesAsync(7, routes, CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().SetInterfaceRoutesAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task SetDnsSearchSuffixesAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.SetDnsSearchSuffixesAsync(7, ["a.com"], CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().SetDnsSearchSuffixesAsync(default, default!, default);
     }
 }

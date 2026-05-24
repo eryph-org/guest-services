@@ -60,7 +60,13 @@ public sealed class ApplyNetworkConfigModuleTests
         await os.DidNotReceiveWithAnyArgs().SetStaticIpv4AddressesAsync(default, default!, default);
         await os.DidNotReceiveWithAnyArgs().SetIpv4DefaultGatewayAsync(default, default!, default);
         await os.DidNotReceiveWithAnyArgs().SetDnsServersAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetDnsSearchSuffixesAsync(default, default!, default);
         await os.DidNotReceiveWithAnyArgs().SetInterfaceMtuAsync(default, default, default);
+        await os.DidNotReceiveWithAnyArgs().EnableDhcp6Async(default, default);
+        await os.DidNotReceiveWithAnyArgs().DisableDhcp6Async(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv6AddressesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetIpv6DefaultGatewayAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetInterfaceRoutesAsync(default, default!, default);
     }
 
     [Fact]
@@ -279,6 +285,300 @@ public sealed class ApplyNetworkConfigModuleTests
             Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "10.0.0.5/24"),
             Arg.Any<CancellationToken>());
         await os.Received(2).SetIpv4DefaultGatewayAsync(7, "10.0.0.1", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task IPv6_StaticAddress_AppliesWithGateway()
+    {
+        // v6 static configuration: matched by MAC, single address + gateway6.
+        // The applier must disable DHCPv6, set the address, then set the
+        // default gateway. v4 must NOT be touched (no Dhcp4, no v4 addresses).
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Addresses = ["2001:db8::1/64"],
+                    Gateway6 = "2001:db8::254",
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 11, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        await os.Received(1).DisableDhcp6Async(11, Arg.Any<CancellationToken>());
+        await os.Received(1).SetStaticIpv6AddressesAsync(
+            11,
+            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "2001:db8::1/64"),
+            Arg.Any<CancellationToken>());
+        await os.Received(1).SetIpv6DefaultGatewayAsync(11, "2001:db8::254", Arg.Any<CancellationToken>());
+
+        // v4 path must stay untouched.
+        await os.DidNotReceiveWithAnyArgs().EnableDhcpAsync(default, default);
+        await os.DidNotReceiveWithAnyArgs().DisableDhcpAsync(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv4AddressesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetIpv4DefaultGatewayAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task MixedV4AndV6_BothFamiliesApplied()
+    {
+        // A single ethernet entry carrying one v4 and one v6 address (plus
+        // both gateways) must drive both families through the OS surface.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Addresses = ["10.0.0.1/24", "2001:db8::1/64"],
+                    Gateway4 = "10.0.0.254",
+                    Gateway6 = "2001:db8::254",
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 13, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        // IPv4 path
+        await os.Received(1).DisableDhcpAsync(13, Arg.Any<CancellationToken>());
+        await os.Received(1).SetStaticIpv4AddressesAsync(
+            13,
+            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "10.0.0.1/24"),
+            Arg.Any<CancellationToken>());
+        await os.Received(1).SetIpv4DefaultGatewayAsync(13, "10.0.0.254", Arg.Any<CancellationToken>());
+
+        // IPv6 path
+        await os.Received(1).DisableDhcp6Async(13, Arg.Any<CancellationToken>());
+        await os.Received(1).SetStaticIpv6AddressesAsync(
+            13,
+            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "2001:db8::1/64"),
+            Arg.Any<CancellationToken>());
+        await os.Received(1).SetIpv6DefaultGatewayAsync(13, "2001:db8::254", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Dhcp6_NoAddresses_OnlyEnableDhcp6()
+    {
+        // dhcp6: true with no addresses → re-enable DHCPv6, do NOT issue any
+        // static-v6 calls.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Dhcp6 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 15, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        await os.Received(1).EnableDhcp6Async(15, Arg.Any<CancellationToken>());
+        await os.DidNotReceiveWithAnyArgs().DisableDhcp6Async(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv6AddressesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetIpv6DefaultGatewayAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task Routes_AppliedPerFamily()
+    {
+        // The OS-side helper infers family per route; the module just hands it
+        // the full list. We assert SetInterfaceRoutesAsync is invoked once
+        // with the original list (order and content preserved).
+        var routes = new[]
+        {
+            new NetworkRoute { To = "192.168.10.0/24", Via = "10.0.0.254", Metric = 100 },
+            new NetworkRoute { To = "2001:db8:1::/48", Via = "2001:db8::254" },
+        };
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Dhcp4 = true,
+                    Routes = routes,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 17, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        await os.Received(1).SetInterfaceRoutesAsync(
+            17,
+            Arg.Is<IReadOnlyList<NetworkRoute>>(r =>
+                r.Count == 2
+                && r[0].To == "192.168.10.0/24" && r[0].Via == "10.0.0.254" && r[0].Metric == 100
+                && r[1].To == "2001:db8:1::/48" && r[1].Via == "2001:db8::254"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Search_AppliedToConnectionAndGlobalList()
+    {
+        // nameservers.search drives a single OS call that the implementation
+        // splits across MSFT_DNSClient (first entry) and the global suffix list.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Dhcp4 = true,
+                    Nameservers = new NetworkNameservers
+                    {
+                        Search = ["a.com", "b.com"],
+                    },
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 19, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        await os.Received(1).SetDnsSearchSuffixesAsync(
+            19,
+            Arg.Is<IReadOnlyList<string>>(s => s.Count == 2 && s[0] == "a.com" && s[1] == "b.com"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MatchedMacWithOnlySearch_NoIpModification()
+    {
+        // An ethernet entry that only carries a search list should drive ONLY
+        // the search call. Neither v4 nor v6 paths may be touched.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Nameservers = new NetworkNameservers
+                    {
+                        Search = ["search.local"],
+                    },
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Physical("Ethernet", 21, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+
+        await os.Received(1).SetDnsSearchSuffixesAsync(
+            21,
+            Arg.Is<IReadOnlyList<string>>(s => s.Count == 1 && s[0] == "search.local"),
+            Arg.Any<CancellationToken>());
+
+        // No v4 modifications.
+        await os.DidNotReceiveWithAnyArgs().EnableDhcpAsync(default, default);
+        await os.DidNotReceiveWithAnyArgs().DisableDhcpAsync(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv4AddressesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetIpv4DefaultGatewayAsync(default, default!, default);
+        // No v6 modifications.
+        await os.DidNotReceiveWithAnyArgs().EnableDhcp6Async(default, default);
+        await os.DidNotReceiveWithAnyArgs().DisableDhcp6Async(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv6AddressesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetIpv6DefaultGatewayAsync(default, default!, default);
+        // No routes / DNS-server calls either.
+        await os.DidNotReceiveWithAnyArgs().SetInterfaceRoutesAsync(default, default!, default);
+        await os.DidNotReceiveWithAnyArgs().SetDnsServersAsync(default, default!, default);
     }
 
     [Fact]

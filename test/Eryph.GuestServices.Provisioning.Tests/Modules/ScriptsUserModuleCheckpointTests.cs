@@ -47,10 +47,10 @@ public sealed class ScriptsUserModuleCheckpointTests
         // file path argument — RunArgvCommandAsync gets the staged path on
         // index "-File <path>" or similar.
         os.RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("003-three.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(1003, "", ""));
         os.RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("001-one.ps1") || s.EndsWith("002-two.ps1") || s.EndsWith("004-four.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1") || s.Contains("002-two.ps1") || s.Contains("004-four.ps1"))),
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(0, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -74,13 +74,13 @@ public sealed class ScriptsUserModuleCheckpointTests
         var outcome1 = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
         outcome1.Should().BeOfType<ModuleOutcome.RebootRequested>();
         await os.Received().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("001-one.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1"))),
             Arg.Any<CancellationToken>());
         await os.Received().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("003-three.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
             Arg.Any<CancellationToken>());
         await os.DidNotReceive().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("004-four.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
             Arg.Any<CancellationToken>());
 
         // Round 2 (post-reboot resume): scripts 1, 2, 3 are checkpointed →
@@ -100,13 +100,13 @@ public sealed class ScriptsUserModuleCheckpointTests
                                 || p.EndsWith(@"\003-three.ps1")),
             Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
         await os.DidNotReceive().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("001-one.ps1")
-                                                                || s.EndsWith("002-two.ps1")
-                                                                || s.EndsWith("003-three.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1")
+                                                                || s.Contains("002-two.ps1")
+                                                                || s.Contains("003-three.ps1"))),
             Arg.Any<CancellationToken>());
         // Script 4 must run.
         await os.Received().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("004-four.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
             Arg.Any<CancellationToken>());
     }
 
@@ -134,9 +134,11 @@ public sealed class ScriptsUserModuleCheckpointTests
         await module.ApplyAsync(edited, ctx, CancellationToken.None);
 
         // The edited script runs because the body hash differs from the
-        // checkpoint entry recorded for ordinal 1.
+        // checkpoint entry recorded for ordinal 1. The .ps1 path appears
+        // embedded inside the -Command UTF-8 wrapper rather than as a bare
+        // -File argv entry, so we substring-match the staged filename.
         await os.Received().RunArgvCommandAsync(
-            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.EndsWith("001-edit.ps1"))),
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-edit.ps1"))),
             Arg.Any<CancellationToken>());
     }
 

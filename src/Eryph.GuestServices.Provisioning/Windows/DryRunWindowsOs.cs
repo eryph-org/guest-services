@@ -1,3 +1,4 @@
+using Eryph.GuestServices.CloudConfig;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Windows;
@@ -185,6 +186,62 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
             "DRY-RUN would set DNS servers on interface index {Index} to {Servers}",
             interfaceIndex,
             dnsServers.Count == 0 ? "<reset>" : string.Join(", ", dnsServers));
+        return Task.CompletedTask;
+    }
+
+    public Task EnableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would enable DHCPv6 on interface index {Index}", interfaceIndex);
+        return Task.CompletedTask;
+    }
+
+    public Task DisableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would disable DHCPv6 on interface index {Index}", interfaceIndex);
+        return Task.CompletedTask;
+    }
+
+    public Task SetStaticIpv6AddressesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> addresses,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set static IPv6 addresses on interface index {Index}: {Addresses}",
+            interfaceIndex, string.Join(", ", addresses));
+        return Task.CompletedTask;
+    }
+
+    public Task SetIpv6DefaultGatewayAsync(
+        int interfaceIndex,
+        string? gateway,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set IPv6 default gateway on interface index {Index} to {Gateway}",
+            interfaceIndex, gateway ?? "<clear>");
+        return Task.CompletedTask;
+    }
+
+    public Task SetInterfaceRoutesAsync(
+        int interfaceIndex,
+        IReadOnlyList<NetworkRoute> routes,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would apply {Count} route(s) on interface index {Index}",
+            routes.Count, interfaceIndex);
+        return Task.CompletedTask;
+    }
+
+    public Task SetDnsSearchSuffixesAsync(
+        int interfaceIndex,
+        IReadOnlyList<string> searchDomains,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would set DNS search suffixes on interface index {Index} to {Suffixes}",
+            interfaceIndex, string.Join(", ", searchDomains));
         return Task.CompletedTask;
     }
 
