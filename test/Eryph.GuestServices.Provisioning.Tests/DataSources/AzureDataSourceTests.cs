@@ -20,6 +20,7 @@ public class AzureDataSourceTests
     {
         var source = new AzureDataSource(
             Substitute.For<IVolumeProbe>(),
+            PlatformProbe(isRunningOnAzure: false),
             NullLogger<AzureDataSource>.Instance);
 
         source.Name.Should().Be("Azure");
@@ -34,23 +35,30 @@ public class AzureDataSourceTests
     [Fact]
     public async Task ProbeAsync_returns_NotApplicable_on_non_Azure_host()
     {
-        // RFC 0014: detection is registry VmId OR chassis asset tag. On the CI
-        // host both miss, so the probe must short-circuit to NotApplicable
-        // without touching IMDS or the filesystem. (This is the "test that
-        // probe returns NotApplicable when registry+chassis miss" check.)
-        if (OperatingSystem.IsWindows() && AzureSignalsPresent())
-        {
-            return; // Running on a real Azure-flavoured Windows host — skip.
-        }
-
+        // RFC 0014: detection is registry VmId OR chassis asset tag. The probe
+        // is injected as "not on Azure" so the result is deterministic
+        // regardless of the host platform — even on an Azure-hosted CI agent,
+        // where the static registry/chassis read would otherwise return true.
+        // The probe must short-circuit to NotApplicable without touching IMDS
+        // or the filesystem.
         var volumes = Substitute.For<IVolumeProbe>();
         volumes.EnumerateVolumes().Returns([]);
 
-        var source = new AzureDataSource(volumes, NullLogger<AzureDataSource>.Instance);
+        var source = new AzureDataSource(
+            volumes,
+            PlatformProbe(isRunningOnAzure: false),
+            NullLogger<AzureDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
         result.Should().BeOfType<DataSourceProbeResult.NotApplicable>();
+    }
+
+    private static IPlatformProbe PlatformProbe(bool isRunningOnAzure)
+    {
+        var probe = Substitute.For<IPlatformProbe>();
+        probe.IsRunningOnAzure().Returns(isRunningOnAzure);
+        return probe;
     }
 
     // ---- PA-readiness gate (avoids racing Microsoft's PA chain) ----
@@ -671,17 +679,6 @@ public class AzureDataSourceTests
         {
             return false;
         }
-    }
-
-    private static bool AzureSignalsPresent()
-    {
-        if (!OperatingSystem.IsWindows())
-            return false;
-        if (AzureRegistryVmIdExists())
-            return true;
-        // Chassis asset tag is read internally by PlatformProbes; the public
-        // gate covers both signals.
-        return false;
     }
 
     private static string LoadFixtureText(string name)

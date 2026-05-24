@@ -11,29 +11,48 @@ public partial class EryphFodderSmokeTests
     private const string GenesRootEnvVar = "ERYPH_GENES_ROOT";
     private const string DefaultGenesRoot = @"S:\eryph\eryph-genes\src";
 
-    // The theory yields zero data rows if the genes root is not present on this machine,
-    // so xunit treats the whole theory as a no-op rather than a failure. No `Skip` marker needed.
-    [Theory]
-    [MemberData(nameof(CloudConfigFodderSnippets))]
-    public void Parse_AllCloudConfigFodderInGenes_Succeeds(FodderSnippet snippet)
+    // Filesystem integration test: reads cloud-config fodder from the eryph
+    // genepool on disk. The genepool is not present on CI build agents, so when
+    // no genes (or no cloud-config fodder within them) are found, the test
+    // SKIPS rather than failing — a missing genepool is "nothing to check
+    // here", not a defect. When genes ARE present every cloud-config snippet
+    // must parse without an InvalidConfigException.
+    [SkippableFact]
+    public void Parse_AllCloudConfigFodderInGenes_Succeeds()
     {
-        var action = () => CloudConfigYamlSerializer.Deserialize(snippet.CloudConfigYaml);
-        action.Should().NotThrow<InvalidConfigException>(
-            $"fodder '{snippet.FodderName}' in {snippet.SourcePath} must parse");
+        var root = ResolveGenesRoot();
+        Skip.If(
+            root is null,
+            $"No eryph genes found ('{GenesRootEnvVar}' unset and '{DefaultGenesRoot}' absent); " +
+            "skipping the fodder smoke test on this machine.");
+
+        var snippets = CloudConfigFodderSnippets(root!).ToList();
+        Skip.If(
+            snippets.Count == 0,
+            $"Eryph genes root '{root}' contains no cloud-config fodder; nothing to smoke-test.");
+
+        foreach (var snippet in snippets)
+        {
+            var action = () => CloudConfigYamlSerializer.Deserialize(snippet.CloudConfigYaml);
+            action.Should().NotThrow<InvalidConfigException>(
+                $"fodder '{snippet.FodderName}' in {snippet.SourcePath} must parse");
+        }
     }
 
-    public static IEnumerable<object[]> CloudConfigFodderSnippets()
+    private static string? ResolveGenesRoot()
     {
         var root = Environment.GetEnvironmentVariable(GenesRootEnvVar)
                    ?? (Directory.Exists(DefaultGenesRoot) ? DefaultGenesRoot : null);
 
-        if (root is null || !Directory.Exists(root))
-            yield break;
+        return root is not null && Directory.Exists(root) ? root : null;
+    }
 
+    private static IEnumerable<FodderSnippet> CloudConfigFodderSnippets(string root)
+    {
         foreach (var file in Directory.EnumerateFiles(root, "*.yaml", SearchOption.AllDirectories))
         {
             foreach (var snippet in ExtractCloudConfigSnippets(file))
-                yield return [snippet];
+                yield return snippet;
         }
     }
 

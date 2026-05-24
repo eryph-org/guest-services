@@ -63,9 +63,11 @@ public sealed class AzureDataSource : IDataSource
     private readonly string _customDataPath;
 
     /// <summary>
-    /// Production constructor.
+    /// Production constructor. Azure detection flows through the injected
+    /// <see cref="IPlatformProbe"/> so the host platform of a CI agent can't
+    /// flip the gate under test.
     /// </summary>
-    public AzureDataSource(IVolumeProbe volumeProbe, ILogger<AzureDataSource> logger)
+    public AzureDataSource(IVolumeProbe volumeProbe, IPlatformProbe platformProbe, ILogger<AzureDataSource> logger)
         : this(
             volumeProbe,
             logger,
@@ -75,7 +77,7 @@ public sealed class AzureDataSource : IDataSource
             deleteFile: File.Delete,
             directoryExists: Directory.Exists,
             deleteDirectoryIfEmpty: DeleteDirectoryIfEmpty,
-            isRunningOnAzure: PlatformProbes.IsRunningOnAzure,
+            isRunningOnAzure: platformProbe.IsRunningOnAzure,
             readImageState: ReadImageStateFromRegistry,
             readServiceState: ReadServiceStateViaCim,
             customDataPath: CustomDataPath)

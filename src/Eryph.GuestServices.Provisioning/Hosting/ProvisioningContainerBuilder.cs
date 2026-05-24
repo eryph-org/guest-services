@@ -71,6 +71,11 @@ internal static class ProvisioningContainerBuilder
         // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40).
         container.Register<IVolumeProbe, DriveInfoVolumeProbe>(Lifestyle.Singleton);
 
+        // Azure detection probe (registry VmId + chassis asset tag). Injected so
+        // datasources never read the ambient host platform statically — keeps the
+        // gate deterministic under test even on an Azure-hosted build agent.
+        container.Register<IPlatformProbe, PlatformProbe>(Lifestyle.Singleton);
+
         // An override datasource (e.g. --user-data / --instance-id from the CLI)
         // is prepended ahead of everything else so it always wins discovery.
         if (options.OverrideDataSource is not null)

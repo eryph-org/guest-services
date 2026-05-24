@@ -31,7 +31,19 @@ public sealed class NoCloudDataSourceTests : IDisposable
         return new NoCloudDataSource(
             probe,
             urlHelper ?? Substitute.For<IUrlHelper>(),
+            NotOnAzure(),
             NullLogger<NoCloudDataSource>.Instance);
+    }
+
+    // A platform probe that reports we are NOT on Azure. Injected so the probe
+    // result is independent of the host platform — an Azure-hosted CI agent
+    // would otherwise flip the defensive Azure opt-out and short-circuit to
+    // NotApplicable, masking the volume we just staged.
+    private static IPlatformProbe NotOnAzure()
+    {
+        var platformProbe = Substitute.For<IPlatformProbe>();
+        platformProbe.IsRunningOnAzure().Returns(false);
+        return platformProbe;
     }
 
     [Fact]
@@ -131,7 +143,7 @@ public sealed class NoCloudDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([]);
 
-        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NullLogger<NoCloudDataSource>.Instance);
+        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NotOnAzure(), NullLogger<NoCloudDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
@@ -146,7 +158,7 @@ public sealed class NoCloudDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([new MountedVolume("cidata", _root)]);
 
-        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NullLogger<NoCloudDataSource>.Instance);
+        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NotOnAzure(), NullLogger<NoCloudDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
@@ -164,7 +176,7 @@ public sealed class NoCloudDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([new MountedVolume("cidata", _root)]);
 
-        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NullLogger<NoCloudDataSource>.Instance);
+        var source = new NoCloudDataSource(probe, Substitute.For<IUrlHelper>(), NotOnAzure(), NullLogger<NoCloudDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
