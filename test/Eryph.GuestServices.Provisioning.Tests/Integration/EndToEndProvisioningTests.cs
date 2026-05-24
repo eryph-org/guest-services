@@ -96,7 +96,12 @@ public sealed class EndToEndProvisioningTests : IDisposable
             new SetHostnameModule(NullLogger<SetHostnameModule>.Instance),
             new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance),
             new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance),
-            new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance),
+            new SshModule(
+                NullLogger<SshModule>.Instance,
+                reporter,
+                new DefaultUserResolver(
+                    new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings(),
+                    NullLogger<DefaultUserResolver>.Instance)),
             new WriteFilesModule(NullLogger<WriteFilesModule>.Instance),
             new RuncmdModule(NullLogger<RuncmdModule>.Instance),
         };

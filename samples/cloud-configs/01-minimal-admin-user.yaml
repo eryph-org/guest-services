@@ -4,7 +4,7 @@
 # Exercises:
 #   - UsersGroupsModule: creates the 'admin' local user, places it into
 #     Administrators (via the sudo alias).
-#   - SshAuthorizedKeysModule: per-user authorized_keys path.
+#   - SshModule: per-user authorized_keys path.
 #
 # Expected provisioning outcome:
 #   - Local user 'admin' created.
