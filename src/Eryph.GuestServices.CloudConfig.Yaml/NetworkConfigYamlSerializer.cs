@@ -1,6 +1,9 @@
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.CloudConfig.Yaml.Converters;
+using YamlDotNet.Core;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
+using YamlDotNet.Serialization.NodeDeserializers;
 
 namespace Eryph.GuestServices.CloudConfig.Yaml;
 
@@ -18,6 +21,13 @@ public static class NetworkConfigYamlSerializer
             .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
+            // PyYAML SafeLoader-equivalent YAML 1.1 scalar resolution. The
+            // network-config schema has int? fields (mtu, vlan id, route
+            // metric) where leading-zero octal / underscore forms must parse
+            // the same way cloud-init's safe_load would.
+            .WithNodeDeserializer(
+                new Yaml11ScalarResolver(),
+                s => s.Before<ScalarNodeDeserializer>())
             .Build());
 
     public static NetworkConfig Deserialize(string yaml)
@@ -25,7 +35,11 @@ public static class NetworkConfigYamlSerializer
         if (string.IsNullOrWhiteSpace(yaml))
             return new NetworkConfig();
 
-        var raw = Deserializer.Value.Deserialize<RawNetworkConfig?>(yaml) ?? new RawNetworkConfig();
+        // Wrap in a MergingParser so YAML 1.1 merge keys (`<<: *anchor`) are
+        // expanded — netplan/network-config uses anchors to share common
+        // interface settings, matching PyYAML SafeLoader.
+        var parser = new MergingParser(new Parser(new StringReader(yaml)));
+        var raw = Deserializer.Value.Deserialize<RawNetworkConfig?>(parser) ?? new RawNetworkConfig();
 
         // v1 carries a 'config' list rather than top-level ethernets/bonds/.. —
         // project the physical entries to the v2-shape Ethernets dictionary so

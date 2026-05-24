@@ -1,0 +1,30 @@
+#cloud-config
+# eryph contribution (not copied from upstream).
+#
+# Cloud-init's example corpus writes integers in plain decimal, so it never
+# exercises the YAML 1.1 / PyYAML SafeLoader integer forms that safe_load
+# still resolves: leading-zero octal (0644 -> 420), underscore digit
+# separators (1_000 -> 1000), binary (0b...), and hex (0x...). PyYAML reads
+# every value below as the decimal it comments; YamlDotNet's YAML 1.2 parser
+# would silently mis-read the octal forms as decimal and reject the
+# underscore forms outright. This fixture pins parity with safe_load.
+
+# object? union (bool | "none" | int) — plain octal resolves to long 420.
+apt_pipelining: 0644
+
+phone_home:
+  url: http://169.254.169.254/phone-home/
+  tries: 0b101            # binary 5
+
+users:
+- name: octal-uid
+  uid: 0644               # octal -> 420
+- name: underscore-uid
+  uid: 1_000              # underscore -> 1000
+- name: hex-uid
+  uid: 0x3E8              # hex -> 1000
+
+yum_repos:
+  base:
+    baseurl: http://example.invalid/base/
+    priority: 010         # octal -> 8

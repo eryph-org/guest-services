@@ -2,6 +2,7 @@ using Eryph.ConfigModel.Yaml;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.CloudConfig.Linux;
 using Eryph.GuestServices.CloudConfig.Yaml.Converters;
+using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -133,7 +134,13 @@ public static class CloudConfigYamlSerializer
 
         try
         {
-            return Deserializer.Value.Deserialize<CloudConfig>(new StringParser(stripped));
+            // Wrap in a MergingParser so YAML 1.1 merge keys (`<<: *anchor`)
+            // are expanded before deserialization. PyYAML SafeLoader supports
+            // them, so for fidelity we do too — a cloud-config that factors a
+            // shared base out into an anchor and merges it into several
+            // mappings deserializes with the merged keys present.
+            var parser = new MergingParser(new StringParser(stripped));
+            return Deserializer.Value.Deserialize<CloudConfig>(parser);
         }
         catch (Exception ex)
         {

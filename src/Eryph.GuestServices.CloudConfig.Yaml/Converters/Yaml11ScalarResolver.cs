@@ -25,16 +25,17 @@ namespace Eryph.GuestServices.CloudConfig.Yaml.Converters;
 /// <para>
 /// The resolver runs <c>Before&lt;ScalarNodeDeserializer&gt;()</c> so it
 /// gets a chance to intercept <c>bool</c>/<c>bool?</c>/<c>BoolOrString</c>/
-/// <c>object</c> targets before YamlDotNet's built-in (YAML 1.2-only)
-/// scalar parser sees them. Other expected types fall through to the
-/// remaining pipeline unchanged.
+/// integer/<c>object</c> targets before YamlDotNet's built-in (YAML
+/// 1.2-only) scalar parser sees them. Other expected types fall through to
+/// the remaining pipeline unchanged.
 /// </para>
 /// <para>
-/// Integer parsing intentionally stays on YAML 1.2 rules — YAML 1.1's
-/// leading-zero octal (<c>0644</c>) would collide with
-/// <c>WriteFilePermissions</c>'s dedicated octal converter, which already
-/// expects the raw scalar text. The <see cref="TryParseInteger"/> comment
-/// documents that carve-out.
+/// Integer parsing follows the YAML 1.1 grammar via
+/// <see cref="Yaml11IntegerTokens"/>: leading-zero octal (<c>0644</c> →
+/// 420), underscore separators (<c>1_000</c> → 1000), binary, and hex.
+/// <c>WriteFilePermissions</c> is NOT affected — it has its own dedicated
+/// converter attached via <c>WithAttributeOverride</c>, so the
+/// permissions scalar never reaches this resolver as a plain int target.
 /// </para>
 /// </remarks>
 internal sealed class Yaml11ScalarResolver : INodeDeserializer
@@ -68,6 +69,18 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
             return TryDeserializeBoolOrString(reader, out value);
         }
 
+        // int / int? / long / long? — YamlDotNet's built-in parser uses
+        // YAML 1.2 integer rules: it would read `0644` as decimal 644 (a
+        // SILENT wrong value) and reject `1_000` / `0b101` outright. We
+        // intercept and apply PyYAML SafeLoader's YAML 1.1 integer grammar
+        // so a leading-zero octal `mtu: 0644` arrives as 420, exactly as
+        // cloud-init would see it.
+        if (expectedType == typeof(int) || expectedType == typeof(int?)
+            || expectedType == typeof(long) || expectedType == typeof(long?))
+        {
+            return TryDeserializeInteger(reader, expectedType, out value);
+        }
+
         // object? — untyped union targets. Plain scalars get YAML 1.1
         // schema resolution (bool / null / int / float / string); quoted
         // scalars stay as strings (operator quoted them on purpose).
@@ -76,7 +89,7 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
             return TryDeserializeObject(reader, out value);
         }
 
-        // Every other typed target (string, int?, IReadOnlyList<T>, …)
+        // Every other typed target (string, IReadOnlyList<T>, …)
         // continues through YamlDotNet's standard pipeline.
         value = null;
         return false;
@@ -149,6 +162,63 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
         return true;
     }
 
+    private static bool TryDeserializeInteger(IParser reader, Type expectedType, out object? value)
+    {
+        if (!reader.TryConsume<Scalar>(out var scalar))
+        {
+            value = null;
+            return false;
+        }
+
+        var isNullable = expectedType == typeof(int?) || expectedType == typeof(long?);
+
+        // Empty scalar maps to null for nullable targets; for a non-nullable
+        // int/long it is a locatable error, mirroring the bool case.
+        if (scalar.Value.Length == 0 && scalar.Style == ScalarStyle.Plain)
+        {
+            if (isNullable)
+            {
+                value = null;
+                return true;
+            }
+            throw new YamlException(
+                scalar.Start, scalar.End,
+                "Expected an integer value but found an empty scalar.");
+        }
+
+        // We accept the integer whether the scalar is plain or quoted: the
+        // target type declares the intent (cloud-init's modules coerce
+        // `mtu: "1500"` to an int just the same), matching the tolerance
+        // rationale of the bool case.
+        if (Yaml11IntegerTokens.TryParse(scalar.Value, out var parsed))
+        {
+            var wantsLong = expectedType == typeof(long) || expectedType == typeof(long?);
+            if (wantsLong)
+            {
+                value = parsed;
+                return true;
+            }
+
+            // int / int? target — guard the narrowing conversion so an
+            // out-of-range value surfaces as a locatable error rather than
+            // an OverflowException from deep in the pipeline.
+            if (parsed is < int.MinValue or > int.MaxValue)
+            {
+                throw new YamlException(
+                    scalar.Start, scalar.End,
+                    $"Integer value '{scalar.Value}' is out of range for a 32-bit field.");
+            }
+            value = (int)parsed;
+            return true;
+        }
+
+        throw new YamlException(
+            scalar.Start, scalar.End,
+            $"'{scalar.Value}' is not a recognised YAML 1.1 integer. "
+            + "Accepted forms: decimal, leading-zero octal (0644), 0o/0x/0b prefixes, "
+            + "and underscore digit separators (1_000).");
+    }
+
     private static bool TryDeserializeObject(IParser reader, out object? value)
     {
         // For non-scalar events (mappings / sequences) fall through to
@@ -187,11 +257,10 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
         if (Yaml11BoolTokens.TryParse(text, out var asBool))
             return asBool;
 
-        // Integers — decimal, hex (0x...), and the modern 0o... octal.
-        // Carve-out: we deliberately do NOT recognise YAML 1.1 leading-zero
-        // octal (e.g. `0644`) at this layer — `WriteFilePermissions` has
-        // its own validating converter that expects the raw scalar text.
-        if (TryParseInteger(text, out var asLong))
+        // Integers — full YAML 1.1 grammar (decimal, leading-zero octal,
+        // 0o/0x/0b prefixes, underscore separators). Shares the single
+        // source of truth with the typed-int path so the two cannot drift.
+        if (Yaml11IntegerTokens.TryParse(text, out var asLong))
             return asLong;
 
         // Floats — including ±.inf and .nan.
@@ -202,30 +271,6 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
         return text;
     }
 
-    private static bool TryParseInteger(string text, out long value)
-    {
-        // 0x... hex
-        if (text.Length > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')
-            && long.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value))
-            return true;
-        // 0o... octal
-        // Carve-out: YAML 1.1 also accepted leading-zero octal (`0644`).
-        // We don't, by design — WriteFilePermissions owns that namespace
-        // and operates on the raw scalar string. Accepting it here would
-        // cause `permissions: 0644` to arrive as long 420 at the converter.
-        if (text.Length > 2 && text[0] == '0' && (text[1] == 'o' || text[1] == 'O'))
-        {
-            try
-            {
-                value = Convert.ToInt64(text[2..], 8);
-                return true;
-            }
-            catch (FormatException) { /* fall through */ }
-            catch (OverflowException) { /* fall through */ }
-        }
-        return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
-    }
-
     private static bool TryParseFloat(string text, out double value)
     {
         // YAML 1.1 / 1.2 special floats.
@@ -234,10 +279,16 @@ internal sealed class Yaml11ScalarResolver : INodeDeserializer
         if (text is "+.inf" or "+.Inf" or "+.INF") { value = double.PositiveInfinity; return true; }
         if (text is ".nan" or ".NaN" or ".NAN") { value = double.NaN; return true; }
 
+        // YAML 1.1 allows underscore separators in floats too (`1_000.5`).
+        // Strip them before parsing, but only when at least one separator is
+        // actually present so the common no-underscore path stays alloc-free.
+        var candidate = text.IndexOf('_') >= 0 ? text.Replace("_", "") : text;
+
         // Reject integers that already parsed elsewhere — TryParse(double) is
         // permissive and would convert "42" to 42.0. The caller already tried
         // integer first; if we're here the text is not a pure integer.
-        return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
-               && text.AsSpan().IndexOfAny('.', 'e', 'E') >= 0;
+        value = 0;
+        return double.TryParse(candidate, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+               && candidate.AsSpan().IndexOfAny('.', 'e', 'E') >= 0;
     }
 }

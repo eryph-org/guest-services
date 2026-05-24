@@ -369,6 +369,23 @@ fixtures + a lowercase-token contribution), and the source-generator
 presence/merge tests for value-type `IsEmpty` primitives.
 `differences-from-cloud-init.md` documents the now-matching behaviour.
 
+**FOLLOW-UP (later commit):** the audit was extended beyond booleans to the
+rest of the PyYAML SafeLoader (YAML 1.1) implicit grammar. Integer parsing
+now follows YAML 1.1 via the new `Yaml11IntegerTokens` (single source of
+truth shared by the typed-int path and the `object?` path): leading-zero
+octal (`0644` → 420 — previously a silent decimal mis-read), underscore
+separators (`1_000`), binary, and hex. The sexagesimal form (`12:30`) is a
+deliberate carve-out (kept as string). YAML 1.1 merge keys (`<<: *anchor`)
+are enabled on both the cloud-config and network-config deserializers via
+`MergingParser`. Duplicate mapping keys were probed and confirmed to be
+last-wins in YamlDotNet's default — already matching cloud-init, so no
+override. String-typed scalar coercion is left literal-preserving (a
+deliberate divergence from cloud-init's resolve-then-`str()`). Covered by
+`Yaml11IntegerTokensTests`, `Int11RoundTripTests`, `Yaml11StructuralTests`,
+and an `eryph-yaml11-integer-forms.yaml` fixture; all documented in
+`differences-from-cloud-init.md`. `write_files.permissions` parsing was not
+touched — its dedicated validating converter still owns the raw scalar.
+
 `src/Eryph.GuestServices.CloudConfig.Yaml/Converters/YamlSchemaTypeResolver.cs`
 class-doc and `ResolvePlainScalar` implement the YAML 1.2 core schema:
 only `true`/`True`/`TRUE` and `false`/`False`/`FALSE` are bools.

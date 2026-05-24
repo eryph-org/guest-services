@@ -32,6 +32,7 @@ public sealed class RealWorldCloudInitFixtureTests
     [InlineData("cloud-config-apt.yaml")]
     [InlineData("cloud-config-update-packages.yaml")]
     [InlineData("eryph-yaml11-lowercase-bool-tokens.yaml")]
+    [InlineData("eryph-yaml11-integer-forms.yaml")]
     public void Fixture_parses_without_error(string name)
     {
         var yaml = Load(name);
@@ -109,5 +110,22 @@ public sealed class RealWorldCloudInitFixtureTests
         // power_state.condition: yes — BoolOrString union, plain bool token.
         config.PowerState!.Condition.IsBool.Should().BeTrue();
         config.PowerState.Condition.Bool.Should().BeTrue();
+    }
+
+    [Fact]
+    public void IntegerForms_fixture_resolves_YAML11_integers_like_PyYAML()
+    {
+        // Our own contribution — the YAML 1.1 integer forms cloud-init's
+        // example corpus never uses. The octal/underscore rows would have
+        // silently mis-parsed (octal as decimal) or thrown before the
+        // YAML 1.1 integer fix.
+        var config = CloudConfigYamlSerializer.Deserialize(Load("eryph-yaml11-integer-forms.yaml"));
+
+        config.AptPipelining.Should().Be(420L);                  // 0644 octal, object?
+        config.PhoneHome!.Tries.Should().Be(5);                  // 0b101 binary
+        config.Users!.Single(u => u.Name == "octal-uid").Uid.Should().Be(420);       // 0644
+        config.Users!.Single(u => u.Name == "underscore-uid").Uid.Should().Be(1000); // 1_000
+        config.Users!.Single(u => u.Name == "hex-uid").Uid.Should().Be(1000);        // 0x3E8
+        config.YumRepos!["base"].Priority.Should().Be(8);        // 010 octal
     }
 }
