@@ -30,6 +30,24 @@ public sealed class BootSessionDetector : IBootSessionDetector
         _markerPath = markerPath;
     }
 
+    /// <summary>
+    /// Returns <c>true</c> when this run is the first observation of a new
+    /// boot session (the marker is absent OR the recorded boot id differs
+    /// from the current one) and <c>false</c> otherwise.
+    /// <para>
+    /// Failure handling: when <see cref="IBootClock.GetCurrentBootId"/>
+    /// throws, the decision depends on whether the marker exists:
+    /// <list type="bullet">
+    ///   <item><b>Marker absent</b> → return <c>true</c>. This is the
+    ///   first-ever run on the machine, so per-boot modules should run.</item>
+    ///   <item><b>Marker present</b> → return <c>false</c> (fail closed).
+    ///   The marker proves this isn't first boot; if we cannot determine
+    ///   the current boot id we'd rather suppress per-boot modules than
+    ///   re-run them every cycle on a system where the boot-id source is
+    ///   chronically broken (e.g. WMI in a degraded state).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
     public async Task<bool> IsNewBootAsync(CancellationToken cancellationToken)
     {
         string current;
@@ -39,10 +57,19 @@ public sealed class BootSessionDetector : IBootSessionDetector
         }
         catch (Exception ex)
         {
-            // If we cannot read the boot id, the safe default is "treat as a
-            // new boot": per-boot modules run again. The alternative (treat
-            // as same boot) would suppress modules that should have run.
-            _logger.LogWarning(ex, "Failed to read current boot id; treating as new boot");
+            // Fail-closed when a marker exists: previous successful runs
+            // recorded the boot id, so this is NOT first boot. Suppress
+            // per-boot work rather than re-running it every cycle.
+            // Without a marker, treat as new boot — first observation.
+            if (File.Exists(_markerPath))
+            {
+                _logger.LogWarning(ex,
+                    "Failed to read current boot id; marker exists at {Path}, treating as same boot",
+                    _markerPath);
+                return false;
+            }
+
+            _logger.LogWarning(ex, "Failed to read current boot id; no marker, treating as new boot");
             return true;
         }
 

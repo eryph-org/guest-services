@@ -70,14 +70,34 @@ public sealed class BootSessionDetectorTests : IDisposable
         result.Should().BeTrue();
     }
 
+    // When no marker exists, a clock failure means this is the first run
+    // on the machine: treat as new boot so per-boot modules execute.
     [Fact]
-    public async Task IsNewBootAsync_TreatsClockFailureAsNewBoot()
+    public async Task IsNewBootAsync_ClockFailureWithoutMarker_TreatsAsNewBoot()
     {
         var detector = NewDetector(new ThrowingBootClock());
 
         var result = await detector.IsNewBootAsync(CancellationToken.None);
 
         result.Should().BeTrue();
+    }
+
+    // When a marker exists, a clock failure means the boot-id source is
+    // broken on a system that has previously run. Fail closed: treat as
+    // same boot so per-boot modules don't re-run on every cycle.
+    [Fact]
+    public async Task IsNewBootAsync_ClockFailureWithMarker_FailsClosedAsSameBoot()
+    {
+        // Stage a marker from a previous run.
+        await File.WriteAllTextAsync(
+            _markerPath,
+            "{\"bootId\":\"prior-boot\",\"detectedAt\":\"2025-01-01T00:00:00+00:00\"}");
+
+        var detector = NewDetector(new ThrowingBootClock());
+
+        var result = await detector.IsNewBootAsync(CancellationToken.None);
+
+        result.Should().BeFalse();
     }
 
     private BootSessionDetector NewDetector(IBootClock clock) =>

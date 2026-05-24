@@ -13,8 +13,18 @@ namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
 public sealed class LicensingModuleTests
 {
-    private static TestModuleContext NewContext(IWindowsOs os, string sourceName = "test") =>
-        new(os, new DataSourceResult { SourceName = sourceName, InstanceId = "id" });
+    private static TestModuleContext NewContext(
+        IWindowsOs os,
+        string sourceName = "test",
+        string? cloudName = null) =>
+        new(os, new DataSourceResult
+        {
+            SourceName = sourceName,
+            InstanceId = "id",
+            PlatformMetadata = cloudName is null
+                ? null
+                : new PlatformMetadata { CloudName = cloudName },
+        });
 
     private static IWindowsOs NewOs(
         string? resolvedAvmaKey = null,
@@ -271,7 +281,7 @@ public sealed class LicensingModuleTests
 
         var result = await module.ApplyAsync(
             ResolvedUserData.Empty(new CloudConfigModel()),
-            NewContext(os, sourceName: "Azure"),
+            NewContext(os, cloudName: "azure"),
             CancellationToken.None);
 
         // Activation path skipped.
@@ -305,12 +315,54 @@ public sealed class LicensingModuleTests
 
         await module.ApplyAsync(
             ResolvedUserData.Empty(config),
-            NewContext(os, sourceName: "Azure"),
+            NewContext(os, cloudName: "azure"),
             CancellationToken.None);
 
         await os.Received(1).ApplyLicenseAsync(
             Arg.Is<LicenseSpec>(s => s.KmsHost == "internal-kms.corp.example.com:1688"),
             Arg.Any<CancellationToken>());
+    }
+
+    // Regression: the Azure detection MUST gate on PlatformMetadata.CloudName,
+    // not on SourceName. SourceName is diagnostic; CloudName is the contract.
+    // This guards against a regression to string-coupling: if a future
+    // refactor renames the source ("AzureCustomData", "AzureIMDS") the
+    // licensing module must still detect Azure via the structured metadata.
+    [Fact]
+    public async Task Azure_detection_uses_PlatformMetadata_CloudName_not_SourceName()
+    {
+        // SourceName says "Azure" but the structured metadata declares no
+        // cloud — module must NOT skip activation.
+        var os = NewOs(resolvedAvmaKey: "PICK-ME");
+        var module = new LicensingModule(NullLogger<LicensingModule>.Instance);
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            NewContext(os, sourceName: "Azure"),
+            CancellationToken.None);
+
+        // Activation ran because cloud-name is not "azure".
+        await os.Received(1).ApplyLicenseAsync(
+            Arg.Is<LicenseSpec>(s => s.ProductKey == "PICK-ME"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Azure_detection_triggers_on_CloudName_even_with_unrelated_SourceName()
+    {
+        // SourceName is something else but cloud_name == "azure" — module
+        // must take the Azure path.
+        var os = NewOs(resolvedAvmaKey: "WOULD-HAVE-PICKED");
+        var module = new LicensingModule(NullLogger<LicensingModule>.Instance);
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            NewContext(os, sourceName: "SomeOther", cloudName: "azure"),
+            CancellationToken.None);
+
+        // Activation path skipped under Azure.
+        await os.DidNotReceive().ApplyLicenseAsync(
+            Arg.Any<LicenseSpec>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

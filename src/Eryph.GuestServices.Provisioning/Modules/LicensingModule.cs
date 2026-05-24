@@ -24,9 +24,11 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 [Stage(Stage.Config, Order = 5, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class LicensingModule(ILogger<LicensingModule> logger) : IModule
 {
-    // AzureDataSource.SourceName, kept in sync with src/DataSources/AzureDataSource.cs.
-    // A constant rather than a typeof-lookup so the module stays trim-safe.
-    private const string AzureSourceName = "Azure";
+    // Cloud-name marker populated by AzureDataSource on PlatformMetadata.
+    // Stable across datasource refactors (the source name might change for
+    // diagnostics; the cloud name is the contract). Lowercase mirrors
+    // cloud-init's well-known cloud_name values.
+    private const string AzureCloudName = "azure";
 
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
@@ -217,7 +219,10 @@ internal sealed class LicensingModule(ILogger<LicensingModule> logger) : IModule
     }
 
     private static bool IsAzureDataSource(IModuleContext context) =>
-        string.Equals(context.DataSource.SourceName, AzureSourceName, StringComparison.OrdinalIgnoreCase);
+        string.Equals(
+            context.DataSource.PlatformMetadata?.CloudName,
+            AzureCloudName,
+            StringComparison.OrdinalIgnoreCase);
 
     private static string? NonBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

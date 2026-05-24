@@ -35,8 +35,8 @@ public sealed class SetPasswordsModuleTests
             CancellationToken.None);
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
-        await os.Received().SetLocalUserPasswordAsync("alice", "secret", false, Arg.Any<CancellationToken>());
-        await os.Received().SetLocalUserPasswordAsync("bob", "other", false, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("alice", "secret", true, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("bob", "other", true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public sealed class SetPasswordsModuleTests
         await os.Received().SetLocalUserPasswordAsync(
             "alice",
             Arg.Is<string>(p => p.Length == 16),
-            false,
+            true,
             Arg.Any<CancellationToken>());
     }
 
@@ -84,8 +84,8 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        await os.Received().SetLocalUserPasswordAsync("alice", "secret", false, Arg.Any<CancellationToken>());
-        await os.Received().SetLocalUserPasswordAsync("bob", "other", false, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("alice", "secret", true, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("bob", "other", true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        await os.Received().SetLocalUserPasswordAsync("alice", "has:colons", false, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("alice", "has:colons", true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        await os.Received().SetLocalUserPasswordAsync("alice", "topsecret", false, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("alice", "topsecret", true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        await os.Received().SetLocalUserPasswordAsync("Administrator", "topsecret", false, Arg.Any<CancellationToken>());
+        await os.Received().SetLocalUserPasswordAsync("Administrator", "topsecret", true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -157,5 +157,130 @@ public sealed class SetPasswordsModuleTests
         result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().SetLocalUserPasswordAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    // Cloud-init's chpasswd.expire defaults to true; when the operator opts
+    // out, the password must not be flagged "must change at next logon".
+    [Fact]
+    public async Task Chpasswd_expire_false_disables_must_change_flag()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Chpasswd = new ChpasswdConfig
+            {
+                Expire = false,
+                Users = [new ChpasswdListEntry { Name = "alice", Password = "secret" }],
+            },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync(
+            "alice", "secret", false, Arg.Any<CancellationToken>());
+    }
+
+    // The default is true even when the operator omits the flag entirely:
+    // mirrors cloud-init's cc_set_passwords default of `expire: true`.
+    [Fact]
+    public async Task Chpasswd_expire_omitted_defaults_to_must_change_flag()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Chpasswd = new ChpasswdConfig
+            {
+                Users = [new ChpasswdListEntry { Name = "alice", Password = "secret" }],
+            },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync(
+            "alice", "secret", true, Arg.Any<CancellationToken>());
+    }
+
+    // No chpasswd block at all — the password shorthand still uses the
+    // default-true expire flag (no Chpasswd config => Expire?.Value is null
+    // => defaults to true).
+    [Fact]
+    public async Task Password_shorthand_without_chpasswd_block_uses_default_must_change_true()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
+
+        var config = new CloudConfigModel { Password = "topsecret" };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync(
+            "Administrator", "topsecret", true, Arg.Any<CancellationToken>());
+    }
+
+    // Cloud-init's cc_set_passwords accepts the exact-case tokens R / RANDOM
+    // after the colon in the chpasswd.list form. We mirror exact-case so
+    // operators using documented cloud-init syntax see the same behaviour.
+    [Theory]
+    [InlineData("RANDOM")]
+    [InlineData("R")]
+    public async Task ChpasswdList_RandomToken_GeneratesPassword(string token)
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Chpasswd = new ChpasswdConfig { List = $"bob:{token}" },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        // The password actually set should be a 16-char generated value,
+        // not the literal token.
+        await os.Received().SetLocalUserPasswordAsync(
+            "bob",
+            Arg.Is<string>(p => p.Length == 16 && p != token),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    // Regression: a colon inside the password produces a literal value, and
+    // even if RANDOM appears as a substring it must not be tokenised. Cloud-
+    // init splits the first colon and treats everything after as a literal
+    // unless it matches the exact `R` / `RANDOM` token.
+    [Fact]
+    public async Task ChpasswdList_LiteralColon_PreservesRandomSubstring()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        var module = new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Chpasswd = new ChpasswdConfig { List = "bob:literal:colon:RANDOM" },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetLocalUserPasswordAsync(
+            "bob", "literal:colon:RANDOM", Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 }

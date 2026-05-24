@@ -177,6 +177,38 @@ public sealed class UsersGroupsModuleTests
         await os.Received().EnsureUserInAdministratorsAsync("alice", Arg.Any<CancellationToken>());
     }
 
+    // Locks the mixed-list policy documented on IsSudoEnabled: any non-
+    // "false" entry promotes, even when other entries in the list are
+    // "false". Cloud-init's per-rule semantics don't translate to Windows;
+    // collapsing to the binary admin/non-admin decision is the only
+    // platform-relevant answer.
+    [Fact]
+    public async Task Mixed_sudo_list_with_one_truthy_entry_promotes_user()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            Users =
+            [
+                new UserConfig
+                {
+                    Name = "alice",
+                    Sudo = ["ALL=(ALL) NOPASSWD:ALL", "false"],
+                },
+            ],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().EnsureUserInAdministratorsAsync("alice", Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("false")]
     [InlineData("FALSE")]
@@ -198,6 +230,57 @@ public sealed class UsersGroupsModuleTests
             CancellationToken.None);
 
         await os.DidNotReceive().EnsureUserInAdministratorsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    // Cloud-init carries GECOS as a Linux concept (comment column in
+    // /etc/passwd). On Windows we map it to the NTUser full-name field —
+    // visible as "Full name" in lusrmgr.msc — so cross-cloud cloud-config
+    // round-trips cleanly without losing the operator's display value.
+    [Fact]
+    public async Task User_WithGecos_AppliesFullName()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            Users = [new UserConfig { Name = "alice", Gecos = "Alice Anderson" }],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().CreateLocalUserAsync(
+            Arg.Is<LocalUserSpec>(s =>
+                s.Name == "alice"
+                && s.FullName == "Alice Anderson"
+                && s.Comment == "Alice Anderson"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task User_WithGecos_UpdatesExistingUser()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(true);
+
+        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            Users = [new UserConfig { Name = "alice", Gecos = "Alice Anderson" }],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().UpdateLocalUserAsync(
+            Arg.Is<LocalUserSpec>(s => s.Name == "alice" && s.FullName == "Alice Anderson"),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

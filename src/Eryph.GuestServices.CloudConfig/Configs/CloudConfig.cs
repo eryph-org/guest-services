@@ -64,7 +64,12 @@ public sealed record CloudConfig
     [CloudInitField]
     public KeyboardConfig? Keyboard { get; init; }
 
-    [CloudInitField]
+    /// <summary>
+    /// Windows licensing / activation directives (AVMA, KMS, product key,
+    /// rearm). Windows-only — there is no Linux equivalent. Surfaces under
+    /// <c>egs-tool validate --target linux</c> as a portability warning.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Windows activation (AVMA / KMS / product key); no Linux equivalent")]
     public LicenseConfig? License { get; init; }
 
     // ---------------------------------------------------------------------

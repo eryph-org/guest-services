@@ -7,7 +7,18 @@ public interface IModuleContext
 {
     IWindowsOs Os { get; }
 
-    // Exposed for modules that need raw metadata beyond the parsed CloudConfig
-    // (e.g. instance id for state correlation, host-name fallback). Unused in v1.
+    /// <summary>
+    /// Raw datasource metadata for modules that need more than the parsed
+    /// <c>CloudConfig</c>. Consumed today by:
+    /// <list type="bullet">
+    ///   <item><see cref="LicensingModule"/> — checks
+    ///   <c>PlatformMetadata.CloudName == "azure"</c> to skip the activation
+    ///   path (Azure handles activation natively).</item>
+    ///   <item><see cref="ApplyNetworkConfigModule"/> — reads
+    ///   <c>StructuredNetworkConfig</c> to apply v1/v2 network-config.</item>
+    ///   <item><c>ScriptsUserModule</c> — reads <c>InstanceId</c> for per-
+    ///   instance checkpoint storage.</item>
+    /// </list>
+    /// </summary>
     DataSourceResult DataSource { get; }
 }

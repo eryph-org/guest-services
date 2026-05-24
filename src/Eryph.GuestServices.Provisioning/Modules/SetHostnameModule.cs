@@ -44,17 +44,26 @@ internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IMo
 
     private static string? PickName(CloudConfigModel config)
     {
+        // Cloud-init's prefer_fqdn_over_hostname swaps the precedence: when
+        // true AND an fqdn is available, the fqdn wins over hostname.
+        // Otherwise the hostname-first / fqdn-fallback default holds.
+        var preferFqdn = config.PreferFqdnOverHostname == true;
+        if (preferFqdn && !string.IsNullOrWhiteSpace(config.Fqdn))
+            return ExtractNetBiosName(config.Fqdn);
+
         if (!string.IsNullOrWhiteSpace(config.Hostname))
             return config.Hostname.Trim();
 
         if (!string.IsNullOrWhiteSpace(config.Fqdn))
-        {
-            // Use the first label as the NetBIOS-style computer name. The
-            // unqualified Windows computer name does not include the domain.
-            var dot = config.Fqdn.IndexOf('.');
-            return dot > 0 ? config.Fqdn[..dot] : config.Fqdn;
-        }
+            return ExtractNetBiosName(config.Fqdn);
 
         return null;
+    }
+
+    private static string ExtractNetBiosName(string fqdn)
+    {
+        // The unqualified Windows computer name does not include the domain.
+        var dot = fqdn.IndexOf('.');
+        return dot > 0 ? fqdn[..dot] : fqdn;
     }
 }

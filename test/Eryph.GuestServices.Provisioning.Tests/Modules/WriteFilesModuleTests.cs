@@ -319,6 +319,41 @@ public sealed class WriteFilesModuleTests
             Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
+    // Regression: WriteFilesModule must skip entries flagged with
+    // defer: true — those are claimed by WriteFilesDeferredModule at Final.
+    // The expectation matches cloud-init's cc_write_files (Config) /
+    // cc_write_files_deferred (Final) split.
+    [Fact]
+    public async Task Skips_deferred_entries_at_config_stage()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/etc/now").Returns(@"C:\etc\now");
+        os.TranslateUnixPath("/etc/later").Returns(@"C:\etc\later");
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles =
+            [
+                new WriteFileConfig { Path = "/etc/now", Content = "now" },
+                new WriteFileConfig { Path = "/etc/later", Content = "later", Defer = true },
+            ],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        // Non-deferred entry is written.
+        await os.Received().WriteFileAsync(
+            @"C:\etc\now", Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Deferred entry must not be touched at Config — even the path
+        // translation should be skipped (no work whatsoever).
+        await os.DidNotReceive().WriteFileAsync(
+            @"C:\etc\later", Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
     // Regression: base64-encoded content must round-trip via byte[], never via
     // string. Any bytes > 0x7F (Latin-1 characters, binary data) must survive
     // intact; a string round-trip would mangle them via UTF-8 substitution.

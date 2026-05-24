@@ -75,6 +75,76 @@ public sealed class SetHostnameModuleTests
         await os.Received().SetComputerNameAsync("box", Arg.Any<CancellationToken>());
     }
 
+    // Cloud-init's prefer_fqdn_over_hostname swaps the precedence: with
+    // the flag set, the fqdn wins even if hostname is also defined.
+    [Fact]
+    public async Task Prefer_fqdn_picks_fqdn_first_label_over_hostname()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("b", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Hostname = "a",
+            Fqdn = "b.example.com",
+            PreferFqdnOverHostname = true,
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetComputerNameAsync("b", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Prefer_fqdn_false_falls_back_to_hostname_first_precedence()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("a", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Hostname = "a",
+            Fqdn = "b.example.com",
+            PreferFqdnOverHostname = false,
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetComputerNameAsync("a", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Prefer_fqdn_without_fqdn_falls_through_to_hostname()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("a", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var config = new CloudConfigModel
+        {
+            Hostname = "a",
+            PreferFqdnOverHostname = true,
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().SetComputerNameAsync("a", Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Returns_completed_when_name_is_already_set()
     {

@@ -66,10 +66,17 @@ internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IMo
                 continue;
             }
 
+            // Cloud-init's GECOS field on Linux populates /etc/passwd's
+            // comment column AND is widely treated as "full name". The
+            // closest Windows analogue is the NetUserInfo2.usri2_full_name
+            // (visible in lusrmgr.msc as "Full name"); we mirror to both
+            // Comment and FullName so a fresh user record gets the right
+            // display value and subsequent updates also sync FullName.
             var spec = new LocalUserSpec
             {
                 Name = user.Name,
-                Comment = null,
+                Comment = user.Gecos,
+                FullName = user.Gecos,
                 HomeDir = user.HomeDir,
                 Disabled = user.LockPasswd,
             };
@@ -126,11 +133,22 @@ internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IMo
         }
     }
 
-    // Cloud-init's `sudo` is a string-or-list union. The schema layer carries
-    // it as IReadOnlyList<string>?; this runtime compile-shim preserves the
-    // pre-list behaviour ("any non-'false' truthy entry promotes to admin").
-    // Phase 3 wires the full per-entry sudoers semantics on Linux; on Windows
-    // the binary "is the user an admin" answer collapses the list back down.
+    /// <summary>
+    /// Cloud-init's <c>sudo</c> is a string-or-list union; the schema carries
+    /// it as <c>IReadOnlyList&lt;string&gt;?</c>. This Windows-side shim
+    /// collapses the list to the binary "is this user an Administrator"
+    /// answer because there is no Windows equivalent of per-rule sudoers
+    /// semantics (NOPASSWD, runas restrictions, command lists).
+    /// <para>
+    /// Decision rule (locked by tests): the user is promoted to
+    /// Administrators if at least one non-empty entry exists that is not the
+    /// literal string <c>"false"</c> (case-insensitive, trimmed). An entry of
+    /// <c>"false"</c> mixed with other entries does NOT veto promotion — any
+    /// non-false entry wins. Empty / null / list-of-only-"false" → no
+    /// promotion. Per-rule sudoers semantics are platform-irrelevant on
+    /// Windows and intentionally not modeled.
+    /// </para>
+    /// </summary>
     private static bool IsSudoEnabled(IReadOnlyList<string>? sudo)
     {
         if (sudo is null || sudo.Count == 0)

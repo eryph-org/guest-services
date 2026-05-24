@@ -16,9 +16,10 @@ This page lists every module that ships in v1, in the order they run.
 | `UsersGroups` | Config / 0 | per-instance | `users`, `groups` |
 | `SetPasswords` | Config / 1 | per-instance | `chpasswd`, `password` |
 | `SshAuthorizedKeys` | Config / 2 | per-instance | `ssh_authorized_keys`, `users[].ssh_authorized_keys` |
-| `WriteFiles` | Config / 3 | per-instance | `write_files` |
+| `WriteFiles` | Config / 3 | per-instance | `write_files` (entries with `defer: true` are skipped here) |
 | `Runcmd` | Config / 4 | per-instance | `runcmd` |
 | `Licensing` | Config / 5 | per-instance | `license` |
+| `WriteFilesDeferred` | Final / -1 | per-instance | `write_files` (entries with `defer: true` only) |
 | `ScriptsUser` | Final / 0 | per-instance | (script payloads from MIME / shebang) |
 | `PowerState` | Final / last | per-instance | `power_state` |
 
@@ -89,6 +90,11 @@ first label of `fqdn` if `hostname` is unset.
 requires a reboot, the module returns `RebootRequested` — the run is
 suspended, `shutdown /r /t 5` is invoked, and the agent resumes on the
 next boot via the per-instance semaphore.
+
+`prefer_fqdn_over_hostname: true` swaps the precedence: when both
+`hostname` and `fqdn` are set, the first label of `fqdn` wins. With the
+flag absent or `false`, the default (hostname-first, fqdn-fallback)
+holds. Cloud-init parity.
 
 ```yaml
 #cloud-config
@@ -215,6 +221,9 @@ Windows-specific notes:
 - `sudo: true` (or any non-`false` value) → user added to
   `Administrators`. Linux sudoers entries are ignored.
 - `lock_passwd: true` disables the account.
+- `gecos: "Full Name"` maps to the NTUser `FullName` field — visible as
+  "Full name" in `lusrmgr.msc`. Cloud-init mirrors the same value into
+  `/etc/passwd`'s comment column on Linux.
 
 ---
 
@@ -243,6 +252,17 @@ password: TopLevelP!42    # shorthand; lands on the first user, else Administrat
 sampling. **The generated value is never logged.** A secret-channel
 reporting event is planned but not in v1; for now operators harvest
 the password out of band (e.g. via reset and re-set with a known value).
+
+`chpasswd.list` accepts the literal tokens `R` and `RANDOM`
+(exact-case, matching cloud-init) after the colon to mean "generate a
+random password for this user". `bob:RANDOM` produces a generated
+value; `bob:Random` is treated as the literal password.
+
+`chpasswd.expire` controls the "must change at next logon" flag. The
+cloud-init default is `true` — every changed password is flagged for
+change at first login. `expire: false` suppresses the flag. The default
+applies to all three input forms: `chpasswd.users`, `chpasswd.list`,
+and the top-level `password` shorthand.
 
 ---
 
@@ -303,6 +323,39 @@ always retain FullControl). **Note:** in v1 the module currently logs a
 warning and skips the ACL translation — the wrapper exists in
 `WindowsOs.SetPosixPermissionsAsync` but the module hasn't been wired
 to call it. Track this as a known gap.
+
+Entries flagged `defer: true` are skipped by this Config-stage module
+and handled by `WriteFilesDeferred` at Final — see below.
+
+---
+
+## `WriteFilesDeferred`
+
+**Stage:** Final, Order -1 (runs before `ScriptsUser`). **Frequency:** per-instance.
+
+Final-stage counterpart to `WriteFiles`. Picks up only the
+`write_files` entries flagged `defer: true` and writes them after
+users / groups / passwords have been processed. Cloud-init parity —
+matches `cc_write_files_deferred.py`.
+
+```yaml
+write_files:
+  - path: /home/alice/.ssh/authorized_keys
+    content: ssh-ed25519 AAAA... alice
+    permissions: "0600"
+    owner: alice
+    defer: true
+```
+
+Use this when an entry depends on state earlier modules in the same
+run create — typically when the file must be owned by a user the
+`users` block created in the same run. Without `defer: true`, the
+write fires at Config order 3 and the owner principal may not yet
+exist; deferring to Final guarantees `UsersGroups` (Config order 0)
+has already created the principal.
+
+All other semantics (encoding, path translation, POSIX permissions)
+match `WriteFiles`.
 
 ---
 

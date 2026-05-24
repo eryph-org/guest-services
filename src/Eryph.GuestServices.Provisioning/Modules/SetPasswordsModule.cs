@@ -28,9 +28,17 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
         CancellationToken cancellationToken)
     {
         var config = userData.CloudConfig;
-        await ProcessChpasswdUsersAsync(config, context, cancellationToken).ConfigureAwait(false);
-        await ProcessChpasswdListAsync(config, context, cancellationToken).ConfigureAwait(false);
-        await ProcessPasswordShorthandAsync(config, context, cancellationToken).ConfigureAwait(false);
+
+        // Cloud-init default for `chpasswd.expire` is `true` — every password
+        // set through this module should be flagged "must change at next
+        // login" unless the operator opts out. The flag flows through all
+        // three input forms (users[], list, top-level password shorthand)
+        // so cross-cloud cloud-config behaves consistently.
+        var expire = config.Chpasswd?.Expire ?? true;
+
+        await ProcessChpasswdUsersAsync(config, context, expire, cancellationToken).ConfigureAwait(false);
+        await ProcessChpasswdListAsync(config, context, expire, cancellationToken).ConfigureAwait(false);
+        await ProcessPasswordShorthandAsync(config, context, expire, cancellationToken).ConfigureAwait(false);
 
         return ModuleOutcome.Ok();
     }
@@ -38,6 +46,7 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
     private async Task ProcessChpasswdUsersAsync(
         CloudConfigModel config,
         IModuleContext context,
+        bool expire,
         CancellationToken cancellationToken)
     {
         if (config.Chpasswd?.Users is null)
@@ -67,13 +76,14 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
                 continue;
             }
 
-            await SetPasswordAsync(context, entry.Name, password, cancellationToken).ConfigureAwait(false);
+            await SetPasswordAsync(context, entry.Name, password, expire, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async Task ProcessChpasswdListAsync(
         CloudConfigModel config,
         IModuleContext context,
+        bool expire,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(config.Chpasswd?.List))
@@ -97,13 +107,25 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
             var user = trimmed[..colon];
             var password = trimmed[(colon + 1)..];
 
-            await SetPasswordAsync(context, user, password, cancellationToken).ConfigureAwait(false);
+            // Cloud-init's cc_set_passwords.py treats the literal tokens `R`
+            // and `RANDOM` (case-sensitive — the grammar uses an exact-case
+            // match) as "generate a random password for this user". Mirror
+            // that: any other value (including mixed-case `Random` or
+            // `random`) is the literal password.
+            if (password is "R" or "RANDOM")
+            {
+                password = GenerateRandomPassword();
+                logger.LogInformation("Generated random password for '{User}' (chpasswd list).", user);
+            }
+
+            await SetPasswordAsync(context, user, password, expire, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async Task ProcessPasswordShorthandAsync(
         CloudConfigModel config,
         IModuleContext context,
+        bool expire,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(config.Password))
@@ -112,17 +134,18 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
         var user = config.Users?.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u.Name))?.Name
             ?? "Administrator";
 
-        await SetPasswordAsync(context, user, config.Password, cancellationToken).ConfigureAwait(false);
+        await SetPasswordAsync(context, user, config.Password, expire, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SetPasswordAsync(
         IModuleContext context,
         string user,
         string password,
+        bool expire,
         CancellationToken cancellationToken)
     {
         logger.LogInformation("Setting password for '{User}'.", user);
-        await context.Os.SetLocalUserPasswordAsync(user, password, mustChangeAtNextLogon: false, cancellationToken)
+        await context.Os.SetLocalUserPasswordAsync(user, password, mustChangeAtNextLogon: expire, cancellationToken)
             .ConfigureAwait(false);
     }
 

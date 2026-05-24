@@ -25,5 +25,6 @@ internal static class ModuleRegistry
         typeof(TimezoneModule),
         typeof(UsersGroupsModule),
         typeof(WriteFilesModule),
+        typeof(WriteFilesDeferredModule),
     ];
 }

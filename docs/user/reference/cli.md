@@ -81,9 +81,28 @@ applying anything.
 
 ```powershell
 egs-service validate --user-data C:\Temp\sample.yaml
+egs-service validate --user-data C:\Temp\sample.yaml --target windows
+egs-service validate --user-data C:\Temp\sample.yaml --target linux
 ```
 
-Exit codes: 0 valid, 1 validation rejected, 2 not parseable.
+| Flag | Description |
+| --- | --- |
+| `--user-data <PATH>` | Path to the cloud-config user-data file (required). |
+| `--target <TARGET>` | Platform portability check: `windows`, `linux`, or `all` (default). |
+
+`--target windows` walks the source-generated platform inventory and
+emits a Warning for every top-level key present in the YAML that has
+no Windows behaviour (e.g. `apt`, `chef`, `phone_home`). Useful in CI
+to flag cross-cloud cloud-config that drifts into Linux-only territory.
+
+`--target linux` mirrors the check from the other direction — flags
+Windows-only keys (today: `license`).
+
+`--target all` (the default) is the lenient form — no portability
+warnings. Validation always runs regardless.
+
+Exit codes: 0 valid (portability warnings are informational), 1
+validation rejected, 2 not parseable or unknown `--target` value.
 
 ## `version` — print the agent version
 
