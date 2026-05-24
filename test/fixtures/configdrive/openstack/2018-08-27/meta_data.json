@@ -1,0 +1,14 @@
+{
+  "uuid": "d8e02d56-2648-49a3-bf97-6be8f1204f38",
+  "hostname": "openstack-host.example.org",
+  "name": "openstack-host",
+  "availability_zone": "nova",
+  "launch_index": 0,
+  "public_keys": {
+    "default": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBcoSYi8m3l8tq9mPpYxqA8H1pZ5z0r6n1V8oXp2bWd3 admin@example.org",
+    "secondary": "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDgY0n7example operator@example.org"
+  },
+  "meta": {
+    "role": "webserver"
+  }
+}

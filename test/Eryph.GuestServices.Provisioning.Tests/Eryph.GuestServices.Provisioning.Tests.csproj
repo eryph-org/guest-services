@@ -58,6 +58,12 @@
     <None Include="..\fixtures\nocloud\*" Link="fixtures\nocloud\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- ConfigDrive fixture: a representative OpenStack config-2 tree with a
+         dated version directory (no `latest`) and a nested public_keys map.
+         Recursive so the openstack/<version>/ layout is preserved at runtime. -->
+    <None Include="..\fixtures\configdrive\**\*" Link="fixtures\configdrive\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

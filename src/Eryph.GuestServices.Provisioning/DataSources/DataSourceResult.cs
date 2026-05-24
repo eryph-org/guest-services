@@ -41,6 +41,14 @@ public sealed record DataSourceResult
 
     public NetworkConfig? StructuredNetworkConfig { get; init; }
 
+    /// <summary>
+    /// SSH public keys supplied by the datasource metadata, e.g. OpenStack
+    /// ConfigDrive <c>public_keys</c>; applied to the resolved default user,
+    /// merged with cloud-config <c>ssh_authorized_keys</c>. cloud-init parity:
+    /// <c>get_public_ssh_keys()</c>.
+    /// </summary>
+    public IReadOnlyList<string>? SshPublicKeys { get; init; }
+
     public byte[] GetUserDataBytes() => UserData ?? [];
 
     public byte[] GetVendorDataBytes() => VendorData ?? [];
