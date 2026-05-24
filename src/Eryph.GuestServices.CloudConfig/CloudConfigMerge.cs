@@ -63,6 +63,55 @@ public static partial class CloudConfigMerge
         return combined;
     }
 
+    // Merges two dictionaries: right entries replace same-key left entries,
+    // left-only entries are preserved. Mirrors cloud-init's dict-merge
+    // semantics for apt.sources, yum_repos, puppet.conf, etc. — later
+    // declarations win on conflict, novel keys accumulate.
+    private static IReadOnlyDictionary<TKey, TValue>? MergeDict<TKey, TValue>(
+        IReadOnlyDictionary<TKey, TValue>? left,
+        IReadOnlyDictionary<TKey, TValue>? right) where TKey : notnull
+    {
+        if (left is null || left.Count == 0) return right;
+        if (right is null || right.Count == 0) return left;
+
+        var merged = new Dictionary<TKey, TValue>(left.Count + right.Count);
+        foreach (var kvp in left)
+            merged[kvp.Key] = kvp.Value;
+        foreach (var kvp in right)
+            merged[kvp.Key] = kvp.Value;
+        return merged;
+    }
+
+    // Dictionary merge variant where the value type itself carries deep-merge
+    // semantics (e.g. AptSourceEntry, YumRepoConfig). For shared keys the
+    // per-record merger runs; novel keys flow through untouched.
+    private static IReadOnlyDictionary<TKey, TValue>? MergeDict<TKey, TValue>(
+        IReadOnlyDictionary<TKey, TValue>? left,
+        IReadOnlyDictionary<TKey, TValue>? right,
+        Func<TValue?, TValue?, TValue?> merge) where TKey : notnull
+    {
+        if (left is null || left.Count == 0) return right;
+        if (right is null || right.Count == 0) return left;
+
+        var merged = new Dictionary<TKey, TValue>(left.Count + right.Count);
+        foreach (var kvp in left)
+            merged[kvp.Key] = kvp.Value;
+        foreach (var kvp in right)
+        {
+            if (merged.TryGetValue(kvp.Key, out var existing))
+            {
+                var combined = merge(existing, kvp.Value);
+                if (combined is not null)
+                    merged[kvp.Key] = combined;
+            }
+            else
+            {
+                merged[kvp.Key] = kvp.Value;
+            }
+        }
+        return merged;
+    }
+
     // Merges two lists keyed by a name selector: entries with the same
     // (non-null) name are replaced by the later one (deep-merged), and
     // unique entries are kept in left-then-right order.

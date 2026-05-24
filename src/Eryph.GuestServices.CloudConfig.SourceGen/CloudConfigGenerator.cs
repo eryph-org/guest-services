@@ -187,7 +187,10 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         var fq = t.FullyQualifiedName;
 
         sb.AppendLine();
-        sb.AppendLine($"    /// <summary>Source-generated deep merge for <see cref=\"{t.Name}\"/>.</summary>");
+        // Use the fully qualified name in the doc comment so the cref resolves
+        // even when the target record lives in a different namespace from
+        // CloudConfigMerge (e.g. records under Eryph.GuestServices.CloudConfig.Linux).
+        sb.AppendLine($"    /// <summary>Source-generated deep merge for <see cref=\"{fq.Replace('<', '{').Replace('>', '}')}\"/>.</summary>");
 
         if (isRootEntryPoint)
         {
@@ -235,6 +238,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
             MergeKindEnum.Concat => $"Concat(left.{p.Name}, right.{p.Name})",
             MergeKindEnum.DeepMerge => BuildDeepMergeCall(p, recordNames),
             MergeKindEnum.KeyedByName => BuildKeyedByNameCall(p),
+            MergeKindEnum.DictMerge => BuildDictMergeCall(p, recordNames),
             _ => BuildRightWinsExpression(p),
         };
     }
@@ -263,6 +267,11 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
 
     private static MergeKindEnum InferMergeKind(PropertyInfo p, HashSet<string> recordNames)
     {
+        // For dict-like properties (declared as IReadOnlyDictionary<K,V>) → DictMerge.
+        // Check this BEFORE IsListLike — dictionaries also implement IEnumerable<KVP>.
+        if (IsDictLike(p.TypeSymbol))
+            return MergeKindEnum.DictMerge;
+
         // For collection properties (declared as IReadOnlyList<T> or T[]) → Concat.
         if (IsListLike(p.TypeSymbol))
             return MergeKindEnum.Concat;
@@ -278,6 +287,20 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
 
         // Everything else (string?, bool?, int?, enum?, object?) → RightWins.
         return MergeKindEnum.RightWins;
+    }
+
+    private static bool IsDictLike(ITypeSymbol type)
+    {
+        var stripped = StripNullable(type) ?? type;
+        if (stripped is INamedTypeSymbol named)
+        {
+            var def = named.OriginalDefinition.ToDisplayString();
+            if (def == "System.Collections.Generic.IReadOnlyDictionary<TKey, TValue>"
+                || def == "System.Collections.Generic.IDictionary<TKey, TValue>"
+                || def == "System.Collections.Generic.Dictionary<TKey, TValue>")
+                return true;
+        }
+        return false;
     }
 
     private static bool IsListLike(ITypeSymbol type)
@@ -326,6 +349,28 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
             return $"right.{p.Name} ?? left.{p.Name}";
 
         return $"MergeByName(left.{p.Name}, right.{p.Name}, e => e.Name, {p.KeyedMergeMethod})";
+    }
+
+    private static string BuildDictMergeCall(PropertyInfo p, HashSet<string> recordNames)
+    {
+        // Determine the value type. When the value type itself is a known
+        // [CloudInitRecord], pass the per-record merger so right-side entries
+        // deep-merge into left-side entries sharing the same key. Otherwise
+        // pass null so MergeDict performs straight key-by-key replacement.
+        var stripped = StripNullable(p.TypeSymbol) ?? p.TypeSymbol;
+        if (stripped is not INamedTypeSymbol named || named.TypeArguments.Length != 2)
+            return $"right.{p.Name} ?? left.{p.Name}";
+
+        var valueType = named.TypeArguments[1];
+        var valueFq = valueType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (recordNames.Contains(valueFq))
+        {
+            var valueName = ((INamedTypeSymbol)valueType).Name;
+            var helper = $"Merge{valueName}";
+            return $"MergeDict(left.{p.Name}, right.{p.Name}, {helper})";
+        }
+
+        return $"MergeDict(left.{p.Name}, right.{p.Name})";
     }
 
     private static void EmitInventory(SourceProductionContext spc, RecordTypeInfo root)
@@ -396,6 +441,14 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
             return $"!string.IsNullOrEmpty(c.{p.Name})";
         }
 
+        // IReadOnlyList<T>? / IReadOnlyDictionary<K,V>? → !null && Count > 0
+        // so "operator wrote nothing" stays silent on the Info channel even
+        // when the YAML parser yielded an empty collection.
+        if (IsListLike(p.TypeSymbol) || IsDictLike(p.TypeSymbol))
+        {
+            return $"c.{p.Name} is not null && c.{p.Name}.Count > 0";
+        }
+
         // Everything else (reference types) → not null
         return $"c.{p.Name} is not null";
     }
@@ -448,6 +501,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         Concat = 2,
         DeepMerge = 3,
         KeyedByName = 4,
+        DictMerge = 5,
     }
 
     [System.Flags]

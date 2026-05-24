@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.CloudConfig.Linux;
 using Eryph.GuestServices.Provisioning.UserData;
 
 namespace Eryph.GuestServices.Provisioning.Tests.UserData;
@@ -123,6 +124,72 @@ public sealed class CloudConfigMergeTests
     }
 
     [Fact]
+    public void YumRepos_DictMerge_KeepsLeftOnly_ReplacesShared_AndDeepMergesRecords()
+    {
+        // Dict-merge semantics for [CloudInitRecord]-valued dictionaries:
+        // shared keys deep-merge their record fields, novel keys flow
+        // through verbatim. This is the cloud-init convention for
+        // apt.sources / yum_repos / puppet.conf.
+        var left = new CloudConfig.CloudConfig
+        {
+            YumRepos = new Dictionary<string, YumRepoConfig>
+            {
+                ["epel"] = new() { Baseurl = "https://old/epel", Enabled = true, Priority = 10 },
+                ["legacy"] = new() { Baseurl = "https://old/legacy" },
+            },
+        };
+        var right = new CloudConfig.CloudConfig
+        {
+            YumRepos = new Dictionary<string, YumRepoConfig>
+            {
+                ["epel"] = new() { Baseurl = "https://new/epel", Gpgcheck = false },
+                ["docker"] = new() { Baseurl = "https://new/docker", Enabled = true },
+            },
+        };
+
+        var merged = CloudConfigMergeProxy.Merge(left, right);
+
+        merged.YumRepos.Should().NotBeNull().And.HaveCount(3, "epel merges, legacy + docker stay");
+        merged.YumRepos!["epel"].Baseurl.Should().Be("https://new/epel", "scalar takes right");
+        merged.YumRepos["epel"].Enabled.Should().BeTrue("left's value preserved when right is null");
+        merged.YumRepos["epel"].Priority.Should().Be(10);
+        merged.YumRepos["epel"].Gpgcheck.Should().BeFalse();
+        merged.YumRepos["legacy"].Baseurl.Should().Be("https://old/legacy");
+        merged.YumRepos["docker"].Baseurl.Should().Be("https://new/docker");
+    }
+
+    [Fact]
+    public void SshKeys_PlainDictMerge_RightReplacesSharedKeys()
+    {
+        // Dict-merge with a plain string value type uses straight key-by-key
+        // replacement; no per-value deep merge is wired since strings are
+        // scalars.
+        var left = new CloudConfig.CloudConfig
+        {
+            SshKeys = new Dictionary<string, string>
+            {
+                ["rsa_private"] = "old-rsa",
+                ["ed25519_private"] = "ed25519-key",
+            },
+        };
+        var right = new CloudConfig.CloudConfig
+        {
+            SshKeys = new Dictionary<string, string>
+            {
+                ["rsa_private"] = "new-rsa",
+                ["dsa_private"] = "dsa-key",
+            },
+        };
+
+        var merged = CloudConfigMergeProxy.Merge(left, right);
+
+        merged.SshKeys.Should().NotBeNull().And.HaveCount(3);
+        merged.SshKeys!["rsa_private"].Should().Be("new-rsa");
+        merged.SshKeys["ed25519_private"].Should().Be("ed25519-key");
+        merged.SshKeys["dsa_private"].Should().Be("dsa-key");
+    }
+
+    [Fact]
     public void Empty_LeftAndRight_ReturnsEmpty()
     {
         var merged = CloudConfigMergeProxy.Merge(new CloudConfig.CloudConfig(), new CloudConfig.CloudConfig());
@@ -175,6 +242,7 @@ public sealed class CloudConfigMergeTests
         Hostname = "host",
         Fqdn = "host.example.com",
         PreserveHostname = true,
+        PreferFqdnOverHostname = true,
         Users = [new UserConfig { Name = "admin" }],
         Groups = [new GroupConfig { Name = "Administrators" }],
         Chpasswd = new ChpasswdConfig
@@ -194,31 +262,60 @@ public sealed class CloudConfigMergeTests
         Locale = "en-US",
         Keyboard = new KeyboardConfig { Layout = "en-US" },
         License = new LicenseConfig { ProductKey = "k" },
-        Apt = "apt-block",
+        Apt = new AptConfig { Proxy = "http://proxy:8080" },
         AptPipelining = "default",
         Packages = "pkgs",
         PackageUpdate = true,
         PackageUpgrade = true,
         PackageRebootIfRequired = true,
-        Snap = "snap-block",
-        YumRepos = "repos",
+        Snap = new SnapConfig { Commands = ["snap install foo"] },
+        YumRepos = new Dictionary<string, YumRepoConfig>
+        {
+            ["epel"] = new() { Baseurl = "https://example/epel", Enabled = true },
+        },
         YumRepoDir = "/etc/yum",
-        DiskSetup = "ds",
-        FsSetup = "fs",
-        Mounts = "mounts",
-        ManageEtcHosts = "true",
+        DiskSetup = new Dictionary<string, DiskSetupEntry>
+        {
+            ["/dev/sdb"] = new() { TableType = "gpt", Overwrite = true },
+        },
+        FsSetup = [new FsSetupEntry { Device = "/dev/sdb1", Filesystem = "ext4" }],
+        Mounts = [["/dev/sdb1", "/data", "ext4", "defaults", "0", "2"]],
+        MountDefaultFields = ["none", "none", "auto", "defaults,nofail", "0", "2"],
+        Swap = new SwapConfig { Filename = "/swap.img", Size = "1G" },
+        ManageEtcHosts = "localhost",
         ManageResolvConf = true,
-        ResolvConf = "rc",
-        Bootcmd = "boot",
+        ResolvConf = new ResolvConfConfig { Nameservers = ["1.1.1.1"] },
+        Bootcmd = [new RuncmdEntry { IsShellCommand = true, Command = "echo boot" }],
         PowerState = new PowerStateConfig { Mode = "reboot" },
-        PhoneHome = "ph",
+        PhoneHome = new PhoneHomeConfig { Url = "https://home", Tries = 3 },
         FinalMessage = "done",
-        CaCerts = "cacerts",
+        CaCerts = new CaCertsConfig { RemoveDefaults = true, Trusted = ["-----BEGIN CERTIFICATE-----..."] },
         DisableRoot = true,
         DisableRootOpts = "opts",
-        Chef = "chef",
-        Ansible = "ansible",
-        Puppet = "puppet",
-        SaltMinion = "salt",
+        Chef = new ChefConfig { ServerUrl = "https://chef", RunList = ["recipe[foo]"] },
+        Ansible = new AnsibleConfig { InstallMethod = "pip" },
+        Puppet = new PuppetConfig { Install = true, Version = "7.0" },
+        SaltMinion = new SaltMinionConfig { PkgName = "salt-minion" },
+        DisableEc2Metadata = true,
+        Migrate = false,
+        SshDeleteKeys = true,
+        SshGenKeyTypes = ["ed25519"],
+        SshImportId = ["gh:octocat"],
+        SshKeys = new Dictionary<string, string>
+        {
+            ["rsa_private"] = "-----BEGIN RSA PRIVATE KEY-----...",
+        },
+        SshPublishHostKeys = new SshPublishHostKeysConfig { Enabled = true },
+        ByobuByDefault = "system",
+        ResizeRootfs = "noblock",
+        LocaleConfigFile = "/etc/default/locale",
+        RandomSeed = new RandomSeedConfig { File = "/dev/urandom", Data = "seed" },
+        Output = new Dictionary<string, object?> { ["all"] = "| tee -a /var/log/cloud-init-output.log" },
+        Reporting = new Dictionary<string, ReportingHandlerConfig>
+        {
+            ["webhook"] = new() { Type = "webhook", Endpoint = "https://hook" },
+        },
+        UpdateEtcHosts = true,
+        UpdateHostname = true,
     };
 }

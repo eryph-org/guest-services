@@ -1,5 +1,6 @@
 using Eryph.ConfigModel.Yaml;
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.CloudConfig.Linux;
 using Eryph.GuestServices.CloudConfig.Yaml.Converters;
 using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
@@ -32,9 +33,45 @@ public static class CloudConfigYamlSerializer
             .WithAttributeOverride<CloudConfig>(
                 c => c.Runcmd!,
                 new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
+            .WithAttributeOverride<CloudConfig>(
+                c => c.Bootcmd!,
+                new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshImportId!,
+                new YamlConverterAttribute(typeof(StringListYamlConverter)))
+            .WithAttributeOverride<PhoneHomeConfig>(
+                p => p.Post!,
+                new YamlConverterAttribute(typeof(StringListYamlConverter)))
             .WithAttributeOverride<WriteFileConfig>(
                 w => w.Permissions!,
-                new YamlConverterAttribute(typeof(WriteFilePermissionsYamlConverter)));
+                new YamlConverterAttribute(typeof(WriteFilePermissionsYamlConverter)))
+            // Rename properties whose snake-cased default name conflicts
+            // with a C# rule (e.g. AnsibleConfig.AnsibleConfigPath maps to
+            // ansible_config — clashing with the type name) or whose
+            // cloud-init spelling diverges from our naming convention.
+            .WithAttributeOverride<AnsibleConfig>(
+                a => a.AnsibleConfigPath!,
+                new YamlMemberAttribute { Alias = "ansible_config", ApplyNamingConventions = false })
+            .WithAttributeOverride<CaCertsConfig>(
+                c => c.RemoveDefaultsLegacy!,
+                new YamlMemberAttribute { Alias = "remove-defaults", ApplyNamingConventions = false })
+            // Cloud-init's documented schema concatenates several ssh_*
+            // and locale_* keys without underscores between the trailing
+            // words; our property names follow Pascal casing so the
+            // UnderscoredNamingConvention would emit ssh_delete_keys etc.,
+            // which would NOT match the documented YAML keys.
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshDeleteKeys!,
+                new YamlMemberAttribute { Alias = "ssh_deletekeys", ApplyNamingConventions = false })
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshGenKeyTypes!,
+                new YamlMemberAttribute { Alias = "ssh_genkeytypes", ApplyNamingConventions = false })
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshPublishHostKeys!,
+                new YamlMemberAttribute { Alias = "ssh_publish_hostkeys", ApplyNamingConventions = false })
+            .WithAttributeOverride<CloudConfig>(
+                c => c.LocaleConfigFile!,
+                new YamlMemberAttribute { Alias = "locale_configfile", ApplyNamingConventions = false });
 
         // Build the type inspector first as some of our type converters require it.
         var typeInspector = builder.BuildTypeInspector();
@@ -61,6 +98,9 @@ public static class CloudConfigYamlSerializer
             .WithNodeDeserializer(
                 new ReadOnlyListNodeDeserializer(),
                 s => s.Before<CollectionNodeDeserializer>())
+            .WithNodeDeserializer(
+                new ReadOnlyDictionaryNodeDeserializer(),
+                s => s.Before<DictionaryNodeDeserializer>())
             .Build();
     });
 
@@ -96,15 +136,14 @@ public static class CloudConfigYamlSerializer
         }
     }
 
-    // Snake-cased property names of CloudConfig — what the YAML keys should
-    // look like. Built once and cached. The `Type` property metadata is
-    // root-only because nested objects have wildly varying shapes (some
-    // wrapped in custom converters) and cloud-init's own validation surfaces
-    // unknown keys most usefully at the top level.
+    // The set of YAML keys that exist on the CloudConfig schema. Sourced
+    // from the source-generated inventory so every [CloudInitField] tag —
+    // including the ones that override the default snake-cased name (e.g.
+    // ssh_deletekeys vs the property-derived ssh_delete_keys) — flows
+    // through here automatically. Built once and cached.
     private static readonly Lazy<HashSet<string>> KnownTopLevelKeys = new(() =>
-        typeof(CloudConfig)
-            .GetProperties()
-            .Select(p => UnderscoredNamingConvention.Instance.Apply(p.Name))
+        CloudConfigPlatformInventory.Fields
+            .Select(f => f.YamlName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase));
 
     private static void WalkForUnknownTopLevelKeys(string yaml, Action<string> onUnknownKey)

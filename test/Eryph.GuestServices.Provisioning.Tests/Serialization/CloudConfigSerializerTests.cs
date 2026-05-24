@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,11 +15,15 @@ public sealed class CloudConfigSerializerTests
     {
         var captured = new CapturingLogger<CloudConfigSerializer>();
         var serializer = new CloudConfigSerializer(captured);
+        // Phase 2 typed apt.sources as a dict of AptSourceEntry — each
+        // value is itself a mapping (source / keyid / etc.) per cloud-
+        // init's documented schema.
         const string yaml = """
             #cloud-config
             apt:
               sources:
-                main: 'deb http://archive.ubuntu.com/ubuntu jammy main'
+                main:
+                  source: 'deb http://archive.ubuntu.com/ubuntu jammy main'
             """;
 
         var result = serializer.Deserialize(yaml);
@@ -41,9 +46,10 @@ public sealed class CloudConfigSerializerTests
         const string yaml = """
             #cloud-config
             apt:
-              sources: stuff
+              proxy: http://proxy:8080
             snap:
-              commands: stuff
+              commands:
+                - snap install foo
             packages:
               - git
               - vim
@@ -113,6 +119,108 @@ public sealed class CloudConfigSerializerTests
 
         captured.Records.Should().Contain(r =>
             r.Level == LogLevel.Warning && r.Message.Contains("hsotname"));
+    }
+
+    [Fact]
+    public void Every_new_phase2_linux_key_surfaces_at_Info()
+    {
+        // Single fixture exercising every Phase 2 Linux-only key so the
+        // inventory-driven Info logging covers them. Any new acknowledged-
+        // but-no-op key must either appear here (and produce an Info line)
+        // or carry CloudInitPlatforms.All on the model — otherwise the
+        // inventory dropped a property and operators won't see it.
+        var captured = new CapturingLogger<CloudConfigSerializer>();
+        var serializer = new CloudConfigSerializer(captured);
+        const string yaml = """
+            #cloud-config
+            apt:
+              proxy: http://proxy:8080
+            apt_pipelining: default
+            packages:
+              - git
+            package_update: true
+            package_upgrade: true
+            package_reboot_if_required: true
+            snap:
+              commands: ['snap install hello']
+            yum_repos:
+              epel:
+                baseurl: https://example/epel
+            yum_repo_dir: /etc/yum.repos.d
+            disk_setup:
+              /dev/sdb:
+                table_type: gpt
+            fs_setup:
+              - device: /dev/sdb1
+                filesystem: ext4
+            mounts:
+              - [/dev/sdb1, /data, ext4, defaults, '0', '2']
+            mount_default_fields: [none, none, auto, defaults, '0', '2']
+            swap:
+              filename: /swap.img
+              size: 1G
+            manage_etc_hosts: localhost
+            manage_resolv_conf: true
+            resolv_conf:
+              nameservers: [1.1.1.1]
+            bootcmd:
+              - echo boot
+            phone_home:
+              url: https://hook
+            final_message: done
+            ca_certs:
+              remove_defaults: true
+            disable_root: true
+            disable_root_opts: 'no-port-forwarding'
+            chef:
+              server_url: https://chef
+            ansible:
+              install_method: pip
+            puppet:
+              install: true
+            salt_minion:
+              pkg_name: salt-minion
+            disable_ec2_metadata: true
+            migrate: false
+            ssh_deletekeys: true
+            ssh_genkeytypes: [ed25519]
+            ssh_import_id: gh:octocat
+            ssh_keys:
+              rsa_private: 'X'
+            ssh_publish_hostkeys:
+              enabled: true
+            byobu_by_default: system
+            resize_rootfs: noblock
+            locale_configfile: /etc/default/locale
+            random_seed:
+              file: /dev/urandom
+              data: seed
+            output:
+              all: '| tee'
+            reporting:
+              webhook:
+                type: webhook
+            update_etc_hosts: true
+            update_hostname: true
+            """;
+
+        serializer.Deserialize(yaml);
+
+        // Every Linux-only inventory entry currently present in the YAML
+        // must produce its own Info line. The count comes from the
+        // source-generated inventory so this test stays in lockstep with
+        // the model.
+        var linuxFields = CloudConfigPlatformInventory.Fields
+            .Where(f => f.Platforms == CloudInitPlatforms.Linux)
+            .ToList();
+        var infos = captured.Records.Where(r => r.Level == LogLevel.Information).ToList();
+        infos.Should().HaveCount(linuxFields.Count,
+            "every CloudInitPlatforms.Linux field in the inventory must surface " +
+            "exactly one Info line for this all-keys-set fixture. " +
+            "If this count drifts, either the fixture lost a key or a model " +
+            "field is no longer being deserialised correctly.");
+        captured.Records.Should().NotContain(r => r.Level == LogLevel.Warning,
+            "the fixture should parse cleanly without any unknown-key warnings");
     }
 
     [Fact]
