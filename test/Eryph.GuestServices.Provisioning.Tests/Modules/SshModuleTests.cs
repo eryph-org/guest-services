@@ -348,6 +348,56 @@ public sealed class SshModuleTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Datasource_public_keys_merged_with_config_keys_onto_default_user()
+    {
+        // cloud-init applies get_public_ssh_keys() to the default user, merged
+        // with cloud-config ssh_authorized_keys. SetUserSshAuthorizedKeysAsync
+        // does the merge+dedup; we just pass both sets through.
+        var os = SshdInstalled();
+        var module = CreateModule();
+
+        var config = new CloudConfigModel { SshAuthorizedKeys = ["ssh-ed25519 CONFIG-KEY"] };
+        var dataSource = new DataSourceResult
+        {
+            SourceName = "ConfigDrive",
+            InstanceId = "i",
+            SshPublicKeys = ["ssh-ed25519 DATASOURCE-KEY"],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os, dataSource), CancellationToken.None);
+
+        await os.Received().SetUserSshAuthorizedKeysAsync(
+            "Administrator",
+            Arg.Is<IReadOnlyList<string>>(k =>
+                k.Contains("ssh-ed25519 CONFIG-KEY") && k.Contains("ssh-ed25519 DATASOURCE-KEY")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Datasource_public_keys_applied_even_without_config_keys()
+    {
+        var os = SshdInstalled();
+        var module = CreateModule();
+
+        var config = new CloudConfigModel();
+        var dataSource = new DataSourceResult
+        {
+            SourceName = "ConfigDrive",
+            InstanceId = "i",
+            SshPublicKeys = ["ssh-ed25519 DATASOURCE-KEY"],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os, dataSource), CancellationToken.None);
+
+        await os.Received().SetUserSshAuthorizedKeysAsync(
+            "Administrator",
+            Arg.Is<IReadOnlyList<string>>(k => k.Count == 1 && k[0] == "ssh-ed25519 DATASOURCE-KEY"),
+            Arg.Any<CancellationToken>());
+    }
+
     // ---- restart gating ----
 
     [Fact]

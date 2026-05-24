@@ -97,16 +97,26 @@ gzipped multipart MIME whose bytes are not valid UTF-8.
 **Detection.** A mounted volume whose label is `config-2`. Declines on
 Azure for the same reason as NoCloud.
 
-**Layout expected:**
+**Version walk.** Like cloud-init, the source walks the dated metadata
+versions `openstack/<version>/` newest-first (`2018-08-27` down to
+`2012-08-10`) and reads the first one whose `meta_data.json` is present,
+falling back to `openstack/latest/`. ISOs that omit the `latest` symlink are
+still picked up.
+
+**Layout expected** (`<version>` is the resolved version above):
 
 | File | Required | Used for |
 | --- | --- | --- |
-| `openstack/latest/meta_data.json` | yes | `uuid` (instance id), `hostname` / `name`, `availability_zone` |
-| `openstack/latest/user_data` | no | Raw user-data bytes |
-| `openstack/latest/vendor_data.json` | no | Vendor data (parsed; merge deferred) |
-| `openstack/latest/network_data.json` | no | network-config (best-effort YAML parse — JSON form is not v1 supported) |
+| `openstack/<version>/meta_data.json` | yes | `uuid` (instance id), `hostname` / `name`, `availability_zone`, `public_keys` |
+| `openstack/<version>/user_data` | no | Raw user-data bytes |
+| `openstack/<version>/vendor_data.json` | no | Vendor data (parsed; merge deferred) |
+| `openstack/<version>/network_data.json` | no | network-config (best-effort YAML parse — JSON form is not v1 supported) |
 
 Bytes are read raw, same as NoCloud.
+
+**SSH keys.** `meta_data.json` `public_keys` (the OpenStack object form, plus
+the string / array forms cloud-init tolerates) are applied to the resolved
+default user, merged with the cloud-config top-level `ssh_authorized_keys`.
 
 **Cleanup hook.** No-op. Same rationale as NoCloud.
 

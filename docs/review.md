@@ -459,6 +459,13 @@ splitter.
 version. OpenStack-derived ConfigDrive ISOs that don't write the
 `latest` symlink will not be picked up.
 
+**RESOLVED.** `ConfigDriveDataSource` now clones cloud-init's
+`_find_working_version` (`cloudinit/sources/helpers/openstack.py`): it walks
+the eight `OS_VERSIONS` (`2012-08-10` … `2018-08-27`) newest-first and uses
+the first version whose `openstack/<version>/meta_data.json` is present,
+falling back to `latest` otherwise (checking the file directly is the
+file-reader equivalent of cloud-init listing the `openstack/` directory).
+
 ### 20. ConfigDrive `public_keys` nested object flattens to raw JSON string
 
 `ConfigDriveDataSource.FlattenJson` (line 153-181) stores nested object
@@ -469,6 +476,14 @@ as a proper dict and the OpenStack datasource layer auto-merges them
 into the default user's `authorized_keys`. Nothing reads
 `MetaData["public_keys"]` today, so this is silent today, but it is a
 real divergence from cloud-init's ConfigDrive contract.
+
+**RESOLVED.** `ConfigDriveDataSource` now parses `public_keys` via a clone of
+cloud-init's `normalize_pubkey_data` (string → `splitlines()`, list → as-is,
+dict → flatten string/list values) and surfaces the result as
+`DataSourceResult.SshPublicKeys` (cloud-init `get_public_ssh_keys()`).
+`SshModule` applies those keys to the resolved default user, merged with the
+cloud-config top-level `ssh_authorized_keys` — mirroring how cloud-init merges
+datasource keys and cloud-config keys onto the default user.
 
 ### 21. `Process.OutputDataReceived` uses default console code page
 

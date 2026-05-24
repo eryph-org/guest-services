@@ -34,6 +34,14 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         return platformProbe;
     }
 
+    // Writes meta_data.json under openstack/<version>/, creating the directory.
+    private async Task WriteMetaDataAsync(string version, string json)
+    {
+        var dir = Path.Combine(_root, "openstack", version);
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "meta_data.json"), json);
+    }
+
     [Fact]
     public async Task ReadAsync_returns_null_when_meta_data_json_missing()
     {
@@ -185,5 +193,136 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
             CancellationToken.None);
 
         File.Exists(Path.Combine(_openstackDir, "meta_data.json")).Should().BeTrue();
+    }
+
+    // ---- version walk (cloud-init _find_working_version) ----
+
+    [Fact]
+    public async Task ReadAsync_reads_a_dated_version_directory_when_latest_absent()
+    {
+        await WriteMetaDataAsync("2018-08-27", "{\"uuid\":\"dated-id\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.InstanceId.Should().Be("dated-id");
+    }
+
+    [Fact]
+    public async Task ReadAsync_picks_the_newest_present_version()
+    {
+        // Both 2017-02-22 and 2018-08-27 present -> newest (2018-08-27) wins.
+        await WriteMetaDataAsync("2017-02-22", "{\"uuid\":\"older\"}");
+        await WriteMetaDataAsync("2018-08-27", "{\"uuid\":\"newer\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.InstanceId.Should().Be("newer");
+    }
+
+    [Fact]
+    public async Task ReadAsync_falls_back_to_latest_when_no_dated_version_present()
+    {
+        // Regression: the prior hardcoded behavior. Only openstack/latest present.
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"latest-id\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.InstanceId.Should().Be("latest-id");
+    }
+
+    [Fact]
+    public async Task ReadAsync_returns_null_when_only_an_unknown_version_present_and_no_latest()
+    {
+        // An unknown version dir that is NOT in OS_VERSIONS, and no `latest`.
+        await WriteMetaDataAsync("2099-01-01", "{\"uuid\":\"unknown\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    // ---- public_keys (cloud-init normalize_pubkey_data) ----
+
+    [Fact]
+    public async Task ReadAsync_surfaces_public_keys_dict_single_entry()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\",\"public_keys\":{\"mykey\":\"ssh-ed25519 AAA... user@host\"}}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeEquivalentTo(["ssh-ed25519 AAA... user@host"]);
+    }
+
+    [Fact]
+    public async Task ReadAsync_surfaces_public_keys_dict_multiple_entries()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\",\"public_keys\":{\"a\":\"ssh-ed25519 KEY-A a@h\",\"b\":\"ssh-rsa KEY-B b@h\"}}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeEquivalentTo(
+            ["ssh-ed25519 KEY-A a@h", "ssh-rsa KEY-B b@h"]);
+    }
+
+    [Fact]
+    public async Task ReadAsync_tolerates_public_keys_array_form()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\",\"public_keys\":[\"ssh-ed25519 ARR-1 a@h\",\"ssh-rsa ARR-2 b@h\"]}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeEquivalentTo(
+            ["ssh-ed25519 ARR-1 a@h", "ssh-rsa ARR-2 b@h"]);
+    }
+
+    [Fact]
+    public async Task ReadAsync_tolerates_public_keys_string_form_splitlines()
+    {
+        // A single string -> splitlines() (cloud-init normalize_pubkey_data).
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\",\"public_keys\":\"ssh-ed25519 LINE-1 a@h\\nssh-rsa LINE-2 b@h\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeEquivalentTo(
+            ["ssh-ed25519 LINE-1 a@h", "ssh-rsa LINE-2 b@h"]);
+    }
+
+    [Fact]
+    public async Task ReadAsync_leaves_public_keys_null_when_absent()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\"}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeNull();
+    }
+
+    // ---- real-world fixture (test/fixtures/configdrive/) ----
+
+    [Fact]
+    public async Task ReadAsync_reads_real_world_configdrive_fixture()
+    {
+        // The fixture lives under a dated version dir (no `latest`), so this
+        // also exercises the version-walk (Finding 19) and public_keys surfacing
+        // (Finding 20). See test/fixtures/configdrive/README.md.
+        var fixtureRoot = Path.Combine(AppContext.BaseDirectory, "fixtures", "configdrive");
+        Directory.Exists(Path.Combine(fixtureRoot, "openstack", "2018-08-27"))
+            .Should().BeTrue("the ConfigDrive fixture should be copied to the output");
+
+        var result = await ConfigDriveDataSource.ReadAsync(fixtureRoot, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.InstanceId.Should().Be("d8e02d56-2648-49a3-bf97-6be8f1204f38");
+        result.Hostname.Should().Be("openstack-host.example.org");
+        result.SshPublicKeys.Should().NotBeNull();
+        result.SshPublicKeys.Should().Contain(k => k.StartsWith("ssh-ed25519 ") && k.EndsWith("admin@example.org"));
+        result.SshPublicKeys.Should().HaveCount(2);
     }
 }

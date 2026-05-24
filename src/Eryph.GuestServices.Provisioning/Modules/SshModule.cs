@@ -273,7 +273,16 @@ internal sealed class SshModule(
         IModuleContext context,
         CancellationToken cancellationToken)
     {
-        if (config.SshAuthorizedKeys is null || config.SshAuthorizedKeys.Count == 0)
+        // cloud-init applies the datasource's get_public_ssh_keys() to the
+        // default user, merged with cloud-config ssh_authorized_keys. Combine
+        // both; SetUserSshAuthorizedKeysAsync already merges + dedups.
+        var keys = new List<string>();
+        if (config.SshAuthorizedKeys is { Count: > 0 })
+            keys.AddRange(config.SshAuthorizedKeys);
+        if (context.DataSource.SshPublicKeys is { Count: > 0 })
+            keys.AddRange(context.DataSource.SshPublicKeys);
+
+        if (keys.Count == 0)
             return;
 
         // Top-level keys target the provisioning default user (cloud-init's
@@ -282,12 +291,12 @@ internal sealed class SshModule(
         var target = defaultUser.Resolve(config, context.DataSource);
         logger.LogInformation(
             "Writing {Count} top-level ssh authorized key(s) for '{User}'.",
-            config.SshAuthorizedKeys.Count,
+            keys.Count,
             target);
 
         try
         {
-            await context.Os.SetUserSshAuthorizedKeysAsync(target, config.SshAuthorizedKeys, cancellationToken)
+            await context.Os.SetUserSshAuthorizedKeysAsync(target, keys, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
