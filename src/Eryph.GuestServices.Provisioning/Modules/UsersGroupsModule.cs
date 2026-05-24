@@ -1,3 +1,4 @@
+using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -7,8 +8,16 @@ using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 namespace Eryph.GuestServices.Provisioning.Modules;
 
 [Stage(Stage.Config, Order = 0, Frequency = ModuleFrequency.PerInstance)]
-internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IModule
+internal sealed class UsersGroupsModule(
+    ILogger<UsersGroupsModule> logger,
+    ProvisioningSettings settings,
+    IDefaultUserResolver defaultUser) : IModule
 {
+    // The fallback group set when settings.DefaultUser.Groups is null. An
+    // auto-created default user is an administrator by intent (it is the
+    // account credential shorthands target), so it lands in Administrators.
+    private static readonly IReadOnlyList<string> DefaultUserGroups = ["Administrators"];
+
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
         IModuleContext context,
@@ -17,6 +26,7 @@ internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IMo
         var config = userData.CloudConfig;
         await ProcessGroupsAsync(config, context.Os, cancellationToken).ConfigureAwait(false);
         await ProcessUsersAsync(config, context.Os, cancellationToken).ConfigureAwait(false);
+        await EnsureDefaultUserAsync(config, context, cancellationToken).ConfigureAwait(false);
 
         return ModuleOutcome.Ok();
     }
@@ -133,4 +143,63 @@ internal sealed class UsersGroupsModule(ILogger<UsersGroupsModule> logger) : IMo
         }
     }
 
+    // Auto-create the image-baked default user (RFC 0018) when the operator
+    // opts in via settings.DefaultUser.CreateIfMissing. This enables the
+    // OpenStack-style flow where a password-only cloud-config provisions a
+    // known admin account that the `users:` block never declares. Runs after
+    // the explicit `users:` processing so the later SetPasswords / Ssh modules
+    // (Order 1 / 2) can target an account that now exists. Without
+    // CreateIfMissing this is a no-op and behaviour is exactly as before.
+    private async Task EnsureDefaultUserAsync(
+        CloudConfigModel config,
+        IModuleContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!settings.DefaultUser.CreateIfMissing)
+            return;
+
+        var os = context.Os;
+        var name = defaultUser.Resolve(config, context.DataSource);
+
+        // Already declared in `users:` (and thus processed above) — don't
+        // duplicate. Match cloud-init's case-insensitive account semantics on
+        // Windows.
+        var declared = config.Users?.Any(u =>
+            string.Equals(u.Name, name, StringComparison.OrdinalIgnoreCase)) ?? false;
+        if (declared)
+            return;
+
+        if (await os.LocalUserExistsAsync(name, cancellationToken).ConfigureAwait(false))
+            return;
+
+        logger.LogInformation("Auto-creating default user '{User}' (DefaultUser.CreateIfMissing).", name);
+        await os.CreateLocalUserAsync(new LocalUserSpec { Name = name }, cancellationToken).ConfigureAwait(false);
+
+        var groups = settings.DefaultUser.Groups ?? DefaultUserGroups;
+        foreach (var group in groups)
+        {
+            if (string.IsNullOrWhiteSpace(group))
+                continue;
+
+            // "Administrators" is promoted via the SID-correct helper so a
+            // localized / renamed builtin group is matched by RID-544, not by
+            // its display name. Other groups use the by-name path, creating
+            // the group on the fly like the per-user logic above.
+            if (string.Equals(group, "Administrators", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Ensuring default user '{User}' is in the local Administrators group.", name);
+                await os.EnsureUserInAdministratorsAsync(name, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            if (!await os.LocalGroupExistsAsync(group, cancellationToken).ConfigureAwait(false))
+            {
+                logger.LogInformation("Creating local group '{Group}' (referenced by default user '{User}').", group, name);
+                await os.CreateLocalGroupAsync(group, cancellationToken).ConfigureAwait(false);
+            }
+
+            logger.LogInformation("Adding default user '{User}' to group '{Group}'.", name, group);
+            await os.AddUserToGroupAsync(name, group, cancellationToken).ConfigureAwait(false);
+        }
+    }
 }

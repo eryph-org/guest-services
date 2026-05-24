@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -11,6 +12,19 @@ namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
 public sealed class UsersGroupsModuleTests
 {
+    // Default settings (CreateIfMissing=false) reproduce the historical
+    // behaviour the bulk of these tests assert. The CreateIfMissing tests pass
+    // explicit settings. A real DefaultUserResolver is used so the resolved
+    // name matches production resolution exactly.
+    private static UsersGroupsModule Build(ProvisioningSettings? settings = null)
+    {
+        var resolved = settings ?? new ProvisioningSettings();
+        return new UsersGroupsModule(
+            NullLogger<UsersGroupsModule>.Instance,
+            resolved,
+            new DefaultUserResolver(resolved, NullLogger<DefaultUserResolver>.Instance));
+    }
+
     [Fact]
     public async Task Creates_missing_groups_and_skips_existing()
     {
@@ -18,7 +32,7 @@ public sealed class UsersGroupsModuleTests
         os.LocalGroupExistsAsync("devs", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalGroupExistsAsync("ops", Arg.Any<CancellationToken>()).Returns(true);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Groups =
@@ -46,7 +60,7 @@ public sealed class UsersGroupsModuleTests
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalUserExistsAsync("bob", Arg.Any<CancellationToken>()).Returns(true);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users =
@@ -76,7 +90,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Passwd = "secret" }],
@@ -96,7 +110,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", PlainTextPasswd = "plain-secret" }],
@@ -116,7 +130,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Passwd = "hashed", PlainTextPasswd = "plain" }],
@@ -139,7 +153,7 @@ public sealed class UsersGroupsModuleTests
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
         os.LocalGroupExistsAsync("devs", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Groups = ["devs"] }],
@@ -163,7 +177,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Sudo = [sudo] }],
@@ -188,7 +202,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users =
@@ -218,7 +232,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Sudo = [sudo] }],
@@ -242,7 +256,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Gecos = "Alice Anderson" }],
@@ -267,7 +281,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(true);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", Gecos = "Alice Anderson" }],
@@ -289,7 +303,7 @@ public sealed class UsersGroupsModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.LocalUserExistsAsync("alice", Arg.Any<CancellationToken>()).Returns(false);
 
-        var module = new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance);
+        var module = Build();
         var config = new CloudConfigModel
         {
             Users = [new UserConfig { Name = "alice", LockPasswd = true }],
@@ -303,5 +317,139 @@ public sealed class UsersGroupsModuleTests
         await os.Received().CreateLocalUserAsync(
             Arg.Is<LocalUserSpec>(s => s.Name == "alice" && s.Disabled == true),
             Arg.Any<CancellationToken>());
+    }
+
+    // RFC 0018 CreateIfMissing: with no matching `users:` entry and the
+    // account absent, the resolved default user is auto-created and promoted
+    // to Administrators (the null-Groups default). Enables the OpenStack-style
+    // "password-only cloud-config provisions a known admin" flow.
+    [Fact]
+    public async Task CreateIfMissing_creates_resolved_default_user_in_administrators()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("imageadmin", Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = Build(new ProvisioningSettings
+        {
+            DefaultUser = new DefaultUserSettings { Name = "imageadmin", CreateIfMissing = true },
+        });
+        var config = new CloudConfigModel();
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().CreateLocalUserAsync(
+            Arg.Is<LocalUserSpec>(s => s.Name == "imageadmin"), Arg.Any<CancellationToken>());
+        await os.Received().EnsureUserInAdministratorsAsync("imageadmin", Arg.Any<CancellationToken>());
+    }
+
+    // The custom DefaultUser.Groups list is honoured: a non-Administrators
+    // group is created on the fly and the user added by name; Administrators is
+    // still routed through the SID-correct helper.
+    [Fact]
+    public async Task CreateIfMissing_honors_custom_default_user_groups()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("imageadmin", Arg.Any<CancellationToken>()).Returns(false);
+        os.LocalGroupExistsAsync("Remote Desktop Users", Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = Build(new ProvisioningSettings
+        {
+            DefaultUser = new DefaultUserSettings
+            {
+                Name = "imageadmin",
+                CreateIfMissing = true,
+                Groups = ["Administrators", "Remote Desktop Users"],
+            },
+        });
+        var config = new CloudConfigModel();
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().EnsureUserInAdministratorsAsync("imageadmin", Arg.Any<CancellationToken>());
+        await os.Received().CreateLocalGroupAsync("Remote Desktop Users", Arg.Any<CancellationToken>());
+        await os.Received().AddUserToGroupAsync("imageadmin", "Remote Desktop Users", Arg.Any<CancellationToken>());
+    }
+
+    // No duplicate creation when the resolved default user IS declared in
+    // `users:` (case-insensitive match): the explicit entry is processed
+    // normally and the auto-create step skips it.
+    [Fact]
+    public async Task CreateIfMissing_does_not_duplicate_when_user_declared_in_users()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("imageadmin", Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = Build(new ProvisioningSettings
+        {
+            DefaultUser = new DefaultUserSettings { Name = "imageadmin", CreateIfMissing = true },
+        });
+        var config = new CloudConfigModel
+        {
+            Users = [new UserConfig { Name = "IMAGEADMIN" }],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        // Created exactly once — from the explicit `users:` entry, not a second
+        // time by the auto-create step.
+        await os.Received(1).CreateLocalUserAsync(
+            Arg.Any<LocalUserSpec>(), Arg.Any<CancellationToken>());
+    }
+
+    // CreateIfMissing skips when the account already exists on the box: no
+    // create call, but the run still completes.
+    [Fact]
+    public async Task CreateIfMissing_skips_when_default_user_already_exists()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync("imageadmin", Arg.Any<CancellationToken>()).Returns(true);
+
+        var module = Build(new ProvisioningSettings
+        {
+            DefaultUser = new DefaultUserSettings { Name = "imageadmin", CreateIfMissing = true },
+        });
+        var config = new CloudConfigModel();
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.DidNotReceive().CreateLocalUserAsync(
+            Arg.Any<LocalUserSpec>(), Arg.Any<CancellationToken>());
+    }
+
+    // Regression: CreateIfMissing=false (today's default) never auto-creates,
+    // even with a configured DefaultUser.Name and no declared users.
+    [Fact]
+    public async Task CreateIfMissing_false_never_auto_creates()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.LocalUserExistsAsync(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
+
+        var module = Build(new ProvisioningSettings
+        {
+            DefaultUser = new DefaultUserSettings { Name = "imageadmin", CreateIfMissing = false },
+        });
+        var config = new CloudConfigModel();
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.DidNotReceive().CreateLocalUserAsync(
+            Arg.Any<LocalUserSpec>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().EnsureUserInAdministratorsAsync(
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 }
