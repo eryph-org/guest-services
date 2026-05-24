@@ -359,6 +359,7 @@ public sealed class CloudConfigMergeTests
         Password = "p",
         SshPwauth = true,
         SshAuthorizedKeys = ["ssh-ed25519 key"],
+        Ssh = new SshConfig { EmitKeysToConsole = false, InstallOpenssh = true },
         WriteFiles = [new WriteFileConfig { Path = "C:/a.txt", Content = "x" }],
         Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "echo" }],
         Growpart = new GrowpartConfig { Mode = "auto" },

@@ -137,6 +137,10 @@ internal static class ProvisioningContainerBuilder
         // Module registration — explicit list; trim-safe (no Assembly.GetTypes()).
         container.Collection.Register(typeof(IModule), ModuleRegistry.ModuleTypes, Lifestyle.Singleton);
 
+        // Default-user resolution (RFC 0018). Resolves which account top-level
+        // credential shorthands target; consumed by the ssh / password modules.
+        container.Register<IDefaultUserResolver, DefaultUserResolver>(Lifestyle.Singleton);
+
         // Windows OS abstraction. In dry-run mode we wrap the real WindowsOs
         // in a DryRunWindowsOs decorator so reads pass through to the real
         // guest, while writes are intercepted and logged. SimpleInjector's

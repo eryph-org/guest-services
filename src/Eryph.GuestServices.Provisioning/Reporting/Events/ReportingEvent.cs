@@ -13,6 +13,14 @@ public abstract record ReportingEvent
     public sealed record ModuleFailed(string ModuleName, string Reason, Exception? Exception) : ReportingEvent;
     public sealed record RebootRequested(string Reason) : ReportingEvent;
     public sealed record Progress(string Message) : ReportingEvent;
+
+    /// <summary>
+    /// Carries the ssh host-key fingerprints produced by the SshModule so an
+    /// operator console can display them (RFC 0018). Gated by the cloud-config
+    /// <c>ssh.emit_keys_to_console</c> flag at the producing site.
+    /// </summary>
+    public sealed record SshHostKeysReported(
+        IReadOnlyList<Windows.SshHostKeyFingerprint> Fingerprints) : ReportingEvent;
     public sealed record ProvisioningCompleted : ReportingEvent;
     public sealed record ProvisioningFailed(string Reason, Exception? Exception) : ReportingEvent;
 }

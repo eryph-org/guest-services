@@ -75,10 +75,92 @@ public interface IWindowsOs
     /// Windows OpenSSH rules). For other users writes to
     /// <c>C:\Users\&lt;user&gt;\.ssh\authorized_keys</c>.
     /// </summary>
+    /// <remarks>
+    /// MERGE semantics (RFC 0018): the supplied keys are unioned with the
+    /// existing file content, deduplicated by the normalized key body
+    /// (<c>&lt;type&gt; &lt;base64&gt;</c>, ignoring the trailing comment).
+    /// Existing line order is preserved; genuinely new keys are appended.
+    /// An empty input with no existing file is a no-op (no empty file is
+    /// created). ACL hardening is re-applied after the write.
+    /// </remarks>
     Task SetUserSshAuthorizedKeysAsync(
         string userName,
         IReadOnlyList<string> keys,
         CancellationToken cancellationToken);
+
+    // OpenSSH daemon (Win32-OpenSSH at C:\ProgramData\ssh) — used by SshModule.
+    // RFC 0018. NOT the egs-service Hyper-V-socket transport.
+
+    /// <summary>
+    /// True when the Win32-OpenSSH <c>sshd</c> service is installed (its
+    /// Win32_Service entry exists, regardless of run state).
+    /// </summary>
+    Task<bool> IsSshdInstalledAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Installs the OpenSSH server capability
+    /// (<c>Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0</c>)
+    /// and sets the <c>sshd</c> service start mode to Automatic. No-op when
+    /// sshd is already installed.
+    /// </summary>
+    Task InstallOpenSshServerAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Generates ssh host keys for each requested type (validated against
+    /// <c>{ed25519, ecdsa, rsa}</c>; <c>dsa</c> / unknown types are warned and
+    /// skipped). RSA is generated at 3072 bits. When
+    /// <paramref name="deleteExisting"/> is true the existing
+    /// <c>ssh_host_*_key{,.pub}</c> files are removed first. Each private key
+    /// is ACL-hardened. Returns the fingerprints of the keys produced.
+    /// </summary>
+    Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
+        IReadOnlyList<string> keyTypes,
+        bool deleteExisting,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes an operator-supplied host key:
+    /// <c>C:\ProgramData\ssh\ssh_host_&lt;keyType&gt;_key</c> (private PEM) and,
+    /// when <paramref name="publicLine"/> is supplied, the matching
+    /// <c>.pub</c>. The private key is ACL-hardened (owner SYSTEM;
+    /// SYSTEM + Administrators FullControl).
+    /// </summary>
+    Task WriteSshHostKeyAsync(
+        string keyType,
+        string privatePem,
+        string? publicLine,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Idempotently ensures <c>C:\ProgramData\ssh\sshd_config</c> contains an
+    /// uncommented <c>Include sshd_config.d/*.conf</c> directive at the top
+    /// (so our drop-in's first-obtained-value settings win over shipped
+    /// directives). Creates the <c>sshd_config.d</c> directory.
+    /// </summary>
+    Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes a drop-in config file under
+    /// <c>C:\ProgramData\ssh\sshd_config.d\&lt;dropInFileName&gt;</c> (UTF-8,
+    /// LF line endings).
+    /// </summary>
+    Task WriteSshdDropInAsync(
+        string dropInFileName,
+        string contents,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Restarts the <c>sshd</c> service (stop + start) so it re-reads its
+    /// config. Tolerates sshd not being installed (logs and returns).
+    /// </summary>
+    Task RestartSshdAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves the on-disk name of the built-in Administrator account
+    /// (RID 500) via its SID so the lookup survives a rename. Falls back to
+    /// <c>"Administrator"</c> (with a Warning) when the SID cannot be resolved.
+    /// </summary>
+    Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken);
 
     // Commands
 

@@ -19,6 +19,15 @@ public sealed class ProvisioningSettings
     public RebootSettings Reboot { get; init; } = new();
 
     /// <summary>
+    /// The image-baked default administrator concept. Layer 3 of
+    /// <see cref="Modules.IDefaultUserResolver"/>: the account that top-level
+    /// shorthands (<c>ssh_authorized_keys</c>, <c>password</c>,
+    /// <c>chpasswd</c>) target when the user-data declares no admin user.
+    /// Mirrors cloud-init's <c>system_info.default_user</c>.
+    /// </summary>
+    public DefaultUserSettings DefaultUser { get; init; } = new();
+
+    /// <summary>
     /// Per-stage allowlist / denylist of modules. Keys are stage names
     /// (<c>"Local"</c>, <c>"Network"</c>, <c>"Config"</c>, <c>"Final"</c>;
     /// case-insensitive). When a stage is absent, all discovered modules
@@ -175,6 +184,35 @@ public sealed class RebootSettings
 
     /// <summary>Max reboots a single (ordinal, body-hash) script may request before it fails.</summary>
     public int MaxPerScript { get; init; } = 2;
+}
+
+/// <summary>
+/// The image-baked default administrator. The <c>Name</c> is the cloud-init
+/// <c>system_info.default_user.name</c> analogue — the account top-level
+/// credential shorthands target when the user-data <c>users:</c> block does
+/// not declare an admin. <c>Groups</c> and <c>CreateIfMissing</c> let an image
+/// pre-declare how that account is provisioned when it has to be created.
+/// </summary>
+public sealed record DefaultUserSettings
+{
+    /// <summary>
+    /// The image-baked default admin name (cloud-init
+    /// <c>system_info.default_user.name</c>). When null the resolver falls
+    /// through to its <c>"Administrator"</c> fallback.
+    /// </summary>
+    public string? Name { get; init; }
+
+    /// <summary>
+    /// Default groups for the default user. Null is treated as
+    /// <c>["Administrators"]</c> by consumers.
+    /// </summary>
+    public IReadOnlyList<string>? Groups { get; init; }
+
+    /// <summary>
+    /// When true, the default user is auto-created (and the top-level
+    /// credentials applied to it) if no <c>users:</c> entry declares one.
+    /// </summary>
+    public bool CreateIfMissing { get; init; }
 }
 
 [JsonSerializable(typeof(ProvisioningSettings))]

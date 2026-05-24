@@ -37,11 +37,26 @@ public sealed record CloudConfig
     [CloudInitField]
     public string? Password { get; init; }
 
-    [CloudInitField]
+    /// <summary>
+    /// Cloud-init <c>ssh_pwauth</c>. Toggles OpenSSH
+    /// <c>PasswordAuthentication</c>. On Windows the SshModule writes this to
+    /// the drop-in <c>sshd_config.d\50-eryph.conf</c>. cloud-init's three-state
+    /// (true / false / <c>"unchanged"</c>) is honoured: omit / "unchanged"
+    /// leaves the directive alone.
+    /// </summary>
+    [CloudInitField(Description = "Toggle OpenSSH PasswordAuthentication (Windows: written to the sshd_config.d drop-in)")]
     public bool? SshPwauth { get; init; }
 
     [CloudInitField]
     public IReadOnlyList<string>? SshAuthorizedKeys { get; init; }
+
+    /// <summary>
+    /// Cloud-init <c>ssh:</c> block. Carries <c>emit_keys_to_console</c> plus
+    /// the eryph <c>install_openssh</c> extension — see <see cref="SshConfig"/>
+    /// and RFC 0018.
+    /// </summary>
+    [CloudInitField(Description = "OpenSSH daemon configuration (emit_keys_to_console; eryph install_openssh extension)")]
+    public SshConfig? Ssh { get; init; }
 
     [CloudInitField]
     public IReadOnlyList<WriteFileConfig>? WriteFiles { get; init; }
@@ -202,7 +217,15 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "CA certificate installation (not yet implemented; Windows cert store differs)")]
     public CaCertsConfig? CaCerts { get; init; }
 
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux root account management; no-op on Windows")]
+    /// <summary>
+    /// Cloud-init <c>disable_root</c>. On Windows the SshModule resolves the
+    /// built-in Administrator account (RID 500, by well-known SID so it
+    /// survives a rename) and writes a <c>DenyUsers &lt;name&gt;</c> directive
+    /// to the sshd drop-in — the Windows analogue of cloud-init's
+    /// <c>PermitRootLogin no</c>. This is the OS-level Administrator, separate
+    /// from the configurable provisioning default user.
+    /// </summary>
+    [CloudInitField(Description = "Deny OpenSSH login for the privileged account (Windows: built-in Administrator via RID-500 SID)")]
     public bool? DisableRoot { get; init; }
 
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux root account management; no-op on Windows")]
@@ -240,31 +263,51 @@ public sealed record CloudConfig
     public bool? Migrate { get; init; }
 
     /// <summary>
-    /// When true, cloud-init regenerates ssh host keys at boot. YAML key is
-    /// the literal <c>ssh_deletekeys</c> — one concatenated word per cloud-
-    /// init's documented schema, not the snake-cased <c>ssh_delete_keys</c>
-    /// the naming convention would produce.
+    /// Cloud-init <c>ssh_deletekeys</c>. When true the existing host keys are
+    /// deleted before fresh ones are generated — the "stripped image, fresh
+    /// identity per instance" path. On Windows the SshModule deletes
+    /// <c>C:\ProgramData\ssh\ssh_host_*_key{,.pub}</c> before regeneration.
+    /// YAML key is the literal <c>ssh_deletekeys</c> — one concatenated word
+    /// per cloud-init's documented schema, not the snake-cased
+    /// <c>ssh_delete_keys</c> the naming convention would produce.
     /// </summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, YamlName = "ssh_deletekeys", Description = "Linux ssh host-key regeneration; no-op on Windows")]
+    [CloudInitField(YamlName = "ssh_deletekeys", Description = "Delete existing ssh host keys before regenerating (fresh per-instance identity)")]
     public bool? SshDeleteKeys { get; init; }
 
-    /// <summary>ssh host-key types to generate (e.g. <c>rsa</c>, <c>ed25519</c>).</summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, YamlName = "ssh_genkeytypes", Description = "Linux ssh host-key types; no-op on Windows")]
+    /// <summary>
+    /// Cloud-init <c>ssh_genkeytypes</c>: host-key types to generate. On
+    /// Windows the SshModule validates against <c>{ed25519, ecdsa, rsa}</c>
+    /// (DSA was removed in OpenSSH 9.8 and is rejected); the default set is
+    /// <c>[ed25519, ecdsa, rsa]</c> with an RSA-3072 floor.
+    /// </summary>
+    [CloudInitField(YamlName = "ssh_genkeytypes", Description = "ssh host-key types to generate (Windows: ed25519/ecdsa/rsa; DSA rejected)")]
     public IReadOnlyList<string>? SshGenKeyTypes { get; init; }
 
-    /// <summary>Launchpad / GitHub ssh-import-id sources.</summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux ssh-import-id sources; no-op on Windows")]
+    /// <summary>
+    /// Launchpad / GitHub <c>ssh-import-id</c> sources. Still Linux-only — there
+    /// is no Windows fetch path yet (the import would require contacting
+    /// Launchpad / GitHub at provisioning time). Accepted; no-op on Windows.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux ssh-import-id (Launchpad/GitHub fetch); no Windows path yet")]
     public IReadOnlyList<string>? SshImportId { get; init; }
 
     /// <summary>
-    /// Pre-generated ssh host keys keyed by <c>&lt;type&gt;_{private,public}</c>
-    /// (e.g. <c>rsa_private</c>, <c>ed25519_public</c>).
+    /// Cloud-init <c>ssh_keys</c>: operator-supplied host keys keyed by
+    /// <c>&lt;type&gt;_{private,public}</c> (e.g. <c>rsa_private</c>,
+    /// <c>ed25519_public</c>). On Windows the SshModule writes each supplied
+    /// keypair to <c>C:\ProgramData\ssh\ssh_host_&lt;type&gt;_key{,.pub}</c>
+    /// and ACL-hardens it; supplying keys takes precedence over generation.
     /// </summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux pre-generated ssh host keys; no-op on Windows")]
+    [CloudInitField(Description = "Operator-supplied ssh host keys (Windows: written to C:\\ProgramData\\ssh and ACL-hardened)")]
     public IReadOnlyDictionary<string, string>? SshKeys { get; init; }
 
-    /// <summary>Publish ssh host keys to the platform metadata service.</summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, YamlName = "ssh_publish_hostkeys", Description = "Linux ssh host-key publication; no-op on Windows")]
+    /// <summary>
+    /// Cloud-init <c>ssh_publish_hostkeys</c>: publish per-instance host keys
+    /// to the platform metadata service. On Windows the fingerprints are
+    /// surfaced via the <c>SshHostKeysReported</c> reporting event (the
+    /// host-side KVP / console channel) rather than a cloud metadata POST.
+    /// </summary>
+    [CloudInitField(YamlName = "ssh_publish_hostkeys", Description = "Publish ssh host keys (Windows: via the SshHostKeysReported reporting event)")]
     public SshPublishHostKeysConfig? SshPublishHostKeys { get; init; }
 
     /// <summary>byobu auto-launch toggle (Ubuntu only).</summary>

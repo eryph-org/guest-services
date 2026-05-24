@@ -25,6 +25,7 @@ internal sealed class KvpReportingHandler : IReportingHandler
     private const string RebootReasonKey = "eryph.provisioning.reboot_reason";
     private const string ErrorKey = "eryph.provisioning.error";
     private const string UpdatedKey = "eryph.provisioning.updated";
+    private const string SshHostKeysKey = "eryph.provisioning.ssh_host_keys";
     private const string ProbeKey = "eryph.provisioning.handler.ready";
 
     private readonly IGuestDataExchange _kvp;
@@ -76,6 +77,15 @@ internal sealed class KvpReportingHandler : IReportingHandler
             case ReportingEvent.ProvisioningFailed failed:
                 values[StateKey] = "failed";
                 values[ErrorKey] = failed.Reason;
+                break;
+
+            case ReportingEvent.SshHostKeysReported sshHostKeys:
+                // Compact "type=fingerprint" pairs joined by ';' — keeps the
+                // KVP value a single readable string the host-side reader can
+                // split without parsing structured data.
+                values[SshHostKeysKey] = string.Join(
+                    ";",
+                    sshHostKeys.Fingerprints.Select(f => $"{f.KeyType}={f.Fingerprint}"));
                 break;
 
             default:

@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Reporting.Handlers;
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Reporting;
@@ -153,6 +154,26 @@ public sealed class LogReportingHandlerTests
         entry.Level.Should().Be(LogLevel.Error);
         entry.Exception.Should().BeSameAs(ex);
         entry.Message.Should().Contain("crashed");
+    }
+
+    [Fact]
+    public async Task SshHostKeysReported_logs_Information_per_fingerprint()
+    {
+        var (handler, log) = Build();
+
+        await handler.PublishAsync(
+            new ReportingEvent.SshHostKeysReported(
+                [
+                    new SshHostKeyFingerprint("ed25519", "SHA256:aaa", "ssh-ed25519 AAA"),
+                    new SshHostKeyFingerprint("rsa", "SHA256:bbb", "ssh-rsa BBB"),
+                ])
+            { Origin = "module:SshModule" },
+            CancellationToken.None);
+
+        log.Entries.Should().HaveCount(2);
+        log.Entries.Should().AllSatisfy(e => e.Level.Should().Be(LogLevel.Information));
+        log.Entries[0].Message.Should().Contain("ed25519").And.Contain("SHA256:aaa");
+        log.Entries[1].Message.Should().Contain("rsa").And.Contain("SHA256:bbb");
     }
 
     private static (LogReportingHandler handler, CapturingLogger<LogReportingHandler> log) Build()

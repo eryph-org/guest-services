@@ -10,6 +10,13 @@ public sealed record DataSourceResult
 
     public string? Hostname { get; init; }
 
+    // Datasource-supplied default admin account name (cloud-init
+    // system_info.default_user.name equivalent surfaced by the platform's
+    // metadata). Feeds layer 2 of IDefaultUserResolver. Currently always null:
+    // no datasource populates it yet.
+    // TODO(RFC 0018 / Findings 19-20): OpenStack admin_pass / known-admin name surfaces here.
+    public string? DefaultUserName { get; init; }
+
     // Raw user-data bytes. MUST stay as binary end-to-end: real-world user-data
     // is frequently gzip-compressed (eryph-zero's configdrive ships gzipped
     // multipart MIME), and the gzip header (1F 8B 08 ...) is not valid UTF-8.

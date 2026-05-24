@@ -257,14 +257,29 @@ internal sealed class WindowsOs : IWindowsOs
                     "ssh", "administrators_authorized_keys")
                 : Path.Combine(GetUserProfileDirectory(userName), ".ssh", "authorized_keys");
 
+            // MERGE (Finding 6): start from the existing file (if any) and union
+            // the new keys in, deduplicating by normalized key body. Overwriting
+            // would clobber keys an image / a prior run had already installed.
+            var existingLines = File.Exists(keyFile)
+                ? File.ReadAllText(keyFile, new UTF8Encoding(false))
+                    .Split('\n')
+                    .Select(l => l.TrimEnd('\r'))
+                    .ToList()
+                : [];
+
+            var merged = MergeAuthorizedKeys(existingLines, keys);
+
+            // Empty input + no existing file → no-op. Don't create empty files
+            // (sshd treats a 0-byte file as "no keys" but writing one is noise
+            // and would trigger needless ACL churn).
+            if (merged.Count == 0)
+                return;
+
             var parent = Path.GetDirectoryName(keyFile)!;
             Directory.CreateDirectory(parent);
 
             // LF-only line endings + UTF-8 without BOM keep OpenSSH happy.
-            var content = string.Join("\n", keys);
-            if (keys.Count > 0)
-                content += "\n";
-
+            var content = string.Join("\n", merged) + "\n";
             var bytes = new UTF8Encoding(false).GetBytes(content);
             File.WriteAllBytes(keyFile, bytes);
 
@@ -273,6 +288,77 @@ internal sealed class WindowsOs : IWindowsOs
             else
                 ApplyUserAuthorizedKeysAcl(keyFile, userName);
         }, cancellationToken);
+    }
+
+    // internal for unit testing — the merge/dedup logic is the heart of the
+    // Finding 6 fix and we want to exercise it without touching the filesystem.
+    internal static IReadOnlyList<string> MergeAuthorizedKeys(
+        IReadOnlyList<string> existingLines,
+        IReadOnlyList<string> newKeys)
+    {
+        var result = new List<string>();
+        // Track the normalized body of every key already emitted so we never
+        // write the same key twice — even when it carries a different comment.
+        var seenBodies = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(string rawLine)
+        {
+            // Preserve blank lines and comment lines from the existing file
+            // verbatim (they are not keys; dedup does not apply).
+            var trimmed = rawLine.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+            {
+                // Only carry over existing-file blanks/comments, not synthetic ones.
+                result.Add(rawLine);
+                return;
+            }
+
+            var body = NormalizeKeyBody(trimmed);
+            if (!seenBodies.Add(body))
+                return; // duplicate key body — skip
+            result.Add(trimmed);
+        }
+
+        // Existing lines first (order-preserving), then genuinely-new keys.
+        foreach (var line in existingLines)
+        {
+            // Drop trailing blank/comment-only lines coming from a previous
+            // file's terminating newline; keep interior content as-is.
+            if (line.Trim().Length == 0)
+                continue;
+            Add(line);
+        }
+
+        foreach (var key in newKeys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+            Add(key);
+        }
+
+        return result;
+    }
+
+    // The dedup key is the "<type> <base64>" portion. authorized_keys lines may
+    // carry leading options, a trailing comment, or both; we key on the type +
+    // base64 blob so the same public key with a different comment is recognised
+    // as a duplicate. Lines we can't parse fall back to the whole trimmed line.
+    private static string NormalizeKeyBody(string line)
+    {
+        var parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        // Find the token that looks like a key type (starts with "ssh-",
+        // "ecdsa-", or "sk-") and take it plus the following base64 token.
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            var t = parts[i];
+            if (t.StartsWith("ssh-", StringComparison.Ordinal)
+                || t.StartsWith("ecdsa-", StringComparison.Ordinal)
+                || t.StartsWith("sk-", StringComparison.Ordinal))
+            {
+                return parts[i] + " " + parts[i + 1];
+            }
+        }
+        return line;
     }
 
     public async Task<RunCommandResult> RunShellCommandAsync(
@@ -648,6 +734,299 @@ internal sealed class WindowsOs : IWindowsOs
         logger.LogInformation(
             "Scheduled {Action} in {Delay}s via shutdown.exe (message='{Msg}').",
             request.Action, request.DelaySeconds, request.Message ?? "<none>");
+    }
+
+    // ---- OpenSSH daemon (Win32-OpenSSH at C:\ProgramData\ssh) — RFC 0018 ----
+
+    private const string SshServerCapability = "OpenSSH.Server~~~~0.0.1.0";
+
+    private static readonly IReadOnlySet<string> SupportedHostKeyTypes =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ed25519", "ecdsa", "rsa" };
+
+    private static string SshDir() => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ssh");
+
+    public Task<bool> IsSshdInstalledAsync(CancellationToken cancellationToken) =>
+        // sshd is "installed" when its Win32_Service entry exists, regardless
+        // of run state. CimService.GetState returns null when not installed.
+        Task.Run(() => CimService.GetState("sshd") is not null, cancellationToken);
+
+    public async Task InstallOpenSshServerAsync(CancellationToken cancellationToken)
+    {
+        if (await IsSshdInstalledAsync(cancellationToken).ConfigureAwait(false))
+        {
+            logger.LogDebug("sshd already installed; skipping OpenSSH server capability install.");
+            return;
+        }
+
+        // Add-WindowsCapability is the documented install path for the inbox
+        // OpenSSH server. We drive it via powershell.exe (DISM's capability
+        // surface is awkward from managed code) and force UTF-8 on the streams.
+        var script =
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()\n"
+            + "$ErrorActionPreference = 'Stop'\n"
+            + $"Add-WindowsCapability -Online -Name '{SshServerCapability}' | Out-Null\n";
+        var psi = CreateUtf8Psi("powershell.exe");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(script);
+
+        var result = await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Add-WindowsCapability {SshServerCapability} failed (exit {result.ExitCode}): {result.StdErr.Trim()}");
+
+        // Set sshd to start automatically so the server survives reboots.
+        await Task.Run(
+            () => CimService.ChangeStartMode("sshd", CimService.StartMode.Automatic, logger),
+            cancellationToken).ConfigureAwait(false);
+        logger.LogInformation("Installed OpenSSH server capability and set sshd to start Automatically.");
+    }
+
+    public async Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
+        IReadOnlyList<string> keyTypes,
+        bool deleteExisting,
+        CancellationToken cancellationToken)
+    {
+        var sshDir = SshDir();
+        Directory.CreateDirectory(sshDir);
+
+        if (deleteExisting)
+        {
+            foreach (var file in Directory.EnumerateFiles(sshDir, "ssh_host_*_key")
+                         .Concat(Directory.EnumerateFiles(sshDir, "ssh_host_*_key.pub")))
+            {
+                try { File.Delete(file); }
+                catch (Exception ex) { logger.LogWarning(ex, "Failed to delete existing host key {File}.", file); }
+            }
+        }
+
+        var keygen = Path.Combine(
+            Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows",
+            "System32", "OpenSSH", "ssh-keygen.exe");
+
+        var fingerprints = new List<SshHostKeyFingerprint>();
+        foreach (var rawType in keyTypes)
+        {
+            var type = rawType.Trim().ToLowerInvariant();
+            if (!SupportedHostKeyTypes.Contains(type))
+            {
+                // DSA was removed in OpenSSH 9.8; unknown types are likewise skipped.
+                logger.LogWarning("Skipping unsupported ssh host-key type '{Type}' (allowed: ed25519, ecdsa, rsa).", rawType);
+                continue;
+            }
+
+            var keyPath = Path.Combine(sshDir, $"ssh_host_{type}_key");
+            // ssh-keygen refuses to overwrite an existing key non-interactively,
+            // so remove any leftover when we're not in delete-everything mode.
+            try { File.Delete(keyPath); } catch { /* best effort */ }
+            try { File.Delete(keyPath + ".pub"); } catch { /* best effort */ }
+
+            var argv = new List<string> { "-t", type, "-f", keyPath, "-N", "", "-q" };
+            if (type == "rsa")
+            {
+                // RSA-3072 floor — matches modern OpenSSH defaults and our policy.
+                argv.Add("-b");
+                argv.Add("3072");
+            }
+
+            await RunOrThrowAsync(keygen, argv, cancellationToken).ConfigureAwait(false);
+            ApplySshHostKeyAcl(keyPath);
+
+            fingerprints.Add(await ReadHostKeyFingerprintAsync(keygen, type, keyPath, cancellationToken)
+                .ConfigureAwait(false));
+        }
+
+        return fingerprints;
+    }
+
+    public Task WriteSshHostKeyAsync(
+        string keyType,
+        string privatePem,
+        string? publicLine,
+        CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var sshDir = SshDir();
+            Directory.CreateDirectory(sshDir);
+
+            var keyPath = Path.Combine(sshDir, $"ssh_host_{keyType.Trim().ToLowerInvariant()}_key");
+            var utf8 = new UTF8Encoding(false);
+            // OpenSSH PEM keys are LF-terminated; normalize so a CRLF-carrying
+            // operator value doesn't confuse ssh-keygen.
+            File.WriteAllBytes(keyPath, utf8.GetBytes(NormalizeLf(privatePem)));
+            ApplySshHostKeyAcl(keyPath);
+
+            if (!string.IsNullOrWhiteSpace(publicLine))
+                File.WriteAllBytes(keyPath + ".pub", utf8.GetBytes(NormalizeLf(publicLine!.TrimEnd()) + "\n"));
+        }, cancellationToken);
+
+    public Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var sshDir = SshDir();
+            Directory.CreateDirectory(sshDir);
+            Directory.CreateDirectory(Path.Combine(sshDir, "sshd_config.d"));
+
+            var configPath = Path.Combine(sshDir, "sshd_config");
+
+            var existing = File.Exists(configPath)
+                ? File.ReadAllText(configPath, new UTF8Encoding(false))
+                : "";
+
+            var updated = EnsureSshdConfigInclude(existing);
+            if (updated is null)
+                return; // Include already present — idempotent no-op.
+
+            File.WriteAllBytes(configPath, new UTF8Encoding(false).GetBytes(updated));
+            logger.LogInformation("Prepended Include for sshd_config.d to sshd_config.");
+        }, cancellationToken);
+
+    public Task WriteSshdDropInAsync(
+        string dropInFileName,
+        string contents,
+        CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var dropInDir = Path.Combine(SshDir(), "sshd_config.d");
+            Directory.CreateDirectory(dropInDir);
+            var path = Path.Combine(dropInDir, dropInFileName);
+            var content = NormalizeLf(contents);
+            if (content.Length > 0 && !content.EndsWith('\n'))
+                content += "\n";
+            File.WriteAllBytes(path, new UTF8Encoding(false).GetBytes(content));
+        }, cancellationToken);
+
+    public Task RestartSshdAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            if (CimService.GetState("sshd") is null)
+            {
+                logger.LogWarning("sshd is not installed; skipping restart.");
+                return;
+            }
+
+            CimService.StopService("sshd", logger);
+            CimService.StartService("sshd", logger);
+            logger.LogInformation("Restarted sshd to reload configuration.");
+        }, cancellationToken);
+
+    public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            // The built-in Administrator is RID 500. Its name can be changed by
+            // policy, so we resolve by SID rather than assuming "Administrator".
+            // We enumerate the local Administrators group members, translate each
+            // to a SID, and return the one whose SID ends with "-500".
+            try
+            {
+                var members = NetUserHelpers.GetGroupMemberNames(WellKnownGroups.AdministratorsName());
+                foreach (var member in members)
+                {
+                    try
+                    {
+                        var sid = (SecurityIdentifier)new NTAccount(member).Translate(typeof(SecurityIdentifier));
+                        if (sid.Value.EndsWith("-500", StringComparison.Ordinal))
+                        {
+                            // Return the bare account name (strip any DOMAIN\ prefix).
+                            var slash = member.IndexOf('\\');
+                            return slash >= 0 ? member[(slash + 1)..] : member;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(ex, "Could not translate '{Member}' to a SID while resolving RID-500.", member);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Documented failure branch (memory: feedback_pinvoke_error_branches):
+                // NetLocalGroupGetMembers / SID translation can fail on a
+                // domain-joined or unusually-configured box. Fall back to the
+                // literal name so disable_root still produces a usable directive.
+                logger.LogWarning(ex,
+                    "Failed to enumerate Administrators for RID-500 resolution; falling back to 'Administrator'.");
+            }
+
+            logger.LogWarning("Could not resolve the RID-500 account by SID; falling back to 'Administrator'.");
+            return "Administrator";
+        }, cancellationToken);
+
+    private async Task<SshHostKeyFingerprint> ReadHostKeyFingerprintAsync(
+        string keygen,
+        string keyType,
+        string keyPath,
+        CancellationToken cancellationToken)
+    {
+        var pubPath = keyPath + ".pub";
+        var publicLine = File.Exists(pubPath)
+            ? (await File.ReadAllTextAsync(pubPath, cancellationToken).ConfigureAwait(false)).Trim()
+            : "";
+
+        // ssh-keygen -l -f <pub> prints "<bits> SHA256:... <comment> (<TYPE>)".
+        var psi = CreateUtf8Psi(keygen);
+        psi.ArgumentList.Add("-l");
+        psi.ArgumentList.Add("-f");
+        psi.ArgumentList.Add(pubPath);
+        var result = await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+
+        var fingerprint = result.StdOut
+            .Split([' ', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(t => t.StartsWith("SHA256:", StringComparison.Ordinal))
+            ?? result.StdOut.Trim();
+
+        return new SshHostKeyFingerprint(keyType, fingerprint, publicLine);
+    }
+
+    private static string NormalizeLf(string value) =>
+        value.Replace("\r\n", "\n").Replace("\r", "\n");
+
+    // internal for unit testing — pure form of the EnsureSshdConfigInclude
+    // logic. Returns the new file content, or null when the Include is already
+    // present (idempotent no-op). The Include is prepended so its
+    // first-obtained-value settings win over shipped directives and the
+    // trailing `Match Group administrators` block.
+    internal static string? EnsureSshdConfigInclude(string existing)
+    {
+        const string includeDirective = "Include sshd_config.d/*.conf";
+
+        var hasInclude = existing
+            .Split('\n')
+            .Select(l => l.Trim())
+            .Any(l => !l.StartsWith('#')
+                      && l.StartsWith("Include", StringComparison.OrdinalIgnoreCase)
+                      && l.Contains("sshd_config.d", StringComparison.OrdinalIgnoreCase));
+        if (hasInclude)
+            return null;
+
+        var normalized = NormalizeLf(existing);
+        return includeDirective + "\n"
+            + (normalized.Length == 0 ? "" : normalized + (normalized.EndsWith('\n') ? "" : "\n"));
+    }
+
+    // Host-key ACL: owner SYSTEM, SYSTEM + Administrators FullControl, nothing
+    // else (replicates FixHostFilePermissions.ps1 without shelling out). sshd
+    // refuses to start if a private host key is readable by anyone else.
+    private static void ApplySshHostKeyAcl(string path)
+    {
+        var info = new FileInfo(path);
+        var security = info.GetAccessControl();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+            security.RemoveAccessRuleSpecific(rule);
+
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.SetOwner(system);
+
+        info.SetAccessControl(security);
     }
 
     private static string SlmgrPath()

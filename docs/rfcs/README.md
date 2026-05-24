@@ -31,7 +31,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0015](0015-set-timezone-module.md) | `timezone` cloud-config module on Windows | Implemented |
 | [0016](0016-ntp-module.md) | `ntp` cloud-config module on Windows | Implemented |
 | [0017](0017-licensing-module.md) | `license` cloud-config module (slmgr / AVMA / KMS / rearm) | Implemented |
-| [0018](0018-ssh-module.md) | Windows OpenSSH daemon configuration (`SshModule`) | Draft |
+| [0018](0018-ssh-module.md) | Windows OpenSSH daemon configuration (`SshModule`) | Accepted |
 | [0019](0019-windows-update-module.md) | `windows_update` cloud-config module | Draft |
 | [0020](0020-winget-module.md) | `winget` cloud-config module | Draft |
 | [0021](0021-chocolatey-module.md) | `chocolatey` cloud-config module | Draft |

@@ -131,6 +131,65 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.CompletedTask;
     }
 
+    // ---- OpenSSH daemon (writes intercepted; reads pass through) ----
+
+    public Task<bool> IsSshdInstalledAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through so dry-run reflects the real guest state.
+        inner.IsSshdInstalledAsync(cancellationToken);
+
+    public Task InstallOpenSshServerAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would install the OpenSSH server capability and set sshd Automatic");
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
+        IReadOnlyList<string> keyTypes,
+        bool deleteExisting,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would regenerate ssh host keys (types={Types}, deleteExisting={Delete})",
+            keyTypes.Count == 0 ? "<none>" : string.Join(", ", keyTypes),
+            deleteExisting);
+        return Task.FromResult<IReadOnlyList<SshHostKeyFingerprint>>([]);
+    }
+
+    public Task WriteSshHostKeyAsync(
+        string keyType,
+        string privatePem,
+        string? publicLine,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would write ssh host key of type {KeyType}", keyType);
+        return Task.CompletedTask;
+    }
+
+    public Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would ensure sshd_config Include directive for sshd_config.d");
+        return Task.CompletedTask;
+    }
+
+    public Task WriteSshdDropInAsync(string dropInFileName, string contents, CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would write sshd drop-in {File} ({Bytes} bytes)",
+            dropInFileName,
+            contents.Length);
+        return Task.CompletedTask;
+    }
+
+    public Task RestartSshdAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would restart sshd");
+        return Task.CompletedTask;
+    }
+
+    public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through so dry-run resolves the real RID-500 name.
+        inner.ResolveBuiltinAdministratorNameAsync(cancellationToken);
+
     public Task<RunCommandResult> RunShellCommandAsync(string command, CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would run shell command: {Command}", command);

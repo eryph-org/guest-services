@@ -255,4 +255,81 @@ public sealed class DryRunWindowsOsTests
         await sut.SetDnsSearchSuffixesAsync(7, ["a.com"], CancellationToken.None);
         await inner.DidNotReceiveWithAnyArgs().SetDnsSearchSuffixesAsync(default, default!, default);
     }
+
+    // ---- OpenSSH daemon: reads pass through, writes are intercepted ----
+
+    [Fact]
+    public async Task IsSshdInstalledAsync_delegates_to_inner()
+    {
+        var (sut, inner) = Build();
+        inner.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(true);
+
+        var installed = await sut.IsSshdInstalledAsync(CancellationToken.None);
+
+        installed.Should().BeTrue();
+        await inner.Received().IsSshdInstalledAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ResolveBuiltinAdministratorNameAsync_delegates_to_inner()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveBuiltinAdministratorNameAsync(Arg.Any<CancellationToken>()).Returns("Administrator");
+
+        var name = await sut.ResolveBuiltinAdministratorNameAsync(CancellationToken.None);
+
+        name.Should().Be("Administrator");
+        await inner.Received().ResolveBuiltinAdministratorNameAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task InstallOpenSshServerAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.InstallOpenSshServerAsync(CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().InstallOpenSshServerAsync(default);
+    }
+
+    [Fact]
+    public async Task RegenerateSshHostKeysAsync_returns_empty_and_skips_inner()
+    {
+        var (sut, inner) = Build();
+
+        var result = await sut.RegenerateSshHostKeysAsync(["ed25519"], deleteExisting: true, CancellationToken.None);
+
+        result.Should().BeEmpty();
+        await inner.DidNotReceiveWithAnyArgs().RegenerateSshHostKeysAsync(default!, default, default);
+    }
+
+    [Fact]
+    public async Task WriteSshHostKeyAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.WriteSshHostKeyAsync("ed25519", "PEM", "ssh-ed25519 AAA", CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().WriteSshHostKeyAsync(default!, default!, default, default);
+    }
+
+    [Fact]
+    public async Task EnsureSshdConfigIncludeAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.EnsureSshdConfigIncludeAsync(CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().EnsureSshdConfigIncludeAsync(default);
+    }
+
+    [Fact]
+    public async Task WriteSshdDropInAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.WriteSshdDropInAsync("50-eryph.conf", "PasswordAuthentication no", CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().WriteSshdDropInAsync(default!, default!, default);
+    }
+
+    [Fact]
+    public async Task RestartSshdAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.RestartSshdAsync(CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().RestartSshdAsync(default);
+    }
 }

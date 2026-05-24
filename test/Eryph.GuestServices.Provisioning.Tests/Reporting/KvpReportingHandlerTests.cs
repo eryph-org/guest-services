@@ -3,6 +3,7 @@ using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Reporting.Handlers;
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -159,6 +160,26 @@ public sealed class KvpReportingHandlerTests
             CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task PublishAsync_SshHostKeysReported_writes_joined_fingerprints()
+    {
+        var (handler, kvp) = Build();
+
+        await handler.PublishAsync(
+            new ReportingEvent.SshHostKeysReported(
+                [
+                    new SshHostKeyFingerprint("ed25519", "SHA256:aaa", "ssh-ed25519 AAA"),
+                    new SshHostKeyFingerprint("rsa", "SHA256:bbb", "ssh-rsa BBB"),
+                ])
+            { Origin = "module:SshModule" },
+            CancellationToken.None);
+
+        var written = LastWrite(kvp);
+        written["eryph.provisioning.ssh_host_keys"]
+            .Should().Be("ed25519=SHA256:aaa;rsa=SHA256:bbb");
+        written.Should().ContainKey("eryph.provisioning.updated");
     }
 
     private static IGuestDataExchange WorkingKvp()

@@ -71,6 +71,17 @@ internal sealed class LogReportingHandler(ILogger<LogReportingHandler> logger) :
                     progress.Message);
                 break;
 
+            case ReportingEvent.SshHostKeysReported sshHostKeys:
+                foreach (var fingerprint in sshHostKeys.Fingerprints)
+                {
+                    logger.LogInformation(
+                        "[{Origin}] ssh host key {KeyType}: {Fingerprint}",
+                        sshHostKeys.Origin,
+                        fingerprint.KeyType,
+                        fingerprint.Fingerprint);
+                }
+                break;
+
             case ReportingEvent.ProvisioningCompleted completed:
                 logger.LogInformation(
                     "[{Origin}] provisioning completed",
