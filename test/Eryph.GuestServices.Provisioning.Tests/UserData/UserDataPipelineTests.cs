@@ -179,6 +179,6 @@ public sealed class UserDataPipelineTests : IDisposable
             new ShellScriptPartHandler(NullLogger<ShellScriptPartHandler>.Instance),
             new BoothookPartHandler(NullLogger<BoothookPartHandler>.Instance),
         };
-        return new UserDataPipeline(handlers, serializer, urlHelper, NullLogger<UserDataPipeline>.Instance);
+        return new UserDataPipeline(handlers, NullLogger<UserDataPipeline>.Instance);
     }
 }

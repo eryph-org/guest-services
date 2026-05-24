@@ -1,5 +1,4 @@
 using Eryph.GuestServices.Provisioning.Configuration;
-using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Microsoft.Extensions.Logging;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
@@ -19,25 +18,13 @@ internal sealed class UserDataPipeline : IUserDataPipeline
 
     public UserDataPipeline(
         IEnumerable<IUserDataHandler> handlers,
-        ICloudConfigSerializer serializer,
-        IUrlHelper urlHelper,
         ILogger<UserDataPipeline> logger,
         ProvisioningSettings? settings = null)
     {
         _logger = logger;
         _handlers = handlers.ToArray();
-        Serializer = serializer;
-        UrlHelper = urlHelper;
         _maxRecursionDepth = Math.Max(1, (settings ?? new ProvisioningSettings()).UserData.MaxRecursionDepth);
     }
-
-    // The serializer + urlHelper dependencies are required by the task spec on the
-    // pipeline's constructor signature even though the handlers consume them
-    // directly via DI. Holding them as fields makes the dependency explicit and
-    // gives downstream extensions a sanctioned hook.
-    public ICloudConfigSerializer Serializer { get; }
-
-    public IUrlHelper UrlHelper { get; }
 
     public async Task<ResolvedUserData> ResolveAsync(byte[]? rawUserData, CancellationToken cancellationToken)
     {

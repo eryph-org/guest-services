@@ -33,9 +33,10 @@ internal sealed class ScriptsUserModule(
     /// Per-script reboot quota. A given (ordinal, body-hash) may request
     /// reboot at most this many times before we fail the module — guards
     /// against a broken installer that returns 1003 indefinitely.
-    /// docs/bugs/0001 "loop-safety".
+    /// docs/bugs/0001 "loop-safety". Sourced from
+    /// ProvisioningSettings.Reboot.MaxPerScript (default 2).
     /// </summary>
-    internal const int MaxRebootsPerScript = 2;
+    internal int MaxRebootsPerScript => settings.Reboot.MaxPerScript;
 
     /// <summary>
     /// Directory where per-script stdout/stderr logs are written. One log

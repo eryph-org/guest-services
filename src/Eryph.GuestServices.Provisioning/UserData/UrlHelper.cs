@@ -16,6 +16,7 @@ internal sealed class UrlHelper : IUrlHelper
     private readonly HttpClient _httpClient;
     private readonly int _maxAttempts;
     private readonly TimeSpan _initialBackoff;
+    private readonly long _maxBytes;
 
     public UrlHelper(ILogger<UrlHelper> logger, ProvisioningSettings? settings = null)
     {
@@ -23,6 +24,7 @@ internal sealed class UrlHelper : IUrlHelper
         var s = settings ?? new ProvisioningSettings();
         _maxAttempts = Math.Max(1, s.UserData.FetchMaxAttempts);
         _initialBackoff = TimeSpan.FromSeconds(Math.Max(0, s.UserData.FetchInitialBackoffSeconds));
+        _maxBytes = Math.Max(1, s.UserData.FetchMaxBytes);
         var perAttemptTimeout = TimeSpan.FromSeconds(Math.Max(1, s.UserData.FetchTimeoutSeconds));
 
         var handler = new HttpClientHandler
@@ -47,7 +49,8 @@ internal sealed class UrlHelper : IUrlHelper
         {
             // file:// is used for local-disk fixtures and tests; no retry needed.
             var path = uri.LocalPath;
-            return await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            await using var fileStream = File.OpenRead(path);
+            return await ReadBoundedAsync(fileStream, url, cancellationToken).ConfigureAwait(false);
         }
 
         if (uri.Scheme is not ("http" or "https"))
@@ -62,12 +65,20 @@ internal sealed class UrlHelper : IUrlHelper
             try
             {
                 using var response = await _httpClient
-                    .GetAsync(uri, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                    .GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                     .ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
-                return await response.Content
-                    .ReadAsByteArrayAsync(cancellationToken)
+
+                // Reject early when the server advertises an oversized body.
+                var declaredLength = response.Content.Headers.ContentLength;
+                if (declaredLength is > 0 && declaredLength > _maxBytes)
+                    throw new HttpRequestException(
+                        $"Response for '{url}' reports {declaredLength} bytes, exceeding the {_maxBytes}-byte cap.");
+
+                await using var stream = await response.Content
+                    .ReadAsStreamAsync(cancellationToken)
                     .ConfigureAwait(false);
+                return await ReadBoundedAsync(stream, url, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -102,5 +113,26 @@ internal sealed class UrlHelper : IUrlHelper
         throw new HttpRequestException(
             $"Failed to fetch '{url}' after {_maxAttempts} attempts.",
             lastError);
+    }
+
+    // Reads the stream into memory but aborts the moment the byte count would
+    // exceed the cap, so a server that lies about (or omits) Content-Length
+    // still cannot exhaust memory.
+    private async Task<byte[]> ReadBoundedAsync(
+        Stream stream,
+        string url,
+        CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            if (buffer.Length + read > _maxBytes)
+                throw new HttpRequestException(
+                    $"Response for '{url}' exceeded the {_maxBytes}-byte cap.");
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer.ToArray();
     }
 }

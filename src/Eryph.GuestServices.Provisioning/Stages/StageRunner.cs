@@ -38,11 +38,12 @@ public sealed class StageRunner(
     internal const string OutcomeCompleted = "completed";
     internal const string OutcomeRebootRequested = "reboot-requested";
 
-    // Hard cap on how many times the same module may return RebootRequested
-    // before the StageRunner stops re-entering it and treats the situation
-    // as a failed run. Protects against a misbehaving script that keeps
-    // returning 1003 without making progress (docs/bugs/0001 "loop-safety").
-    private const int MaxRebootsPerModule = 3;
+    // Cap on how many times the same module may return RebootRequested before
+    // the StageRunner stops re-entering it and treats the situation as a failed
+    // run. Protects against a misbehaving script that keeps returning 1003
+    // without making progress (docs/bugs/0001 "loop-safety"). Sourced from
+    // ProvisioningSettings.Reboot.MaxPerModule (default 3).
+    private int MaxRebootsPerModule => settings.Reboot.MaxPerModule;
 
     public Task<StageRunOutcome> RunAsync(CancellationToken cancellationToken) =>
         RunStagesAsync(StageOrder, cancellationToken);

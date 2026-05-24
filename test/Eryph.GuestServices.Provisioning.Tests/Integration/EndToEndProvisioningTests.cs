@@ -88,8 +88,6 @@ public sealed class EndToEndProvisioningTests : IDisposable
         };
         var pipeline = new UserDataPipeline(
             handlers,
-            serializer,
-            urlHelper,
             NullLogger<UserDataPipeline>.Instance);
         var reporter = Substitute.For<IReportingDispatcher>();
 

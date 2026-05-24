@@ -373,9 +373,17 @@ runcmd:
   - [powershell.exe, -NoProfile, -Command, "Write-Host 'argv-style'"]
 ```
 
+**Failure contract:** commands run in declaration order. A non-zero
+exit (≠1003) is **logged as an error and execution continues with the
+next command** — the module does not abort on first failure. This is
+cloud-init parity; operators coming from "shell scripts stop on first
+error" need the heads-up. If you need a command to gate the rest, make
+it fail the script itself (e.g. a single multi-line entry with your own
+error handling).
+
 Exit code **1003** triggers reboot-and-continue (cloudbase-init
-convention; cloud-init does not honor this). Non-zero (≠1003) logs an
-error and continues with the next entry.
+convention; cloud-init does not honor this) — the module returns and
+the runner resumes after the reboot.
 
 ---
 

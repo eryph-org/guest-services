@@ -164,6 +164,35 @@ public sealed class StageRunnerRebootResumeTests
         module.CallCount.Should().BeLessThan(10, "the cap prevents unbounded re-entry");
     }
 
+    [Fact]
+    public async Task Per_module_reboot_cap_honors_custom_MaxPerModule_setting()
+    {
+        // A tighter cap of 1 must fail after a single reboot, proving the cap
+        // reads from ProvisioningSettings.Reboot.MaxPerModule.
+        var data = MakeData("i-1");
+        var stateStore = new InMemoryStateStore();
+        var semaphoreStore = new InMemorySemaphoreStore();
+        var module = new AlwaysRebootModule("always-reboots");
+
+        var runner = BuildRunner(
+            locator: LocatorReturning(data),
+            stateStore: stateStore,
+            semaphoreStore: semaphoreStore,
+            modules: [module],
+            settings: new ProvisioningSettings { Reboot = new RebootSettings { MaxPerModule = 1 } });
+
+        StageRunOutcome? final = null;
+        for (var i = 0; i < 10; i++)
+        {
+            final = await runner.RunAsync(CancellationToken.None);
+            if (final is StageRunOutcome.Failed) break;
+        }
+
+        final.Should().BeOfType<StageRunOutcome.Failed>();
+        // Default cap (3) would call the module 4 times; cap=1 must trip sooner.
+        module.CallCount.Should().BeLessThanOrEqualTo(2, "MaxPerModule=1 fails after one reboot");
+    }
+
     // ----- helpers -----
 
     private static IDataSourceLocator LocatorReturning(DataSourceResult result)
@@ -184,7 +213,8 @@ public sealed class StageRunnerRebootResumeTests
         IDataSourceLocator locator,
         IStateStore stateStore,
         ISemaphoreStore semaphoreStore,
-        IModule[] modules)
+        IModule[] modules,
+        ProvisioningSettings? settings = null)
     {
         var pipeline = Substitute.For<IUserDataPipeline>();
         pipeline.ResolveAsync(Arg.Any<byte[]?>(), Arg.Any<CancellationToken>())
@@ -202,7 +232,7 @@ public sealed class StageRunnerRebootResumeTests
             modules,
             Substitute.For<IReportingDispatcher>(),
             Substitute.For<IWindowsOs>(),
-            new ProvisioningSettings(),
+            settings ?? new ProvisioningSettings(),
             NullLogger<StageRunner>.Instance);
     }
 
