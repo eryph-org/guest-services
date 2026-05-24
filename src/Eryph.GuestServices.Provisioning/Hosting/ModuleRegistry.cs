@@ -21,7 +21,7 @@ internal static class ModuleRegistry
         typeof(SetHostnameModule),
         typeof(SetLocaleModule),
         typeof(SetPasswordsModule),
-        typeof(SshAuthorizedKeysModule),
+        typeof(SshModule),
         typeof(TimezoneModule),
         typeof(UsersGroupsModule),
         typeof(WriteFilesModule),
