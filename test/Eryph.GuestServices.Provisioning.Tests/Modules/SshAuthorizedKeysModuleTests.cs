@@ -39,7 +39,7 @@ public sealed class SshAuthorizedKeysModuleTests
         var config = new CloudConfigModel
         {
             SshAuthorizedKeys = ["ssh-rsa AAA"],
-            Users = [new UserConfig { Name = "alice", Sudo = "ALL" }],
+            Users = [new UserConfig { Name = "alice", Sudo = ["ALL"] }],
         };
 
         await module.ApplyAsync(

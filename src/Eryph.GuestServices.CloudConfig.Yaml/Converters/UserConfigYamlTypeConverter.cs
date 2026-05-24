@@ -32,14 +32,28 @@ internal class UserConfigYamlTypeConverter(
         {
             var propertyName = parser.Consume<Scalar>();
 
-            IPropertyDescriptor propertyDescriptor;
+            IPropertyDescriptor? propertyDescriptor;
             try
             {
-                propertyDescriptor = typeInspector.GetProperty(typeof(UserConfig), null, propertyName.Value, false, true);
+                // ignoreUnmatched: true mirrors the root-level deserializer's
+                // IgnoreUnmatchedProperties policy — cloud-init's runtime
+                // behaviour for unknown user keys is "warn and continue",
+                // not "fail". Unknown properties yield a null descriptor
+                // here; we drain the value via rootDeserializer(object) so
+                // the parser advances past the entire (scalar / mapping /
+                // sequence) node without raising.
+                propertyDescriptor = typeInspector.GetProperty(typeof(UserConfig), null, propertyName.Value, true, true);
             }
             catch (SerializationException ex)
             {
                 throw new YamlException(propertyName.Start, propertyName.End, ex.Message);
+            }
+
+            if (propertyDescriptor is null)
+            {
+                // Unknown user-level property. Drain the value but keep parsing.
+                _ = rootDeserializer(typeof(object));
+                continue;
             }
 
             object? propertyValue;
@@ -63,7 +77,10 @@ internal class UserConfigYamlTypeConverter(
 
     // keep in sync with UserConfig string-list properties
     private static bool IsStringListShorthandProperty(string descriptorName) =>
-        // The type inspector applies UnderscoredNamingConvention, so the descriptor name
-        // for SshAuthorizedKeys is "ssh_authorized_keys" and for Groups is "groups".
-        descriptorName is "ssh_authorized_keys" or "groups";
+        // The type inspector applies UnderscoredNamingConvention, so the descriptor
+        // name for SshAuthorizedKeys is "ssh_authorized_keys", for Groups it is
+        // "groups", for SshImportId it is "ssh_import_id" and for Sudo it is "sudo".
+        // All four accept either a single scalar (promoted to a one-element list)
+        // or a sequence of strings — the cloud-init schema documents both forms.
+        descriptorName is "ssh_authorized_keys" or "groups" or "sudo" or "ssh_import_id";
 }

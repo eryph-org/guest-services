@@ -501,7 +501,7 @@ public class CloudConfigYamlSerializerTests
                 second.LockPasswd.Should().BeFalse();
                 second.Groups.Should().Equal("Administrators");
                 second.SshAuthorizedKeys.Should().Equal("ssh-rsa AAA");
-                second.Sudo.Should().Be("ALL=(ALL) NOPASSWD:ALL");
+                second.Sudo.Should().Equal("ALL=(ALL) NOPASSWD:ALL");
             });
 
         config.Groups.Should().ContainSingle().Which.Should().Match<GroupConfig>(
@@ -767,6 +767,208 @@ public class CloudConfigYamlSerializerTests
 
         config.PowerState.Should().NotBeNull();
         config.PowerState!.Condition.Should().Be("exit 0");
+    }
+
+    [Fact]
+    public void Deserialize_user_block_with_full_cross_platform_schema_roundtrips()
+    {
+        // Phase 2A schema expansion regression. Pins:
+        //   - gecos (cross-platform; maps to Windows NTUser FullName)
+        //   - ssh_import_id scalar form (auto-promoted to a one-element list)
+        //   - sudo list form (cloud-init's documented multi-line shape)
+        //   - expiredate / uid / no_create_home (Linux-only fields)
+        // round-tripping cleanly through the user-converter.
+        const string yaml = """
+                            users:
+                            - name: alice
+                              gecos: Alice Wonderland
+                              ssh_import_id: gh:alice
+                              sudo:
+                              - ALL=(ALL) NOPASSWD:ALL
+                              - "Defaults: alice !requiretty"
+                              expiredate: '2099-12-31'
+                              uid: 4242
+                              no_create_home: true
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.Should().Match<UserConfig>(u =>
+            u.Name == "alice"
+            && u.Gecos == "Alice Wonderland"
+            && u.Expiredate == "2099-12-31"
+            && u.Uid == 4242
+            && u.NoCreateHome == true);
+        var alice = config.Users![0];
+        alice.SshImportId.Should().Equal("gh:alice");
+        alice.Sudo.Should().Equal("ALL=(ALL) NOPASSWD:ALL", "Defaults: alice !requiretty");
+    }
+
+    [Fact]
+    public void Deserialize_user_sudo_as_scalar_promotes_to_single_element_list()
+    {
+        // The cloud-init schema documents both forms — single scalar and
+        // sequence. The user-converter's IsStringListShorthandProperty
+        // teaches the converter to promote a scalar to a one-element list,
+        // matching the existing behaviour for ssh_authorized_keys / groups.
+        const string yaml = """
+                            users:
+                            - name: alice
+                              sudo: ALL=(ALL) NOPASSWD:ALL
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.Sudo
+            .Should().Equal("ALL=(ALL) NOPASSWD:ALL");
+    }
+
+    [Fact]
+    public void Deserialize_user_ssh_import_id_as_list_keeps_list()
+    {
+        const string yaml = """
+                            users:
+                            - name: alice
+                              ssh_import_id:
+                              - gh:alice
+                              - lp:alice
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.SshImportId
+            .Should().Equal("gh:alice", "lp:alice");
+    }
+
+    [Fact]
+    public void Deserialize_user_unknown_property_does_not_throw()
+    {
+        // Mirrors the root-level IgnoreUnmatchedProperties policy — unknown
+        // user-level keys (vendor extensions, typos, future cloud-init
+        // additions) must NOT raise. The known keys land normally.
+        const string yaml = """
+                            users:
+                            - name: alice
+                              not_a_real_user_field: should_be_silently_ignored
+                              shell: /bin/bash
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.Should().Match<UserConfig>(u =>
+            u.Name == "alice" && u.Shell == "/bin/bash");
+    }
+
+    [Fact]
+    public void Deserialize_user_unknown_property_with_complex_value_drains_cleanly()
+    {
+        // Unknown user-level properties may carry mappings or sequences;
+        // the converter must drain the entire value via the root deserializer
+        // so the parser advances past it. This pins the "well-formed cloud-
+        // config with an unknown nested block beside a known field" case.
+        const string yaml = """
+                            users:
+                            - name: alice
+                              vendor_block:
+                                key1: foo
+                                key2:
+                                  - a
+                                  - b
+                              shell: /bin/bash
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Users.Should().ContainSingle().Which.Should().Match<UserConfig>(u =>
+            u.Name == "alice" && u.Shell == "/bin/bash");
+    }
+
+    [Fact]
+    public void Deserialize_write_files_defer_roundtrips()
+    {
+        // `defer: true` postpones the write until the Final stage so the file
+        // can reference users that earlier modules in the same run created.
+        // Phase 3 wires the runtime semantics — for now the field round-trips
+        // through the schema.
+        const string yaml = """
+                            write_files:
+                            - path: /home/alice/.bashrc
+                              content: "alias ll='ls -la'\n"
+                              defer: true
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.WriteFiles.Should().ContainSingle().Which.Should().Match<WriteFileConfig>(w =>
+            w.Path == "/home/alice/.bashrc" && w.Defer == true);
+    }
+
+    [Fact]
+    public void Deserialize_chpasswd_expire_and_list_form_roundtrip()
+    {
+        // The legacy `list:` form is the newline-separated user:password
+        // payload cloud-init still accepts as of 24.x. `expire: true` is
+        // also part of the cross-platform schema — Phase 3 wires the
+        // "expire on next login" semantics.
+        const string yaml = """
+                            chpasswd:
+                              expire: true
+                              list: |
+                                admin:s3cret
+                                alice:RANDOM
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Chpasswd.Should().NotBeNull();
+        config.Chpasswd!.Expire.Should().BeTrue();
+        // YamlDotNet's `|` block-scalar handling trims the trailing newline
+        // even though YAML 1.2 clip-chomp keeps one — for our purposes the
+        // payload (the user:password pairs) is what matters.
+        config.Chpasswd.List.Should().NotBeNull();
+        config.Chpasswd.List!.TrimEnd('\n').Should().Be("admin:s3cret\nalice:RANDOM");
+    }
+
+    [Fact]
+    public void Deserialize_keyboard_with_model_variant_options_roundtrips()
+    {
+        // Cloud-init's cc_keyboard schema documents model/variant/options for
+        // the X11 case. They're Linux-only at runtime but round-trip on
+        // Windows so cross-cloud cloud-config doesn't lose data.
+        const string yaml = """
+                            keyboard:
+                              layout: us
+                              model: pc105
+                              variant: dvorak
+                              options: ctrl:nocaps
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Keyboard.Should().NotBeNull();
+        config.Keyboard!.Layout.Should().Be("us");
+        config.Keyboard.Model.Should().Be("pc105");
+        config.Keyboard.Variant.Should().Be("dvorak");
+        config.Keyboard.Options.Should().Be("ctrl:nocaps");
+    }
+
+    [Fact]
+    public void Deserialize_groups_object_form_with_gid_roundtrips()
+    {
+        // Cloud-init's groups schema accepts either `name: [members]` or the
+        // object form `name: {members: [...], gid: int}` for pinning the gid.
+        const string yaml = """
+                            groups:
+                            - name: devs
+                              members: [alice, bob]
+                              gid: 5000
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Groups.Should().ContainSingle().Which.Should().Match<GroupConfig>(g =>
+            g.Name == "devs" && g.Gid == 5000);
+        config.Groups![0].Members.Should().Equal("alice", "bob");
     }
 
     [Fact]
