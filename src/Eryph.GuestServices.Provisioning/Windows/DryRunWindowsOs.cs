@@ -30,6 +30,10 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
 
     public string TranslateUnixPath(string unixPath) => inner.TranslateUnixPath(unixPath);
 
+    public string ExpandEnvironmentVariables(string value) => inner.ExpandEnvironmentVariables(value);
+
+    public char? GetSystemDriveLetter() => inner.GetSystemDriveLetter();
+
     public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>
         inner.GetNetworkAdaptersAsync(cancellationToken);
 

@@ -176,6 +176,23 @@ public interface IWindowsOs
     /// </summary>
     string TranslateUnixPath(string unixPath);
 
+    /// <summary>
+    /// Expands environment-variable references (e.g. <c>%ProgramData%</c>) in
+    /// <paramref name="value"/>. Routed through the OS abstraction so modules
+    /// stay host-OS independent — <c>Environment.ExpandEnvironmentVariables</c>
+    /// is a no-op on non-Windows hosts, which silently breaks paths during
+    /// tests. The production implementation calls the Win32 expander.
+    /// </summary>
+    string ExpandEnvironmentVariables(string value);
+
+    /// <summary>
+    /// Returns the system-drive letter (e.g. <c>'C'</c>) resolved from
+    /// <c>%SystemDrive%</c>, uppercased. Null when it cannot be resolved.
+    /// Routed through the OS abstraction so the value is mockable and the
+    /// resolution does not depend on the host's environment.
+    /// </summary>
+    char? GetSystemDriveLetter();
+
     // Networking — used by ApplyNetworkConfigModule. See RFC 0002.
 
     /// <summary>

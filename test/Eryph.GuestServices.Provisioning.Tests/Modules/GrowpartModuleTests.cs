@@ -20,6 +20,7 @@ public sealed class GrowpartModuleTests
         // to the Windows system drive (typically C:). The same behaviour
         // must hold when the user omits the growpart key entirely.
         var os = Substitute.For<IWindowsOs>();
+        os.GetSystemDriveLetter().Returns('C');
         os.ExtendVolumesAsync(Arg.Any<IReadOnlySet<char>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<VolumeExtendResult>>([]));
 
@@ -30,10 +31,10 @@ public sealed class GrowpartModuleTests
             CancellationToken.None);
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
-        var sysLetter = (Environment.GetEnvironmentVariable("SystemDrive") ?? "C:")[0];
-        sysLetter = char.ToUpperInvariant(sysLetter);
+        // The OS layer resolves the system drive; the mock pins it to 'C' so
+        // this assertion is deterministic on any host OS.
         await os.Received(1).ExtendVolumesAsync(
-            Arg.Is<IReadOnlySet<char>?>(s => s != null && s.Contains(sysLetter) && s.Count == 1),
+            Arg.Is<IReadOnlySet<char>?>(s => s != null && s.Contains('C') && s.Count == 1),
             Arg.Any<CancellationToken>());
     }
 
@@ -136,6 +137,7 @@ public sealed class GrowpartModuleTests
         // Validates the cloud-init `/` → %SystemDrive% translation in
         // isolation from the empty-config "default to ['/']" branch.
         var os = Substitute.For<IWindowsOs>();
+        os.GetSystemDriveLetter().Returns('C');
         os.ExtendVolumesAsync(Arg.Any<IReadOnlySet<char>?>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<VolumeExtendResult>>([]));
 
@@ -150,9 +152,8 @@ public sealed class GrowpartModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        var sysLetter = char.ToUpperInvariant((Environment.GetEnvironmentVariable("SystemDrive") ?? "C:")[0]);
         await os.Received(1).ExtendVolumesAsync(
-            Arg.Is<IReadOnlySet<char>?>(s => s != null && s.Count == 1 && s.Contains(sysLetter)),
+            Arg.Is<IReadOnlySet<char>?>(s => s != null && s.Count == 1 && s.Contains('C')),
             Arg.Any<CancellationToken>());
     }
 
@@ -212,6 +213,7 @@ public sealed class GrowpartModuleTests
         // emits ProvisioningFailed and re-runs the module on the next pass
         // (Failed deliberately writes no semaphore).
         var os = Substitute.For<IWindowsOs>();
+        os.GetSystemDriveLetter().Returns('C');
         os.ExtendVolumesAsync(Arg.Any<IReadOnlySet<char>?>(), Arg.Any<CancellationToken>())
             .ThrowsAsyncForAnyArgs(new InvalidOperationException("CIM blew up"));
 
@@ -232,6 +234,7 @@ public sealed class GrowpartModuleTests
         // outcome — the stage runner relies on the original exception type
         // to distinguish operator cancel from module failure.
         var os = Substitute.For<IWindowsOs>();
+        os.GetSystemDriveLetter().Returns('C');
         os.ExtendVolumesAsync(Arg.Any<IReadOnlySet<char>?>(), Arg.Any<CancellationToken>())
             .ThrowsAsyncForAnyArgs(new OperationCanceledException());
 

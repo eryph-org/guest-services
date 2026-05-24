@@ -57,8 +57,8 @@ internal sealed class ScriptsUserModule(
             return ModuleOutcome.Ok();
         }
 
-        var scriptDirectory = Environment.ExpandEnvironmentVariables(settings.Scripts.PerInstanceDirectory);
-        var logDirectory = Environment.ExpandEnvironmentVariables(LogsDirectory);
+        var scriptDirectory = context.Os.ExpandEnvironmentVariables(settings.Scripts.PerInstanceDirectory);
+        var logDirectory = context.Os.ExpandEnvironmentVariables(LogsDirectory);
         await context.Os.EnsureDirectoryAsync(scriptDirectory, cancellationToken).ConfigureAwait(false);
         await context.Os.EnsureDirectoryAsync(logDirectory, cancellationToken).ConfigureAwait(false);
 
@@ -101,7 +101,7 @@ internal sealed class ScriptsUserModule(
             }
 
             var scriptName = BuildScriptName(ordinal, script);
-            var scriptPath = Path.Combine(scriptDirectory, scriptName);
+            var scriptPath = WindowsPath.Combine(scriptDirectory, scriptName);
 
             try
             {
@@ -274,7 +274,7 @@ internal sealed class ScriptsUserModule(
         RunCommandResult result,
         CancellationToken cancellationToken)
     {
-        var logPath = Path.Combine(logDirectory, scriptName + ".log");
+        var logPath = WindowsPath.Combine(logDirectory, scriptName + ".log");
         var sb = new StringBuilder();
         sb.Append("script: ").AppendLine(scriptPath);
         sb.Append("exit-code: ").AppendLine(result.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture));

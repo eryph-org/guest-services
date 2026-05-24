@@ -49,7 +49,7 @@ internal sealed class GrowpartModule(ILogger<GrowpartModule> logger) : IModule
         }
 
         var devices = growpart.Devices is { Count: > 0 } d ? d : ["/"];
-        var (filter, hasAll) = ResolveDriveLetterFilter(devices);
+        var (filter, hasAll) = ResolveDriveLetterFilter(devices, context.Os);
         if (!hasAll && filter.Count == 0)
         {
             logger.LogWarning(
@@ -99,7 +99,8 @@ internal sealed class GrowpartModule(ILogger<GrowpartModule> logger) : IModule
     // in the model library; this method just walks the validated entries
     // and resolves "/" to %SystemDrive% at runtime (which the model
     // library cannot — it doesn't know the host's system drive).
-    private static (HashSet<char> Letters, bool HasAll) ResolveDriveLetterFilter(IReadOnlyList<string> devices)
+    private static (HashSet<char> Letters, bool HasAll) ResolveDriveLetterFilter(
+        IReadOnlyList<string> devices, IWindowsOs os)
     {
         var letters = new HashSet<char>();
         var hasAll = false;
@@ -120,7 +121,7 @@ internal sealed class GrowpartModule(ILogger<GrowpartModule> logger) : IModule
                     hasAll = true;
                     break;
                 case GrowpartGrammar.DeviceKind.SystemDrive:
-                    var sysLetter = SystemDriveLetter();
+                    var sysLetter = os.GetSystemDriveLetter();
                     if (sysLetter is not null) letters.Add(sysLetter.Value);
                     break;
                 case GrowpartGrammar.DeviceKind.DriveLetter:
@@ -129,17 +130,5 @@ internal sealed class GrowpartModule(ILogger<GrowpartModule> logger) : IModule
             }
         }
         return (letters, hasAll);
-    }
-
-    private static char? SystemDriveLetter()
-    {
-        // %SystemDrive% is "C:" on every supported Windows install but we
-        // still resolve it dynamically so reimaged guests with a non-C:
-        // system drive work correctly.
-        var sysDrive = Environment.GetEnvironmentVariable("SystemDrive");
-        if (string.IsNullOrWhiteSpace(sysDrive)) return null;
-        var ch = sysDrive[0];
-        if (ch is >= 'a' and <= 'z') ch = char.ToUpperInvariant(ch);
-        return ch is >= 'A' and <= 'Z' ? ch : null;
     }
 }

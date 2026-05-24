@@ -3,6 +3,7 @@ using System.Text;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
+using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Modules;
@@ -111,7 +112,7 @@ internal static class WriteFilesProcessor
             return ModuleOutcome.Fail($"path traversal: {entry.Path}");
         }
 
-        var parent = Path.GetDirectoryName(windowsPath);
+        var parent = WindowsPath.GetDirectoryName(windowsPath);
         if (!string.IsNullOrEmpty(parent))
             await context.Os.EnsureDirectoryAsync(parent, cancellationToken).ConfigureAwait(false);
 
