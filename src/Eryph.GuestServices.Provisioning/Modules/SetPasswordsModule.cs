@@ -11,7 +11,9 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 // `chpasswd.users`, the chpasswd entry takes effect because it runs later and
 // overwrites the password set by UsersGroupsModule. This matches cloud-init.
 [Stage(Stage.Config, Order = 1, Frequency = ModuleFrequency.PerInstance)]
-internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : IModule
+internal sealed class SetPasswordsModule(
+    ILogger<SetPasswordsModule> logger,
+    IDefaultUserResolver defaultUser) : IModule
 {
     private const string RandomType = "RANDOM";
     private const int RandomPasswordLength = 16;
@@ -131,8 +133,14 @@ internal sealed class SetPasswordsModule(ILogger<SetPasswordsModule> logger) : I
         if (string.IsNullOrEmpty(config.Password))
             return;
 
-        var user = config.Users?.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u.Name))?.Name
-            ?? "Administrator";
+        // The top-level `password:` shorthand targets the resolved default user
+        // (RFC 0018): the first admin in `users:`, else a datasource- or
+        // settings-supplied name, else the "Administrator" fallback. This
+        // replaces the previous hardcoded "first user / Administrator" pick so
+        // an image-baked default admin or an OpenStack-style metadata name is
+        // honoured. `chpasswd.users` / `chpasswd.list` always name an explicit
+        // user and are left untouched above.
+        var user = defaultUser.Resolve(config, context.DataSource);
 
         await SetPasswordAsync(context, user, config.Password, expire, cancellationToken).ConfigureAwait(false);
     }

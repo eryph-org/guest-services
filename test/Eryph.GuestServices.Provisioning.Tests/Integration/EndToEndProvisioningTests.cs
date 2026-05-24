@@ -91,11 +91,14 @@ public sealed class EndToEndProvisioningTests : IDisposable
             NullLogger<UserDataPipeline>.Instance);
         var reporter = Substitute.For<IReportingDispatcher>();
 
+        var settings = new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings();
+        var defaultUserResolver = new DefaultUserResolver(
+            settings, NullLogger<DefaultUserResolver>.Instance);
         var modules = new IModule[]
         {
             new SetHostnameModule(NullLogger<SetHostnameModule>.Instance),
-            new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance),
-            new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance),
+            new UsersGroupsModule(NullLogger<UsersGroupsModule>.Instance, settings, defaultUserResolver),
+            new SetPasswordsModule(NullLogger<SetPasswordsModule>.Instance, defaultUserResolver),
             new SshAuthorizedKeysModule(NullLogger<SshAuthorizedKeysModule>.Instance),
             new WriteFilesModule(NullLogger<WriteFilesModule>.Instance),
             new RuncmdModule(NullLogger<RuncmdModule>.Instance),
@@ -115,7 +118,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
             modules,
             reporter,
             windowsOs,
-            new Eryph.GuestServices.Provisioning.Configuration.ProvisioningSettings(),
+            settings,
             NullLogger<StageRunner>.Instance);
 
         var outcome = await runner.RunAsync(CancellationToken.None);
