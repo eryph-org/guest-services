@@ -7,6 +7,7 @@ namespace Eryph.GuestServices.CloudConfig;
 /// intentionally absent; only <c>enabled</c>, <c>servers</c> and
 /// <c>pools</c> have meaningful Windows analogues.
 /// </summary>
+[CloudInitRecord]
 public sealed record NtpConfig
 {
     /// <summary>

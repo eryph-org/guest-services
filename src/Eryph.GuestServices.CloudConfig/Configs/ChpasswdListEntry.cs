@@ -1,5 +1,6 @@
 namespace Eryph.GuestServices.CloudConfig;
 
+[CloudInitRecord]
 public sealed record ChpasswdListEntry
 {
     public string? Name { get; init; }

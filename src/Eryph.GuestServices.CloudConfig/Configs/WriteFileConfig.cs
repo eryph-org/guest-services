@@ -1,5 +1,6 @@
 namespace Eryph.GuestServices.CloudConfig;
 
+[CloudInitRecord]
 public sealed record WriteFileConfig
 {
     public string? Path { get; init; }

@@ -1,5 +1,6 @@
 namespace Eryph.GuestServices.CloudConfig;
 
+[CloudInitRecord]
 public sealed record RuncmdEntry
 {
     public required bool IsShellCommand { get; init; }

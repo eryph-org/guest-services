@@ -6,6 +6,7 @@ namespace Eryph.GuestServices.CloudConfig;
 /// exit-1003 "reboot and continue" mechanism — see
 /// <c>scripts-per-frequency-edge-cases</c>.
 /// </summary>
+[CloudInitRecord]
 public sealed record PowerStateConfig
 {
     /// <summary>

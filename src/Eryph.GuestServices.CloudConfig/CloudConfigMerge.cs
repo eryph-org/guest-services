@@ -1,6 +1,4 @@
-using Eryph.GuestServices.CloudConfig;
-
-namespace Eryph.GuestServices.Provisioning.UserData;
+namespace Eryph.GuestServices.CloudConfig;
 
 // Deep-merge policy for stacking cloud-config fragments coming from
 // multipart parts and #include URLs:
@@ -15,28 +13,16 @@ namespace Eryph.GuestServices.Provisioning.UserData;
 // The "users replace by name" twist matches cloud-init's behaviour: two
 // fragments declaring the same user name produce a single user record,
 // with later declarations winning on conflict.
-internal static class CloudConfigMerge
+//
+// The per-property merge code is source-generated from the model's
+// [CloudInitRoot] / [CloudInitRecord] / [CloudInitField] / [MergeBehavior]
+// attributes — see Eryph.GuestServices.CloudConfig.SourceGen. The hand-
+// written helpers below stay here so generated code can call them by name:
+// they handle the cloud-init specific merge semantics (deep-merge users
+// keyed by Name, concat lists, etc.) that are not pure per-property
+// scalar overrides.
+public static partial class CloudConfigMerge
 {
-    public static CloudConfig.CloudConfig Merge(
-        CloudConfig.CloudConfig left,
-        CloudConfig.CloudConfig right)
-    {
-        return new CloudConfig.CloudConfig
-        {
-            Hostname = right.Hostname ?? left.Hostname,
-            Fqdn = right.Fqdn ?? left.Fqdn,
-            PreserveHostname = right.PreserveHostname ?? left.PreserveHostname,
-            Users = MergeByName(left.Users, right.Users, u => u.Name, MergeUser),
-            Groups = MergeByName(left.Groups, right.Groups, g => g.Name, MergeGroup),
-            Chpasswd = MergeChpasswd(left.Chpasswd, right.Chpasswd),
-            Password = right.Password ?? left.Password,
-            SshPwauth = right.SshPwauth ?? left.SshPwauth,
-            SshAuthorizedKeys = Concat(left.SshAuthorizedKeys, right.SshAuthorizedKeys),
-            WriteFiles = Concat(left.WriteFiles, right.WriteFiles),
-            Runcmd = Concat(left.Runcmd, right.Runcmd),
-        };
-    }
-
     private static UserConfig MergeUser(UserConfig left, UserConfig right) => new()
     {
         Name = right.Name ?? left.Name,
@@ -58,18 +44,6 @@ internal static class CloudConfigMerge
         Name = right.Name ?? left.Name,
         Members = Concat(left.Members, right.Members),
     };
-
-    private static ChpasswdConfig? MergeChpasswd(ChpasswdConfig? left, ChpasswdConfig? right)
-    {
-        if (left is null) return right;
-        if (right is null) return left;
-        return new ChpasswdConfig
-        {
-            Expire = right.Expire ?? left.Expire,
-            List = right.List ?? left.List,
-            Users = MergeByName(left.Users, right.Users, u => u.Name, MergeChpasswdEntry),
-        };
-    }
 
     private static ChpasswdListEntry MergeChpasswdEntry(ChpasswdListEntry left, ChpasswdListEntry right) => new()
     {

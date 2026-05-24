@@ -1,3 +1,4 @@
+using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
@@ -46,8 +47,9 @@ internal sealed class TestResolutionContext : IUserDataResolutionContext
 
 internal static class CloudConfigMergeProxy
 {
-    // CloudConfigMerge is internal; expose a tiny wrapper so the test assembly
-    // (which has InternalsVisibleTo) can keep the call site flat.
+    // CloudConfigMerge.Merge is public on the model assembly now (Phase 1
+    // moved the partial there for the source-gen split). This wrapper stays
+    // so test sites can keep the call site flat regardless of namespace.
     public static CloudConfigModel Merge(CloudConfigModel left, CloudConfigModel right) =>
         CloudConfigMerge.Merge(left, right);
 }

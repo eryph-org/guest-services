@@ -5,11 +5,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>Eryph.GuestServices.CloudConfig</RootNamespace>
+    <!-- Persist source-generator output for inspection / diff review. -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Eryph.ConfigModel.Core" Version="0.10.0" />
     <PackageReference Include="Eryph.ConfigModel.Core.Validation" Version="0.10.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.CloudConfig.SourceGen\Eryph.GuestServices.CloudConfig.SourceGen.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

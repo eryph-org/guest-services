@@ -7,6 +7,7 @@ namespace Eryph.GuestServices.CloudConfig;
 /// KMS host, and an "activate now" toggle. Heavier flows (AVMA detection,
 /// automatic KMS key lookup per OS edition) belong in fodder/scripts.
 /// </summary>
+[CloudInitRecord]
 public sealed record LicenseConfig
 {
     /// <summary>

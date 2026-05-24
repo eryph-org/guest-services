@@ -1,3 +1,4 @@
+using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using CloudConfigModel = Eryph.GuestServices.CloudConfig.CloudConfig;
 

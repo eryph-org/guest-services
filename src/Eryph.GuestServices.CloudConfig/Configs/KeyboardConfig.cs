@@ -6,6 +6,7 @@ namespace Eryph.GuestServices.CloudConfig;
 /// and <c>options</c> from cloud-init's full schema are Linux X11
 /// concepts with no Windows analogue.
 /// </summary>
+[CloudInitRecord]
 public sealed record KeyboardConfig
 {
     /// <summary>

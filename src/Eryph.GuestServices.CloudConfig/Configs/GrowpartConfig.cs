@@ -5,6 +5,7 @@ namespace Eryph.GuestServices.CloudConfig;
 /// schema (<c>mode</c>, <c>devices</c>) but is interpreted in Windows terms
 /// by the provisioning agent — see <c>GrowpartModule</c>.
 /// </summary>
+[CloudInitRecord]
 public sealed record GrowpartConfig
 {
     /// <summary>
