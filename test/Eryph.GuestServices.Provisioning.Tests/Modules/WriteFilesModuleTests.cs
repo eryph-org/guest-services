@@ -3,8 +3,10 @@ using System.Text;
 using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.Tests.Reporting;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
@@ -297,16 +299,23 @@ public sealed class WriteFilesModuleTests
         await os.DidNotReceive().EnsureDirectoryAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    // Regression for review.md Finding 13. Cloud-init's documented contract:
+    // an unknown `encoding:` value falls back to UTF-8 plaintext + warning.
+    // We used to skip the entry entirely, so a typo like `gz-b64` (dash
+    // instead of plus) silently dropped the operator's file. The new
+    // behaviour treats the content as plain text.
     [Fact]
-    public async Task Skips_entries_with_unsupported_encoding()
+    public async Task Unknown_encoding_falls_back_to_plaintext()
     {
         var os = Substitute.For<IWindowsOs>();
-        os.TranslateUnixPath("/etc/foo").Returns(@"C:\etc\foo");
+        os.TranslateUnixPath("/tmp/x").Returns(@"C:\tmp\x");
 
-        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var logger = new CapturingLogger<WriteFilesModule>();
+        var module = new WriteFilesModule(logger);
         var config = new CloudConfigModel
         {
-            WriteFiles = [new WriteFileConfig { Path = "/etc/foo", Content = "x", Encoding = "rot13" }],
+            // Note the dash typo (cloud-init authors really do hit this).
+            WriteFiles = [new WriteFileConfig { Path = "/tmp/x", Content = "hello world", Encoding = "gz-b64" }],
         };
 
         var result = await module.ApplyAsync(
@@ -315,8 +324,39 @@ public sealed class WriteFilesModuleTests
             CancellationToken.None);
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
-        await os.DidNotReceive().WriteFileAsync(
-            Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.Received().WriteFileAsync(
+            @"C:\tmp\x",
+            Arg.Is<byte[]>(b => b.SequenceEqual(Encoding.UTF8.GetBytes("hello world"))),
+            false,
+            Arg.Any<CancellationToken>());
+
+        logger.Entries
+            .Should()
+            .ContainSingle(e => e.Level == LogLevel.Warning && e.Message.Contains("gz-b64"));
+    }
+
+    [Fact]
+    public async Task Empty_content_with_unknown_encoding_writes_empty_file()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.TranslateUnixPath("/tmp/x").Returns(@"C:\tmp\x");
+
+        var module = new WriteFilesModule(NullLogger<WriteFilesModule>.Instance);
+        var config = new CloudConfigModel
+        {
+            WriteFiles = [new WriteFileConfig { Path = "/tmp/x", Content = null, Encoding = "weird" }],
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.Received().WriteFileAsync(
+            @"C:\tmp\x",
+            Arg.Is<byte[]>(b => b.Length == 0),
+            false,
+            Arg.Any<CancellationToken>());
     }
 
     // Regression: WriteFilesModule must skip entries flagged with

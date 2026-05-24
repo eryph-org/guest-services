@@ -94,18 +94,7 @@ internal static class WriteFilesProcessor
             return null;
         }
 
-        byte[] content;
-        try
-        {
-            content = DecodeContent(entry.Content, entry.Encoding);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex,
-                "Failed to decode content for '{Path}' with encoding '{Encoding}'; skipping.",
-                entry.Path, entry.Encoding ?? "<none>");
-            return null;
-        }
+        var content = DecodeContent(entry.Content, entry.Encoding, entry.Path, logger);
 
         string windowsPath;
         try
@@ -170,23 +159,40 @@ internal static class WriteFilesProcessor
         return null;
     }
 
-    private static byte[] DecodeContent(string? content, string? encoding)
+    private static byte[] DecodeContent(string? content, string? encoding, string path, ILogger logger)
     {
         var text = content ?? string.Empty;
         var normalized = (encoding ?? "").Trim().ToLowerInvariant();
 
-        return normalized switch
+        switch (normalized)
         {
-            "" or "text/plain" =>
-                Encoding.UTF8.GetBytes(text),
-            "b64" or "base64" =>
-                Convert.FromBase64String(text),
-            "gz" or "gzip" =>
-                Gunzip(Encoding.UTF8.GetBytes(text)),
-            "gz+b64" or "gzip+b64" or "gz+base64" or "gzip+base64" or "b64+gzip" or "base64+gzip" =>
-                Gunzip(Convert.FromBase64String(text)),
-            _ => throw new NotSupportedException($"Unsupported write_files encoding '{encoding}'."),
-        };
+            case "":
+            case "text/plain":
+                return Encoding.UTF8.GetBytes(text);
+            case "b64":
+            case "base64":
+                return Convert.FromBase64String(text);
+            case "gz":
+            case "gzip":
+                return Gunzip(Encoding.UTF8.GetBytes(text));
+            case "gz+b64":
+            case "gzip+b64":
+            case "gz+base64":
+            case "gzip+base64":
+            case "b64+gzip":
+            case "base64+gzip":
+                return Gunzip(Convert.FromBase64String(text));
+            default:
+                // Cloud-init's behaviour: log a warning and fall back to
+                // UTF-8 plaintext. Dropping the entry — as we used to —
+                // hides typos like "gz-b64" (dash instead of plus) and
+                // silently throws away the operator's content.
+                logger.LogWarning(
+                    "Unsupported write_files encoding '{Encoding}' on '{Path}'; falling back to UTF-8 plaintext.",
+                    encoding,
+                    path);
+                return Encoding.UTF8.GetBytes(text);
+        }
     }
 
     private static byte[] Gunzip(byte[] data)
