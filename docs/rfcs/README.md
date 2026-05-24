@@ -28,18 +28,21 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |
 | [0013](0013-boothook-execution.md) | Boothook execution | Draft |
 | [0014](0014-azure-datasource.md) | Azure datasource (probe + CustomData.bin + IMDS + ovf-env) | Draft |
-| [0015](0015-set-timezone-module.md) | `set_timezone` cloud-config module on Windows | Draft |
-| [0016](0016-ntp-module.md) | `ntp` cloud-config module on Windows | Draft |
-| [0017](0017-licensing-module.md) | `licensing` cloud-config module (slmgr / KMS / rearm) | Draft |
+| [0015](0015-set-timezone-module.md) | `timezone` cloud-config module on Windows | Implemented |
+| [0016](0016-ntp-module.md) | `ntp` cloud-config module on Windows | Implemented |
+| [0017](0017-licensing-module.md) | `license` cloud-config module (slmgr / AVMA / KMS / rearm) | Implemented |
 | [0018](0018-ssh-module.md) | Windows OpenSSH daemon configuration (`SshModule`) | Draft |
 | [0019](0019-windows-update-module.md) | `windows_update` cloud-config module | Draft |
 | [0020](0020-winget-module.md) | `winget` cloud-config module | Draft |
 | [0021](0021-chocolatey-module.md) | `chocolatey` cloud-config module | Draft |
 | [0022](0022-chef-module.md) | `chef` cloud-config module (orchestrator bootstrap) | Draft |
-| [0023](0023-extend-volumes-module.md) | Windows `extend_volumes` cloud-config module | Draft |
-| [0024](0024-power-state-module.md) | `power_state` cloud-config module | Draft |
+| [0023](0023-extend-volumes-module.md) | `growpart` cloud-config module on Windows | Implemented |
+| [0024](0024-power-state-module.md) | `power_state` cloud-config module | Implemented |
 | [0025](0025-dsc-module.md) | `dsc` cloud-config module (DSCv3, retires the `windsc` gene workarounds) | Draft |
 | [0026](0026-winrm-listener-deferred.md) | WinRM listener / certificate auth (deferred) | Draft |
+| [0027](0027-set-locale-module.md) | `locale` / `keyboard` cloud-config module on Windows | Implemented |
+| [0028](0028-linux-keys-module.md) | Acknowledged-but-no-op top-level keys — Info-log Linux / deferred keys via `CloudConfigSerializer` | Implemented |
+| [0029](0029-secure-config-bootstrap-handshake.md) | Secure config delivery via bootstrap handshake | Draft |
 
 ## Authoring
 
