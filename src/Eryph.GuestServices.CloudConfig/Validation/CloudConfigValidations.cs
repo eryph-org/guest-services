@@ -21,9 +21,15 @@ public static class CloudConfigValidations
         "gz+b64", "gzip+b64", "gz+base64", "gzip+base64",
     };
 
+    // RANDOM is intentionally absent: random password generation is not
+    // supported on Windows guests (no out-of-band channel to return the
+    // generated password — cloud-init relies on /dev/console, which has no
+    // reliable Windows analogue across the clouds eryph targets). `type: RANDOM`
+    // gets a tailored rejection below; a password-less entry (which cloud-init
+    // also treats as RANDOM) is rejected too.
     private static readonly System.Collections.Generic.HashSet<string> ValidChpasswdTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "text", "hash", "RANDOM",
+        "text", "hash",
     };
 
     public static Validation<Error, CloudConfig> ValidateCloudConfig(CloudConfig config) =>
@@ -89,11 +95,18 @@ public static class CloudConfigValidations
             ((from name in EryphValidations.ValidateNotEmpty(entry.Name, "name")
               from _ in ValidateUserName(name)
               select unit)
+                | guardnot(
+                        string.Equals(entry.Type, "RANDOM", StringComparison.OrdinalIgnoreCase)
+                        || (entry.Type is null && string.IsNullOrEmpty(entry.Password)),
+                        Error.New("Random password generation is not supported on Windows guests: "
+                            + "there is no out-of-band channel to return the generated password. "
+                            + "Specify an explicit password (type: text or hash)."))
+                    .ToValidation()
                 | (entry.Type is null
                     ? Success<Error, Unit>(unit)
                     : guard(ValidChpasswdTypes.Contains(entry.Type),
                             Error.New($"The chpasswd type '{entry.Type}' is invalid. "
-                                + "Valid values are: text, hash, RANDOM."))
+                                + "Valid values are: text, hash."))
                         .ToValidation()))
             .Map(_ => entry));
 

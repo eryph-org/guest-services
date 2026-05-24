@@ -266,6 +266,18 @@ shortfall is just in the list-form parser. Easy fix; missing today.
 
 ### 11. Random passwords have no out-of-band channel
 
+**RESOLVED — random passwords dropped, not delivered.** Investigation
+confirmed cloud-init's only delivery for generated passwords is a write
+to `/dev/console` (`cc_set_passwords` → `log_util.multi_log(..., console-only)`);
+its datasources never POST passwords (the `nova get-password` path is a
+cloudbase-init mechanism, not cloud-init). Windows has no `/dev/console`
+analogue reliably captured across the clouds eryph targets, so generating
+a password we can't return would silently lock the operator out. Decision:
+**do not support random generation.** `egs-tool validate` now rejects
+`chpasswd.users[].type: RANDOM`, `chpasswd.list` `R`/`RANDOM`, and
+password-less `chpasswd.users` entries; runtime warn-and-skips them; the
+schema still parses them for round-trip. `GenerateRandomPassword` removed.
+
 `SetPasswordsModule.cs:58-60`:
 
 ```csharp

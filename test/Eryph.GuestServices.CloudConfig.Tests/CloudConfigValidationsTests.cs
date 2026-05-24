@@ -282,6 +282,40 @@ public class CloudConfigValidationsTests
     }
 
     [Fact]
+    public void ValidateCloudConfig_ChpasswdRandomType_ReturnsFail()
+    {
+        var config = new CloudConfig
+        {
+            Chpasswd = new ChpasswdConfig
+            {
+                Users = [new ChpasswdListEntry { Name = "alice", Type = "RANDOM" }],
+            },
+        };
+
+        var result = CloudConfigValidations.ValidateCloudConfig(config);
+
+        result.ShouldBeFail().Flatten()
+            .Should().Contain(e => e.Message.Contains("Random password generation is not supported"));
+    }
+
+    [Fact]
+    public void ValidateCloudConfig_ChpasswdMissingPassword_ReturnsFail()
+    {
+        var config = new CloudConfig
+        {
+            Chpasswd = new ChpasswdConfig
+            {
+                Users = [new ChpasswdListEntry { Name = "alice" }],
+            },
+        };
+
+        var result = CloudConfigValidations.ValidateCloudConfig(config);
+
+        result.ShouldBeFail().Flatten()
+            .Should().Contain(e => e.Message.Contains("Random password generation is not supported"));
+    }
+
+    [Fact]
     public void ValidateCloudConfig_WriteFileMissingPath_ReturnsFail()
     {
         var config = new CloudConfig

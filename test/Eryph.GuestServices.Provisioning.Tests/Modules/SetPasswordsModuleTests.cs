@@ -53,8 +53,10 @@ public sealed class SetPasswordsModuleTests
     }
 
     [Fact]
-    public async Task Generates_random_password_when_type_is_RANDOM()
+    public async Task Skips_chpasswd_user_when_type_is_RANDOM()
     {
+        // Random generation is unsupported on Windows (no out-of-band channel to
+        // return the password); the entry is warn-and-skipped, never set.
         var os = Substitute.For<IWindowsOs>();
         var module = Build();
 
@@ -71,11 +73,32 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        await os.Received().SetLocalUserPasswordAsync(
-            "alice",
-            Arg.Is<string>(p => p.Length == 16),
-            true,
-            Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetLocalUserPasswordAsync(
+            "alice", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Skips_chpasswd_user_when_password_missing()
+    {
+        // cloud-init treats a password-less entry as RANDOM; we skip it.
+        var os = Substitute.For<IWindowsOs>();
+        var module = Build();
+
+        var config = new CloudConfigModel
+        {
+            Chpasswd = new ChpasswdConfig
+            {
+                Users = [new ChpasswdListEntry { Name = "alice" }],
+            },
+        };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await os.DidNotReceive().SetLocalUserPasswordAsync(
+            "alice", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -246,13 +269,13 @@ public sealed class SetPasswordsModuleTests
             "Administrator", "topsecret", true, Arg.Any<CancellationToken>());
     }
 
-    // Cloud-init's cc_set_passwords accepts the exact-case tokens R / RANDOM
-    // after the colon in the chpasswd.list form. We mirror exact-case so
-    // operators using documented cloud-init syntax see the same behaviour.
+    // cloud-init's cc_set_passwords treats the exact-case tokens R / RANDOM
+    // after the colon in the chpasswd.list form as "generate". We don't
+    // generate on Windows — the entry is warn-and-skipped, never set.
     [Theory]
     [InlineData("RANDOM")]
     [InlineData("R")]
-    public async Task ChpasswdList_RandomToken_GeneratesPassword(string token)
+    public async Task ChpasswdList_RandomToken_IsSkipped(string token)
     {
         var os = Substitute.For<IWindowsOs>();
         var module = Build();
@@ -267,13 +290,8 @@ public sealed class SetPasswordsModuleTests
             new TestModuleContext(os),
             CancellationToken.None);
 
-        // The password actually set should be a 16-char generated value,
-        // not the literal token.
-        await os.Received().SetLocalUserPasswordAsync(
-            "bob",
-            Arg.Is<string>(p => p.Length == 16 && p != token),
-            Arg.Any<bool>(),
-            Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetLocalUserPasswordAsync(
+            "bob", Arg.Any<string>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     // Regression: a colon inside the password produces a literal value, and

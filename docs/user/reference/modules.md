@@ -237,26 +237,28 @@ the user record set — matches cloud-init.
 ```yaml
 chpasswd:
   users:
-    - name: alice
-      type: RANDOM
     - name: bob
       password: BobP!42
   list: |
     carol:CarolP!42
     dave:DaveP!42
-password: TopLevelP!42    # shorthand; lands on the first user, else Administrator
+password: TopLevelP!42    # shorthand; lands on the resolved default user
 ```
 
-`type: RANDOM` generates a 16-char password from a 70-glyph alphabet
-(~98 bits of entropy) using `RandomNumberGenerator` with rejection
-sampling. **The generated value is never logged.** A secret-channel
-reporting event is planned but not in v1; for now operators harvest
-the password out of band (e.g. via reset and re-set with a known value).
+**Random passwords are not supported.** cloud-init's `type: RANDOM`
+(and the `chpasswd.list` `R`/`RANDOM` tokens, and a password-less
+`chpasswd.users` entry) generate a password and deliver it by writing
+it to `/dev/console`. Windows guests have no console channel reliably
+captured across the clouds eryph targets, so a generated password could
+never be retrieved — setting one would silently lock the operator out.
+`egs-tool validate` rejects these, and at runtime they are
+warn-and-skipped. Specify an explicit password instead.
 
-`chpasswd.list` accepts the literal tokens `R` and `RANDOM`
-(exact-case, matching cloud-init) after the colon to mean "generate a
-random password for this user". `bob:RANDOM` produces a generated
-value; `bob:Random` is treated as the literal password.
+`chpasswd.expire` controls the "must change at next logon" flag. The
+cloud-init default is `true` — every changed password is flagged for
+change at first login. `expire: false` suppresses the flag. The default
+applies to all three input forms: `chpasswd.users`, `chpasswd.list`,
+and the top-level `password` shorthand.
 
 `chpasswd.expire` controls the "must change at next logon" flag. The
 cloud-init default is `true` — every changed password is flagged for
