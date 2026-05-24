@@ -60,6 +60,7 @@ public sealed class AzureDataSource : IDataSource
     private readonly Func<bool> _isRunningOnAzure;
     private readonly Func<string?> _readImageState;
     private readonly Func<string, string?> _readServiceState;
+    private readonly Func<bool> _isWindows;
     private readonly string _customDataPath;
 
     /// <summary>
@@ -101,7 +102,8 @@ public sealed class AzureDataSource : IDataSource
         Func<bool>? isRunningOnAzure = null,
         Func<string?>? readImageState = null,
         Func<string, string?>? readServiceState = null,
-        string? customDataPath = null)
+        string? customDataPath = null,
+        Func<bool>? isWindows = null)
     {
         _volumeProbe = volumeProbe;
         _logger = logger;
@@ -114,6 +116,7 @@ public sealed class AzureDataSource : IDataSource
         _isRunningOnAzure = isRunningOnAzure ?? PlatformProbes.IsRunningOnAzure;
         _readImageState = readImageState ?? ReadImageStateFromRegistry;
         _readServiceState = readServiceState ?? ReadServiceStateViaCim;
+        _isWindows = isWindows ?? OperatingSystem.IsWindows;
         _customDataPath = customDataPath ?? CustomDataPath;
     }
 
@@ -137,7 +140,7 @@ public sealed class AzureDataSource : IDataSource
 
     public async Task<DataSourceProbeResult> ProbeAsync(CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
+        if (!_isWindows())
             return DataSourceProbeResult.NotApplicable.Instance;
 
         if (!_isRunningOnAzure())

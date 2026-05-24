@@ -216,7 +216,8 @@ public class AzureDataSourceTests
             isRunningOnAzure: () => true,
             readImageState: () => imageState,
             readServiceState: readServiceStateOverride
-                ?? (name => name == AzureDataSource.WindowsAzureGuestAgentService ? winGaState : null));
+                ?? (name => name == AzureDataSource.WindowsAzureGuestAgentService ? winGaState : null),
+            isWindows: () => true);
     }
 
     // ---- OnCompletedAsync cleanup (RFC 0005) ----
