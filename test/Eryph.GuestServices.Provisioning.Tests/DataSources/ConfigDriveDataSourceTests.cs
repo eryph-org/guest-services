@@ -23,6 +23,17 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
             Directory.Delete(_root, recursive: true);
     }
 
+    // A platform probe that reports we are NOT on Azure. Injected so the probe
+    // result is independent of the host platform — an Azure-hosted CI agent
+    // would otherwise flip the defensive Azure opt-out and short-circuit to
+    // NotApplicable, masking the config-2 volume we just staged.
+    private static IPlatformProbe NotOnAzure()
+    {
+        var platformProbe = Substitute.For<IPlatformProbe>();
+        platformProbe.IsRunningOnAzure().Returns(false);
+        return platformProbe;
+    }
+
     [Fact]
     public async Task ReadAsync_returns_null_when_meta_data_json_missing()
     {
@@ -112,7 +123,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([]);
 
-        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+        var source = new ConfigDriveDataSource(probe, NotOnAzure(), NullLogger<ConfigDriveDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
@@ -128,7 +139,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([new MountedVolume("config-2", _root)]);
 
-        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+        var source = new ConfigDriveDataSource(probe, NotOnAzure(), NullLogger<ConfigDriveDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
@@ -145,7 +156,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
         var probe = Substitute.For<IVolumeProbe>();
         probe.EnumerateVolumes().Returns([new MountedVolume("config-2", _root)]);
 
-        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+        var source = new ConfigDriveDataSource(probe, NotOnAzure(), NullLogger<ConfigDriveDataSource>.Instance);
 
         var result = await source.ProbeAsync(CancellationToken.None);
 
@@ -162,7 +173,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
             "{\"uuid\":\"abc\"}");
 
         var probe = Substitute.For<IVolumeProbe>();
-        var source = new ConfigDriveDataSource(probe, NullLogger<ConfigDriveDataSource>.Instance);
+        var source = new ConfigDriveDataSource(probe, NotOnAzure(), NullLogger<ConfigDriveDataSource>.Instance);
 
         await source.OnCompletedAsync(
             new DataSourceResult { SourceName = "ConfigDrive", InstanceId = "abc" },

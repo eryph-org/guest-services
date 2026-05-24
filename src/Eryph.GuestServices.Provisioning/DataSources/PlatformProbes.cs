@@ -5,6 +5,17 @@ using Microsoft.Win32;
 namespace Eryph.GuestServices.Provisioning.DataSources;
 
 /// <summary>
+/// Default <see cref="IPlatformProbe"/> implementation. Production callers go
+/// through the injected interface so an Azure-hosted CI agent's ambient signals
+/// can't flip the datasource probes; this class holds the real registry/chassis
+/// detection.
+/// </summary>
+public sealed class PlatformProbe : IPlatformProbe
+{
+    public bool IsRunningOnAzure() => PlatformProbes.IsRunningOnAzure();
+}
+
+/// <summary>
 /// Cheap platform indicators used by lower-priority datasources to decline
 /// when a platform-native datasource owns the chain. This is belt-and-suspenders
 /// on top of <see cref="IDataSource.Priority"/> ordering: even if Azure's

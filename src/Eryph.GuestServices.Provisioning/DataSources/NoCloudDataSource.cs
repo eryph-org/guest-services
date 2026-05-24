@@ -10,6 +10,7 @@ namespace Eryph.GuestServices.Provisioning.DataSources;
 public sealed class NoCloudDataSource(
     IVolumeProbe volumeProbe,
     IUrlHelper urlHelper,
+    IPlatformProbe platformProbe,
     ILogger<NoCloudDataSource> logger) : IDataSource
 {
     private const string ExpectedLabel = "cidata";
@@ -31,7 +32,7 @@ public sealed class NoCloudDataSource(
         // Defensive opt-out: if we're on Azure, the cidata-shaped disk (if any
         // ever appears) is not ours to claim — Azure's PA owns the platform.
         // The AzureDataSource has higher priority but it's still a stub today.
-        if (PlatformProbes.IsRunningOnAzure())
+        if (platformProbe.IsRunningOnAzure())
         {
             logger.LogInformation(
                 "NoCloud volume at {Root} found but Azure context detected; declining to claim it",

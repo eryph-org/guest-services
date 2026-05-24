@@ -7,6 +7,7 @@ namespace Eryph.GuestServices.Provisioning.DataSources;
 
 public sealed class ConfigDriveDataSource(
     IVolumeProbe volumeProbe,
+    IPlatformProbe platformProbe,
     ILogger<ConfigDriveDataSource> logger) : IDataSource
 {
     private const string ExpectedLabel = "config-2";
@@ -28,7 +29,7 @@ public sealed class ConfigDriveDataSource(
         // Defensive opt-out: if we're on Azure, the config-2 disk (the label
         // Azure uses for its PA delivery in some scenarios) belongs to PA, not
         // to OpenStack. AzureDataSource has higher priority but it's a stub today.
-        if (PlatformProbes.IsRunningOnAzure())
+        if (platformProbe.IsRunningOnAzure())
         {
             logger.LogInformation(
                 "ConfigDrive volume at {Root} found but Azure context detected; declining to claim it",
