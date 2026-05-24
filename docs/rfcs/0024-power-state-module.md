@@ -1,141 +1,147 @@
 # RFC 0024 — `power_state` cloud-config module
 
-Status: Draft
+Status: Implemented
+Implemented in commit `<pending>`
 
 ## Problem
 
 cloud-config operators expect a `power_state:` block to request a
 reboot, poweroff, or halt at the END of provisioning — e.g. "install
 all the software in Final, then reboot the catlet so Windows picks up
-the new TrustedInstaller state". Today eryph fodder uses a `runcmd`
-entry like `shutdown.exe /r /t 0`, which fires while the Config or
-Final stage is still mid-flight and races with the rest of the agent.
-There is no clean end-of-Final controlled-state-change hook.
+the new TrustedInstaller state". Before this module, eryph fodder used
+a `runcmd shutdown.exe /r /t 0`, which fires while the Config or Final
+stage is still mid-flight and races with the rest of the agent.
 
 Mid-stage reboot (exit code 1003 from runcmd / scripts; see RFC 0007)
 already exists for "reboot then resume the same stage"; `power_state`
 is the opposite: "finish everything, then go down on the operator's
 schedule, with their message, their timeout."
 
-## What cloud-init does
+## What ships
 
-`cc_power_state_change` runs LAST in Final and shells out to
-`shutdown` / `systemctl poweroff` / `halt` with the configured delay
-and message. Optionally evaluates a `condition` (`true`/`false` or a
-shell command whose exit code gates the action). Default frequency:
-per-instance.
-
-Cloud-init reference:
-<https://cloudinit.readthedocs.io/en/latest/reference/modules.html#power-state-change>
-
-## What cloudbase-init does
-
-No direct equivalent. Genes that want a final reboot embed
-`shutdown.exe /r /t 0` in `runcmd`.
-
-## Schema
-
-Mirror cloud-init's block; semantics adapt to `shutdown.exe`:
+### Schema
 
 ```yaml
 power_state:
-  mode: reboot                  # reboot | poweroff | halt
-  delay: now                    # 'now' | '+N' minutes | absolute time
+  mode: reboot                  # reboot | poweroff | halt (default: reboot)
+  delay: now                    # now | +N (minutes) | HH:MM | integer (seconds)
   message: 'Provisioning complete'
-  timeout: 30                   # seconds to wait before forcing
-  condition: true               # bool or shell command (exit 0 = proceed)
+  timeout: 30                   # accepted for cloud-init parity; no Windows mapping
+  condition: true               # bool (true|false) or shell command (exit 0 = proceed)
 ```
 
-Mapping to `shutdown.exe`:
-
-- `mode: reboot` → `/r`
-- `mode: poweroff` → `/s`
-- `mode: halt` → `/h` (hibernate; closest Windows analogue — log a
-  Warning that halt-without-hibernate doesn't exist on Windows)
-- `delay: now` → `/t 0`; `+N` (minutes) → `/t (N * 60)`. Absolute
-  time strings (`"23:59"`) are parsed and converted to seconds-from-now.
-- `message: ...` → `/c "<msg>"` (truncated to 512 chars by Windows).
-- `timeout` is the soft-graceful window we honour before issuing the
-  shutdown; mapped onto `/t`. Cloud-init's `timeout` is the SIGTERM →
-  SIGKILL window, which has no direct Windows equivalent.
-
-## What Windows needs
-
-- `shutdown.exe` is the canonical entry point; available on every
-  supported Windows SKU.
-- Requires `SeShutdownPrivilege`. The agent runs as LocalSystem, which
-  holds it by default — no privilege juggling needed.
-- `condition`: when string, run via the same path as `runcmd` shell
-  entries (`IWindowsOs.RunShellCommandAsync`). Exit 0 = proceed; any
-  other exit = skip the power-state change and log Info.
-
-## Tentative direction
-
-### POCO sketch
-
-```csharp
-public sealed record PowerStateConfig
-{
-    public string? Mode { get; init; }            // "reboot" | "poweroff" | "halt"
-    public string? Delay { get; init; }           // "now" | "+N" | "HH:mm"
-    public string? Message { get; init; }
-    public int? Timeout { get; init; }            // seconds
-    public object? Condition { get; init; }       // bool OR string (cloud-init shape)
-}
-```
-
-`Condition` is `object?` to preserve cloud-init's untyped union;
-deserialisation normalises to `(bool? Literal, string? Command)`.
+POCO `PowerStateConfig`. `Mode` defaults to `reboot` — the operator
+intent most commonly is "reboot when done". `Condition` is `object?`
+because cloud-init's schema is a literal union of bool / string.
 
 ### Module
 
 - `Eryph.GuestServices.Provisioning.Modules.PowerStateModule`
-  (`[Stage(Stage.Final, Order = int.MaxValue - 1, Frequency = …)]`).
-- Final stage, ordered LAST so every other Final module has already
-  written its semaphores and logs before the system goes down.
-- New `IWindowsOs.RequestPowerStateAsync(PowerStateAction, …)` wraps
-  `shutdown.exe` invocation; `DryRunWindowsOs` records the call and
-  does not actually reboot.
-- Logging: emit Information("scheduled reboot in {Sec}s: {Msg}")
-  immediately after issuing `shutdown.exe`, then return Ok so the
-  StageRunner records the semaphore BEFORE Windows starts tearing
-  down the agent process.
+  (`Stage.Final`, `Order = int.MaxValue - 1`, `Frequency = PerInstance`).
+- Runs LAST in Final so every other module's semaphore is written
+  before Windows starts tearing the agent process down.
+- Returns `ModuleOutcome.Completed`, **not** `RebootRequested`.
+  Critical: returning RebootRequested would re-enter the module on
+  the post-reboot run and schedule ANOTHER reboot — infinite loop.
+  Per-instance semaphore + `Completed` outcome is the only safe
+  combination.
 
-### Frequency — the awkward question
+### Mode mapping
 
-Cloud-init's `cc_power_state_change` is per-instance. On a per-instance
-schedule the marker is written when the module returns Ok — but if the
-operator wrote `condition: true` AND the action fires, the next boot
-will see the per-instance semaphore already present and skip the
-module. That's correct: the reboot was for the first-boot
-provisioning, the operator does not want another reboot on every boot.
+| `mode:` | shutdown.exe flag | Notes |
+|---|---|---|
+| `reboot` (default) | `/r` | |
+| `poweroff` / `shutdown` (cbi alias) | `/s` | |
+| `halt` | `/h` | Hibernate — closest Windows analogue. Module logs a Warning explaining the substitution. |
 
-**Open question — make this explicit in code:** must the semaphore
-write happen BEFORE `shutdown.exe` is invoked? If it happens after, a
-race window exists where Windows tears the process down between
-`shutdown.exe` returning and the semaphore being flushed to disk.
-Tentative: yes, write the semaphore first, then call `shutdown.exe`;
-matches cloud-init's intent.
+`/f` (force-close apps) is always passed — we're unattended.
 
-## Open questions
+### Delay grammar
 
-- Per-boot vs per-instance: a "reboot every boot" recipe is
-  nonsensical (infinite loop), so per-instance is right for v1.
-  Document the loop-avoidance reasoning so it doesn't get changed
-  later.
-- `condition` as a shell string runs ONCE before the action. Cloud-init
-  documents but barely uses this. We support it for fidelity; reject
-  excessively long commands (>1 KB) in `egs-service validate`.
-- Should the module short-circuit when the agent is running under
-  `egs-tool` interactive (a human invoked provisioning manually)?
-  Surprising to lose your session to a `shutdown /r /t 0`. Tentative:
-  honour the config; an operator who set `power_state:` knew what they
-  asked for.
+The module parses `delay:` against the cloud-init grammar AND clamps to
+a minimum 5-second buffer so the StageRunner cleanup (semaphore +
+KVP "completed" event + datasource cleanup hook) has time to flush
+before Windows actually goes down.
+
+- `now` → 5s (clamped from 0)
+- `+N` → N minutes
+- `HH:MM` → seconds until that time today (or tomorrow if past)
+- integer → seconds
+- anything else → `Failed` outcome with a clear message
+
+### Condition evaluation
+
+- `null` (omitted) → proceed
+- YAML plain (unquoted) `true` / `false` → native `bool` → proceed / skip
+- YAML quoted `"true"` / `"false"` → `string` → run as shell command
+  (matches cloud-init's behaviour where `condition: "true"` invokes
+  the `true` shell builtin; on Linux this also proceeds, by accident).
+- Any other string → run via `IWindowsOs.RunShellCommandAsync`;
+  exit 0 proceeds, anything else skips.
+
+The plain-vs-quoted distinction matters because cloud-init / PyYAML
+distinguishes them and we want behavioural parity. YamlDotNet's
+default `object?`-target deserialisation discards the distinction
+(everything comes back as `string`), so the YAML layer attaches
+`BoolOrStringYamlConverter` to `PowerStateConfig.Condition` to inspect
+`Scalar.Style` and restore PyYAML-equivalent type resolution.
+
+### OS seam
+
+```csharp
+Task RequestPowerStateAsync(PowerStateRequest request, CancellationToken ct);
+
+public sealed record PowerStateRequest
+{
+    public PowerStateAction Action { get; init; }
+    public int DelaySeconds { get; init; }
+    public string? Message { get; init; }
+}
+public enum PowerStateAction { Reboot, Poweroff, Halt }
+```
+
+`WindowsOs.RequestPowerStateAsync` shells `shutdown.exe` with the
+appropriate flags. `DryRunWindowsOs.RequestPowerStateAsync` logs and
+does NOT shutdown — the whole point of dry-run is "tell me what would
+happen", and accidentally power-cycling the operator's host is the
+worst possible bug to ship.
+
+## What changed from the original Draft — and why
+
+- **`Mode` now defaults to `reboot`** (Draft had no default).
+  Operators writing `power_state: {}` clearly want SOMETHING to
+  happen — null-mode-fails is unfriendly. cloud-init also defaults to
+  reboot in practice (its `mode` is required by schema, but the
+  ecosystem treats `reboot` as the default).
+- **`/f` (force-close) always passed.** Draft was ambiguous. We're
+  unattended; not forcing means shutdown can stall on an unsaved app
+  dialog from a runcmd helper that happens to be still alive.
+- **Minimum 5s delay buffer.** Draft asked the open question "must
+  the semaphore write happen BEFORE `shutdown.exe`?" — resolved
+  by clamping the delay so the StageRunner has guaranteed cleanup
+  time after this module's `ApplyAsync` returns.
+- **`condition: true|false` YAML-bool handling.** Draft assumed
+  YamlDotNet would surface the bool as `bool` to an `object?` target;
+  empirically it returns the raw scalar text as `string` and discards
+  YAML's plain-vs-quoted distinction. Fixed at the YAML layer via
+  `BoolOrStringYamlConverter` (attached to `PowerStateConfig.Condition`)
+  rather than papering over in the module: plain `true` → bool;
+  quoted `"true"` → string → shell command. Matches PyYAML / cloud-init
+  behaviour exactly, including the edge case where quoted-bool gets
+  treated as a shell command.
+- **`shutdown` accepted as cbi-alias for `poweroff`.** Not in the
+  Draft; added so cross-tool YAML works (cbi operators write
+  `mode: shutdown`).
+- **`power_state` removed from the acknowledged-key set in
+  `CloudConfigSerializer`.** Was a no-op stub there until this module
+  shipped; now it's a real implemented key.
 
 ## Cross-references
 
 - [RFC 0007](0007-scripts-per-frequency-edge-cases.md) — exit-1003
-  "reboot and continue" is the MID-stage cousin of this module.
+  reboot-and-continue is the MID-stage cousin.
 - [RFC 0010](0010-semaphore-design.md) — per-instance semaphore
-  written before issuing the shutdown so the post-reboot run does not
-  loop.
+  written by the StageRunner after the module returns; the delay
+  buffer protects the cleanup window.
+- [RFC 0028](0028-linux-keys-module.md) — `power_state` was
+  acknowledged-but-no-op there until this module shipped.

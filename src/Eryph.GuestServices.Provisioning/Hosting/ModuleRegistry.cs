@@ -12,11 +12,17 @@ internal static class ModuleRegistry
     public static IReadOnlyList<Type> ModuleTypes { get; } =
     [
         typeof(ApplyNetworkConfigModule),
+        typeof(GrowpartModule),
+        typeof(LicensingModule),
+        typeof(NtpClientModule),
+        typeof(PowerStateModule),
         typeof(RuncmdModule),
         typeof(ScriptsUserModule),
         typeof(SetHostnameModule),
+        typeof(SetLocaleModule),
         typeof(SetPasswordsModule),
         typeof(SshAuthorizedKeysModule),
+        typeof(TimezoneModule),
         typeof(UsersGroupsModule),
         typeof(WriteFilesModule),
     ];

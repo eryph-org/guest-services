@@ -39,7 +39,13 @@ public static class CloudConfigValidations
                 ? Success<Error, Unit>(unit)
                 : ValidateChpasswdConfig(config.Chpasswd).Map(_ => unit))
             | ValidateWriteFileList(config.WriteFiles)
-            | ValidateRuncmdList(config.Runcmd))
+            | ValidateRuncmdList(config.Runcmd)
+            | (config.Growpart is null
+                ? Success<Error, Unit>(unit)
+                : Prefix("growpart", GrowpartGrammar.Validate(config.Growpart)))
+            | (config.PowerState is null
+                ? Success<Error, Unit>(unit)
+                : Prefix("power_state", PowerStateGrammar.Validate(config.PowerState))))
         .Map(_ => config);
 
     public static Validation<Error, UserConfig> ValidateUserConfig(UserConfig user, int index) =>

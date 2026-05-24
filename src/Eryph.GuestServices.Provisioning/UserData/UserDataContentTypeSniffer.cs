@@ -45,12 +45,17 @@ internal static class UserDataContentTypeSniffer
 
         // Cloud-init's userdata MIME messages — and the configdrive ISO that
         // eryph-zero generates — are prefixed with an mbox-style "From " line
-        // (RFC 4155 preamble) before the actual MIME headers. Skip it so the
-        // Content-Type / MIME-Version detection below still triggers.
+        // (RFC 4155 preamble) before the actual MIME headers. Some producers
+        // (notably hand-edited gists, certain PowerShell tools) emit "From:"
+        // with a colon, turning the marker into a degenerate RFC 5322 header.
+        // We tolerate both shapes — the next line should still be Content-Type
+        // / MIME-Version either way.
         //   From nobody Fri Jan  11 07:00:00 1980
+        //   From: nobody Fri Jan 11 07:00:00 1980
         //   Content-Type: multipart/mixed; boundary="==BOUNDARY=="
         //   MIME-Version: 1.0
-        if (firstLine.StartsWith("From ", StringComparison.Ordinal))
+        if (firstLine.StartsWith("From ", StringComparison.Ordinal)
+            || firstLine.StartsWith("From:", StringComparison.Ordinal))
             firstLine = FirstNonEmptyLine(SkipFirstLine(text));
 
         // Multipart detection: either a MIME header is present at the very top,

@@ -194,4 +194,93 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
             "DRY-RUN would set MTU on interface index {Index} to {Mtu}", interfaceIndex, mtu);
         return Task.CompletedTask;
     }
+
+    public Task<IReadOnlyList<VolumeExtendResult>> ExtendVolumesAsync(
+        IReadOnlySet<char>? driveLetterFilter,
+        CancellationToken cancellationToken)
+    {
+        var target = driveLetterFilter is null
+            ? "all growable volumes"
+            : string.Join(", ", driveLetterFilter);
+        logger.LogInformation("DRY-RUN would extend partitions for {Target}", target);
+        return Task.FromResult<IReadOnlyList<VolumeExtendResult>>([]);
+    }
+
+    public Task ConfigureNtpClientAsync(
+        bool enabled,
+        IReadOnlyList<string> peers,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would configure NTP (enabled={Enabled}, peers={Peers})",
+            enabled,
+            peers.Count == 0 ? "<none>" : string.Join(", ", peers));
+        return Task.CompletedTask;
+    }
+
+    public Task SetRealTimeClockUtcAsync(bool utc, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would set RealTimeIsUniversal={Utc}", utc);
+        return Task.CompletedTask;
+    }
+
+    public Task SetTimezoneAsync(string windowsTimezoneId, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would set timezone to {TimezoneId}", windowsTimezoneId);
+        return Task.CompletedTask;
+    }
+
+    public Task<LocaleApplyResult> ApplyLocaleAsync(LocaleSpec spec, CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would apply locale (locale={Locale}, keyboard={Keyboard})",
+            spec.Locale ?? "<unchanged>",
+            spec.KeyboardLayout ?? "<unchanged>");
+        // Dry-run never claims reboot — keeps the run from triggering a real reboot.
+        return Task.FromResult(new LocaleApplyResult { RebootRequired = false });
+    }
+
+    public Task ApplyLicenseAsync(LicenseSpec spec, CancellationToken cancellationToken)
+    {
+        // Never log the product key in full — operators copy logs around and we
+        // don't want to leak licensing material into ticket trackers.
+        var maskedKey = string.IsNullOrEmpty(spec.ProductKey)
+            ? "<unchanged>"
+            : $"***{spec.ProductKey[^4..]}";
+        logger.LogInformation(
+            "DRY-RUN would apply license (productKey={Key}, kmsHost={Host}, clearKms={Clear}, activate={Activate})",
+            maskedKey,
+            spec.KmsHost ?? "<unchanged>",
+            spec.ClearKmsHost,
+            spec.Activate);
+        return Task.CompletedTask;
+    }
+
+    public Task<RearmResult> RearmLicenseAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would run slmgr /rearm");
+        // Dry-run never claims reboot so a what-if doesn't trigger restart paths.
+        return Task.FromResult(new RearmResult { RebootRequired = false });
+    }
+
+    public Task<string?> ResolveVolumeActivationKeyAsync(
+        VolumeActivationKeyType type,
+        CancellationToken cancellationToken) =>
+        // Reads only — pass through to the wrapped real implementation so
+        // dry-run still sees what would have been resolved on this guest.
+        inner.ResolveVolumeActivationKeyAsync(type, cancellationToken);
+
+    public Task<bool> IsEvaluationLicenseAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through.
+        inner.IsEvaluationLicenseAsync(cancellationToken);
+
+    public Task RequestPowerStateAsync(PowerStateRequest request, CancellationToken cancellationToken)
+    {
+        // Critical to NOT actually shutdown in dry-run — the whole point
+        // of dry-run is "tell me what would happen". Log + skip.
+        logger.LogInformation(
+            "DRY-RUN would schedule {Action} in {Delay}s (message='{Msg}')",
+            request.Action, request.DelaySeconds, request.Message ?? "<none>");
+        return Task.CompletedTask;
+    }
 }

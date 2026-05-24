@@ -46,6 +46,12 @@
     <None Include="..\fixtures\network-config\*.*" Link="fixtures\network-config\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- User-data fixtures captured from real-world producers (PowerShell
+         tooling, MIME bundles published as #include targets). Used to pin
+         tolerance behaviours in the user-data pipeline. -->
+    <None Include="..\fixtures\userdata\*.*" Link="fixtures\userdata\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

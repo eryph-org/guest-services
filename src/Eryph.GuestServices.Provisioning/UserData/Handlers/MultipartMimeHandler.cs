@@ -30,7 +30,9 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
         IUserDataResolutionContext ctx,
         CancellationToken cancellationToken)
     {
-        var text = Encoding.UTF8.GetString(part.Body);
+        // BOM-stripping decode — a leading U+FEFF before "Content-Type:"
+        // breaks header-line detection in the (lenient) MIME parser below.
+        var text = UserDataEncoding.DecodeUtf8(part.Body);
         var parsed = MimeParser.Parse(text);
         if (parsed is null)
         {

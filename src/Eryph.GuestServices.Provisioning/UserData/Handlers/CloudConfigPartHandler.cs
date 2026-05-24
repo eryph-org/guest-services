@@ -1,4 +1,3 @@
-using System.Text;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Microsoft.Extensions.Logging;
 
@@ -16,7 +15,10 @@ internal sealed class CloudConfigPartHandler(
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var yaml = Encoding.UTF8.GetString(part.Body);
+        // BOM-stripping decode — Set-Content -Encoding UTF8 in Windows
+        // PowerShell writes a leading EF BB BF, and YamlDotNet rejects the
+        // resulting U+FEFF before #cloud-config.
+        var yaml = UserDataEncoding.DecodeUtf8(part.Body);
         try
         {
             var fragment = serializer.Deserialize(yaml);

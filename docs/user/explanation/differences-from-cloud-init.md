@@ -16,13 +16,14 @@ divergences**.
 | Boothook (`#cloud-boothook`) | Executes very early | **Captured but not executed** | Deferred to [RFC 0013](../../rfcs/0013-boothook-execution.md). |
 | Argv quoting in `runcmd` | Argv list executed via `subprocess` with shell-style quoting rules | Argv list executed verbatim via `Process.Start`; no shell quoting reapplied | Windows process model differs; the YAML list is the truth. |
 | Multipart close delimiter | Required (`--boundary--`) | Optional — last open part is flushed | Real-world eryph fodder occasionally ships without it; silently dropping the last script is worse than tolerating the shape. |
-| Module list | Many cloud-init modules; selected by `cloud.cfg` lists | Fixed v1 set: `SetHostname`, `ApplyNetworkConfig`, `UsersGroups`, `SetPasswords`, `SshAuthorizedKeys`, `WriteFiles`, `Runcmd`, `ScriptsUser` | No `disk_setup`, `growpart`, `apt`, `yum`, `phone_home`, `power_state_change`, `ntp`, `timezone`, etc. in v1. See [RFC 0009](../../rfcs/0009-module-list-split.md). |
+| Module list | Many cloud-init modules; selected by `cloud.cfg` lists | Fixed v1 set: `Growpart`, `SetHostname`, `ApplyNetworkConfig`, `NtpClient`, `Timezone`, `SetLocale`, `UsersGroups`, `SetPasswords`, `SshAuthorizedKeys`, `WriteFiles`, `Runcmd`, `Licensing`, `ScriptsUser`, `PowerState` | Linux-only and deferred top-level keys (`apt`, `snap`, `packages`, `bootcmd`, `phone_home`, `chef`, …) are **accepted** in the schema and logged at Info by `CloudConfigSerializer`'s acknowledged-key inventory so cross-cloud YAML round-trips cleanly. See [RFC 0028](../../rfcs/0028-linux-keys-module.md). |
+| Unknown top-level keys | Warning logged at runtime via `validate_cloudconfig_schema` (jsonschema additionalProperties), CLI-side strict check via `cloud-init schema` | Same tiered behaviour: schema-accepted Linux keys → **Info** via `LinuxKeys`; truly unknown keys (typo, vendor extension) → **Warning** via `CloudConfigSerializer`; neither aborts | We mirror cloud-init's "log-and-continue" runtime contract; the LinuxKeys schema makes the Linux/typo distinction explicit. |
 | Semaphore root | `/var/lib/cloud/...` | `%ProgramData%\eryph\provisioning\...` | Windows path. Layout matches. |
 | Reporting backends | `LogHandler`, `WebHookHandler`, `HyperVKvpHandler`, Azure (in datasource) | `LogReportingHandler` + `KvpReportingHandler` only | Multi-cloud backends deferred to [RFC 0006](../../rfcs/0006-multi-handler-reporting-cloud-backends.md). No webhook in v1. |
 | Vendor-data | Parsed, merged via `cloud_init_merge` strategy | **Parsed but discarded with an Info log** | No eryph use case; merge policy deferred to [RFC 0001](../../rfcs/0001-vendor-data-merge-policy.md). |
 | Configurable per-stage module lists | `cloud_init_modules`, `cloud_config_modules`, `cloud_final_modules` in `cloud.cfg` | Stages and ordering are fixed by `[Stage]` attributes | Eryph delivers a fixed module set; configurability deferred ([RFC 0009](../../rfcs/0009-module-list-split.md)). |
 | Quoted-printable transfer encoding in multipart | Decoded | Pass-through (treated as UTF-8 bytes of the body) | Real-world cloud-init multiparts use 7bit/8bit/base64; quoted-printable is rare. |
-| `power_state` module | Implemented | **Not supported** | Use exit-1003 from a runcmd / script instead. |
+| `power_state` module | Implemented | Implemented — see `PowerState` in [Modules](../reference/modules.md) | Mode `halt` falls back to hibernate (Windows has no clean halt analogue). |
 
 ## Things that match deliberately
 
@@ -45,7 +46,6 @@ cloudbase-init.
 ## Reading more
 
 The [RFCs](../../rfcs/README.md) directory holds the per-decision
-rationale. Implementation-status overview: 0001 deferred, 0002–0005
-implemented, 0006 deferred, 0007 implemented, 0008 draft (most
-recommendations applied), 0009–0013 deferred, 0014 draft (code
-shipped).
+rationale. The status column in the [RFC index](../../rfcs/README.md)
+is the canonical source for what's implemented vs. drafted vs.
+deferred.

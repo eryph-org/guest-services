@@ -81,10 +81,12 @@ public sealed class DataSourceSettings
     /// giving up and returning <c>NoDataSource</c>. Mirrors cloud-init's per-datasource
     /// <c>wait_for_metadata_service</c> deadline but is global (one timer for the entire
     /// LocateAsync call), since we round-robin probes between sources rather than
-    /// blocking on a single slow one. Default 5 minutes — Azure PA usually completes
-    /// in under 5; longer means something is wrong.
+    /// blocking on a single slow one. Default 15 minutes — covers Azure PA worst-case
+    /// (large image / slow disk pushes the oobeSystem chain past 10 minutes), while
+    /// still being short enough that a hung probe surfaces as a build failure within
+    /// the typical CI cycle.
     /// </summary>
-    public int ReadinessTimeoutMinutes { get; init; } = 5;
+    public int ReadinessTimeoutMinutes { get; init; } = 15;
 
     /// <summary>
     /// Minimum backoff (seconds) between consecutive <c>WaitForReady</c> probes of the

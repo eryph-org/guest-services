@@ -421,15 +421,21 @@ public class CloudConfigYamlSerializerTests
     }
 
     [Fact]
-    public void Deserialize_UnknownProperty_ThrowsInvalidConfigException()
+    public void Deserialize_UnknownProperty_does_not_throw_and_surfaces_via_callback()
     {
-        const string yaml = "unknown_key: value";
+        // Cloud-init's runtime behaviour for unknown cloud-config keys is
+        // "warn, don't fail" (cloudinit/config/schema.py validate_cloudconfig_schema).
+        // We mirror that: deserialization succeeds, and a caller-supplied
+        // callback receives every unknown top-level key so the wrapping
+        // service can log at Warning level. Strict-mode checking belongs
+        // in the `validate` subcommand, not the runtime parser.
+        const string yaml = "unknown_key: value\nhostname: still-parses";
+        var unknown = new List<string>();
 
-        var act = () => CloudConfigYamlSerializer.Deserialize(yaml);
+        var config = CloudConfigYamlSerializer.Deserialize(yaml, onUnknownKey: unknown.Add);
 
-        act.Should().Throw<InvalidConfigException>()
-            .WithMessage("*unknown_key*")
-            .WithInnerException<YamlException>();
+        config.Hostname.Should().Be("still-parses");
+        unknown.Should().BeEquivalentTo("unknown_key");
     }
 
     [Fact]
@@ -530,5 +536,258 @@ public class CloudConfigYamlSerializerTests
                 second.IsShellCommand.Should().BeFalse();
                 second.Argv.Should().Equal("echo", "bye");
             });
+    }
+
+    [Fact]
+    public void Deserialize_growpart_with_mode_and_devices_roundtrips()
+    {
+        // Real-world fixture shape — verbatim from the cloud-init docs for
+        // cc_growpart, transliterated to the Windows-friendly device list.
+        // Drive letters with a trailing colon MUST be quoted: in YAML 1.2,
+        // a bare `- D:` is parsed as a mapping with key "D" and null value,
+        // not as the scalar string "D:". This test pins the documented shape.
+        const string yaml = """
+                            growpart:
+                              mode: auto
+                              devices:
+                                - /
+                                - "D:"
+                                - all
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Growpart.Should().NotBeNull();
+        config.Growpart!.Mode.Should().Be("auto");
+        config.Growpart.Devices.Should().Equal("/", "D:", "all");
+    }
+
+    [Fact]
+    public void Deserialize_growpart_devices_accept_bare_drive_letter_without_colon()
+    {
+        // A no-colon shorthand is the friendliest form for cloud-config
+        // authors who didn't know to quote `D:` — the GrowpartModule accepts
+        // a bare letter as the same drive.
+        const string yaml = """
+                            growpart:
+                              devices:
+                                - C
+                                - D
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Growpart.Should().NotBeNull();
+        config.Growpart!.Devices.Should().Equal("C", "D");
+    }
+
+    [Fact]
+    public void Deserialize_growpart_off_disables_the_module()
+    {
+        const string yaml = """
+                            growpart:
+                              mode: off
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        // YAML 1.2 keeps `off` as a string; the GrowpartModule treats it
+        // (and the literal `"false"` string) as the disable signal.
+        config.Growpart.Should().NotBeNull();
+        config.Growpart!.Mode.Should().Be("off");
+        config.Growpart.Devices.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_growpart_mode_unquoted_boolean_false_disables_the_module()
+    {
+        // cloud-init documents `mode: false` (unquoted YAML boolean) as a
+        // valid way to disable growpart, alongside `mode: off` (string) and
+        // `mode: "false"` (quoted string). YamlDotNet's bool→string coercion
+        // for a string-typed field MUST land as "false" (or the module's
+        // case-insensitive "false"/"off" check would silently fall through
+        // to `mode: auto` — the opposite of the operator's intent).
+        const string yaml = """
+                            growpart:
+                              mode: false
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Growpart.Should().NotBeNull();
+        // Case-insensitive match — YamlDotNet may emit "False" or "false"
+        // depending on internal handling; either is fine for the module's
+        // ToLowerInvariant() comparison.
+        config.Growpart!.Mode.Should().BeOneOf("false", "False");
+    }
+
+    [Fact]
+    public void Deserialize_growpart_absent_yields_null()
+    {
+        const string yaml = "hostname: nogrow";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Growpart.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_ntp_with_servers_and_pools_roundtrips()
+    {
+        const string yaml = """
+                            ntp:
+                              enabled: true
+                              servers:
+                                - time.windows.com
+                                - time.nist.gov
+                              pools:
+                                - pool.ntp.org
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Ntp.Should().NotBeNull();
+        config.Ntp!.Enabled.Should().BeTrue();
+        config.Ntp.Servers.Should().Equal("time.windows.com", "time.nist.gov");
+        config.Ntp.Pools.Should().Equal("pool.ntp.org");
+    }
+
+    [Fact]
+    public void Deserialize_timezone_string_roundtrips()
+    {
+        const string yaml = "timezone: Europe/Berlin";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Timezone.Should().Be("Europe/Berlin");
+    }
+
+    [Fact]
+    public void Deserialize_locale_and_keyboard_roundtrip()
+    {
+        // Keyboard layouts that contain a colon must be quoted in YAML.
+        const string yaml = """
+                            locale: de-DE
+                            keyboard:
+                              layout: "0407:00000407"
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Locale.Should().Be("de-DE");
+        config.Keyboard.Should().NotBeNull();
+        config.Keyboard!.Layout.Should().Be("0407:00000407");
+    }
+
+    [Fact]
+    public void Deserialize_license_block_roundtrips()
+    {
+        const string yaml = """
+                            license:
+                              product_key: ABCDE-FGHIJ-KLMNO-PQRST-UVWXY
+                              kms_host: "kms.example.com:1688"
+                              activate: true
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.License.Should().NotBeNull();
+        config.License!.ProductKey.Should().Be("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY");
+        config.License.KmsHost.Should().Be("kms.example.com:1688");
+        config.License.Activate.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Deserialize_power_state_block_roundtrips()
+    {
+        const string yaml = """
+                            power_state:
+                              mode: reboot
+                              delay: '+5'
+                              message: 'Provisioning complete'
+                              timeout: 30
+                              condition: true
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.PowerState.Should().NotBeNull();
+        config.PowerState!.Mode.Should().Be("reboot");
+        config.PowerState.Delay.Should().Be("+5");
+        config.PowerState.Message.Should().Be("Provisioning complete");
+        config.PowerState.Timeout.Should().Be(30);
+        // Plain (unquoted) `true` → native bool. BoolOrStringYamlConverter
+        // restores the PyYAML / cloud-init behaviour that YamlDotNet's
+        // default object?-target deserialisation would otherwise lose.
+        config.PowerState.Condition.Should().Be(true);
+    }
+
+    [Fact]
+    public void Deserialize_power_state_quoted_true_stays_a_string()
+    {
+        // Cloud-init parity edge case: `condition: "true"` (quoted) is a
+        // shell command (`true` on Linux exits 0). It must land as string,
+        // not bool, so the module dispatches via RunShellCommandAsync.
+        const string yaml = """
+                            power_state:
+                              condition: "true"
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.PowerState!.Condition.Should().BeOfType<string>().And.Be("true");
+    }
+
+    [Fact]
+    public void Deserialize_power_state_plain_false_is_native_bool()
+    {
+        const string yaml = """
+                            power_state:
+                              condition: false
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.PowerState!.Condition.Should().Be(false);
+    }
+
+    [Fact]
+    public void Deserialize_power_state_condition_string_roundtrips()
+    {
+        // Cloud-init shape: condition may be a bool literal OR a shell
+        // command string. The POCO field is `object?`; we just need
+        // YamlDotNet to populate the right runtime type.
+        const string yaml = """
+                            power_state:
+                              mode: poweroff
+                              condition: 'exit 0'
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.PowerState.Should().NotBeNull();
+        config.PowerState!.Condition.Should().Be("exit 0");
+    }
+
+    [Fact]
+    public void Deserialize_license_extended_flags_roundtrip()
+    {
+        // Pin the new automation flags (set_avma / set_kms / rearm / force)
+        // so renames or YAML naming-convention drift surface immediately.
+        const string yaml = """
+                            license:
+                              set_avma: true
+                              set_kms: false
+                              rearm: true
+                              force: true
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.License.Should().NotBeNull();
+        config.License!.SetAvma.Should().BeTrue();
+        config.License.SetKms.Should().BeFalse();
+        config.License.Rearm.Should().BeTrue();
+        config.License.Force.Should().BeTrue();
     }
 }

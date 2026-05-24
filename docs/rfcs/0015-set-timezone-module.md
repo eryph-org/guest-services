@@ -1,90 +1,49 @@
-# RFC 0015 — `set_timezone` cloud-config module
+# RFC 0015 — `timezone` cloud-config module
 
-Status: Draft
+Status: Implemented
+Implemented in commit `<pending>`
 
 ## Problem
 
 eryph base catlets historically relied on cloudbase-init to honour the
-cloud-config `timezone:` key. Now that egs-service replaces cbi on Windows
-catlets, that key is silently dropped — there is no `SetTimezoneModule`,
-no `Timezone` field on the `CloudConfig` POCO, and no `IWindowsOs` method
-to switch the system time zone. We assume `set_timezone` works (see the
-team's "currently assume these to work" list); to make that true we need
-to ship the module.
+cloud-config `timezone:` key. With egs-service replacing cbi on Windows
+catlets, that key was silently dropped.
 
-## What cloud-init does
+## What ships
 
-A `cc_timezone` module that reads `timezone: "Europe/Berlin"` (an IANA tz
-database identifier) and writes the system's `/etc/timezone` (plus the
-`/etc/localtime` symlink) on Linux. Schema is a single string — no list,
-no enabled flag. Default frequency: per-instance. Fails the module if the
-zone name is not recognised by the local tzdata.
+- POCO: `string? Timezone` on `CloudConfig` (single IANA name, e.g.
+  `Europe/Berlin`). Quote the value in YAML when it could be parsed as a
+  YAML alias — IANA names rarely collide but `Z`, `UTC` etc. are safe.
+- Module: `Eryph.GuestServices.Provisioning.Modules.TimezoneModule`
+  (`Stage.Network`, `Order = 4`, `Frequency = PerInstance`).
+- Mechanism: IANA → Windows id via `TimeZoneInfo.TryConvertIanaIdToWindowsId`
+  (CLDR mapping shipped with the BCL since .NET 8). Applied via
+  `tzutil /s "<windows-id>"`. If the input is already a Windows id we
+  accept it verbatim (cbi-compat fallback).
+- OS seam: `IWindowsOs.SetTimezoneAsync(string windowsTimezoneId, ...)`.
+  `DryRunWindowsOs` intercepts; the unit tests substitute the interface.
+- Failure surface: unknown id (not IANA, not Windows) returns
+  `ModuleOutcome.Failed` before any system call. A `tzutil` non-zero
+  exit propagates as `Failed` with the raw exit info in the message.
 
-Cloud-init reference: <https://cloudinit.readthedocs.io/en/latest/reference/modules.html#timezone>
+## What changed from the original Draft — and why
 
-## What cloudbase-init does
-
-`SetTimezonePlugin` (`cloudbaseinit/plugins/common/setuserpassword.py`'s
-sibling) reads the same `timezone:` key, maps the IANA name to a Windows
-time zone via an internal CLDR-derived lookup, then calls
-`tzutil /s "<Windows tz name>"`. Falls back to the original string if the
-mapping already looks Windows-flavoured.
-
-## What Windows needs
-
-The Windows time zone API does NOT accept IANA names. The mapping is:
-
-- IANA: `Europe/Berlin` → Windows: `W. Europe Standard Time`
-- IANA: `America/New_York` → Windows: `Eastern Standard Time`
-- IANA: `Asia/Tokyo` → Windows: `Tokyo Standard Time`
-
-Microsoft publishes the canonical table at
-<https://github.com/unicode-org/cldr/blob/main/common/supplemental/windowsZones.xml>
-(or the C# equivalent `TimeZoneInfo.TryConvertIanaIdToWindowsId` available
-since .NET 6). We can rely on the BCL: it ships the mapping and
-auto-updates with the runtime.
-
-System change mechanism options:
-
-1. **`tzutil /s "<name>"`** — what cbi uses. Subprocess, no .NET dep beyond
-   the call. Persists across reboots. Effective immediately.
-2. **`Set-TimeZone -Id "<name>"`** — PowerShell. Adds a powershell-startup
-   tax we don't want from a service.
-3. **`SetDynamicTimeZoneInformation` Win32 API** via P/Invoke. Fastest, no
-   external process; bookkeeping marginal.
-
-## Tentative direction
-
-- Add `Timezone: string?` to `CloudConfig` POCO (single string, IANA name).
-- Add `Validator` rule: non-empty when present.
-- Add `Eryph.GuestServices.Provisioning.Modules.SetTimezoneModule`
-  (Stage = Config, Order picked after `RuncmdModule`, Frequency = PerInstance).
-- IANA → Windows mapping via `TimeZoneInfo.TryConvertIanaIdToWindowsId` (BCL).
-  If conversion fails, log Warning and treat the supplied string as a
-  Windows zone name (matches cbi's fallback). If that ALSO fails, module
-  returns Failed.
-- Apply via `tzutil /s "<windows-name>"` (cbi-compat — minimises behavioural
-  drift from the gene corpus that already runs cbi). Wrap behind a new
-  `IWindowsOs.SetTimezoneAsync(string windowsTimezoneName, …)` so the
-  decorator (`DryRunWindowsOs`) can intercept.
-- Validation in `egs-service validate`: ensure the IANA name resolves to a
-  known Windows zone at validate-time so bad config is caught before boot.
+- **Module renamed** `SetTimezoneModule` → `TimezoneModule`. Cosmetic;
+  cloud-init's module is `cc_timezone`, cbi's is `SetTimezonePlugin`.
+  Either is defensible. The shorter name matches the cloud-config key.
+- **Stage moved** `Stage.Config` (after RuncmdModule) → `Stage.Network`
+  Order 4. The Draft's "after RuncmdModule" placement was a planning
+  oversight: `RuncmdModule` lives at `Stage.Config / Order 4`, and
+  putting timezone *after* it means operator runcmd entries — which
+  routinely create scheduled tasks, write log lines, and start
+  background work — run with a still-wrong system timezone. Moving
+  timezone earlier (Network/4) makes runcmd execute under the
+  configured zone. Same rationale applies to NTP and SetLocale.
+- **Open question "accept Windows zone names verbatim"** → resolved YES.
+  Cbi-compat fallback preserved.
 
 ## Cross-references
 
 - [RFC 0007](0007-scripts-per-frequency-edge-cases.md) — per-instance
   frequency contract.
-- [RFC 0010](0010-semaphore-design.md) — re-run semantics.
-
-## Open questions
-
-- Should we also support the cbi-only convenience where `timezone:` is
-  ALREADY a Windows zone name (no conversion needed)? Cbi does this as a
-  fallback. We'd inherit the same forgiving behaviour with a Warning.
-- Linux genes targeting the same agent (if/when that exists) would want a
-  separate `LinuxOs.SetTimezoneAsync` implementation that writes
-  `/etc/timezone` + `/etc/localtime`. Out of scope for v1 — Linux catlets
-  still use cloud-init.
-- Should `set_timezone` be allowed in `per-boot` mode (operator-overridable
-  via [RFC 0009](0009-module-list-split.md) settings)? Default no — time
-  zone is a per-instance concept.
+- [RFC 0016](0016-ntp-module.md) — companion NTP module.

@@ -5,6 +5,14 @@ cpu:
 memory:
   startup: 2048
 
+# Force the OS disk to be larger than the parent gene's image so that the
+# fresh catlet boots with a chunk of unallocated space at the end of the
+# disk. The GrowpartModule should grow C: into it on first boot — that
+# is what the "growpart" Context in Provisioning.E2E.Tests.ps1 asserts.
+drives:
+  - name: sda
+    size: 64
+
 # The cloud-config below IS the test input. eryph-zero compiles fodder into
 # a ConfigDrive ISO attached to the catlet; our embedded provisioning agent
 # (baked into the VHD by the test harness before first start) discovers

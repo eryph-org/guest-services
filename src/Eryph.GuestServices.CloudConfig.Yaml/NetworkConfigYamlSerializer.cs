@@ -182,7 +182,7 @@ public static class NetworkConfigYamlSerializer
             Gateway6 = raw.Gateway6,
             Nameservers = ConvertNameservers(raw.Nameservers),
             Mtu = raw.Mtu,
-            MacAddress = raw.Macaddress,
+            MacAddress = raw.MacAddress,
             Routes = raw.Routes?.Select(ConvertRoute).ToList(),
         };
     }
@@ -307,8 +307,12 @@ public static class NetworkConfigYamlSerializer
         public string? Gateway6 { get; set; }
         public RawNameservers? Nameservers { get; set; }
         public int? Mtu { get; set; }
-        // cloud-init v2 spells this 'macaddress' (no underscore).
-        public string? Macaddress { get; set; }
+        // cloud-init v2 spells this 'macaddress' (no underscore). The
+        // explicit alias makes the intent locatable so a future C# rename
+        // can't silently break v2 parsing — relying on the field name
+        // misspelling to defeat UnderscoredNamingConvention was fragile.
+        [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
+        public string? MacAddress { get; set; }
         public List<RawRoute>? Routes { get; set; }
     }
 

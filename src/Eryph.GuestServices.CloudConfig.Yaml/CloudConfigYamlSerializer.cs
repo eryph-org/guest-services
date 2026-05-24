@@ -1,6 +1,7 @@
 using Eryph.ConfigModel.Yaml;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.CloudConfig.Yaml.Converters;
+using YamlDotNet.RepresentationModel;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 using YamlDotNet.Serialization.NodeDeserializers;
@@ -13,6 +14,16 @@ public static class CloudConfigYamlSerializer
     {
         var builder = new DeserializerBuilder()
             .WithCaseInsensitivePropertyMatching()
+            // Cloud-init's runtime behaviour for unknown cloud-config keys
+            // (see cloudinit/config/schema.py `validate_cloudconfig_schema`)
+            // is "warn and continue", NOT "fail" and NOT "silent". We mirror
+            // that: deserialization is tolerant (this flag), and a separate
+            // top-level walker calls the caller-supplied `onUnknownKey`
+            // callback so the DI'd `CloudConfigSerializer` can log at
+            // Warning. Cross-cloud cloud-config with Linux-only keys
+            // (apt, snap, ntp_client, …) parses cleanly; typos like
+            // `hsotname:` surface visibly in the cloud-init.log analogue.
+            .IgnoreUnmatchedProperties()
             .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .WithAttributeOverride<CloudConfig>(
@@ -38,13 +49,32 @@ public static class CloudConfigYamlSerializer
             .WithTypeConverter(new StringListYamlConverter())
             .WithTypeConverter(new RuncmdListYamlConverter())
             .WithTypeConverter(new WriteFilePermissionsYamlConverter())
+            // PyYAML-equivalent YAML 1.2 schema resolution for object?
+            // targets. Cloud-init relies on it for every bool-or-string
+            // union (power_state.condition is the canonical example);
+            // installing this at the parser layer means we get the same
+            // semantics for every present and future object? field
+            // without per-property attribute overrides.
+            .WithNodeDeserializer(
+                new YamlSchemaTypeResolver(),
+                s => s.Before<ScalarNodeDeserializer>())
             .WithNodeDeserializer(
                 new ReadOnlyListNodeDeserializer(),
                 s => s.Before<CollectionNodeDeserializer>())
             .Build();
     });
 
-    public static CloudConfig Deserialize(string yaml)
+    public static CloudConfig Deserialize(string yaml) => Deserialize(yaml, onUnknownKey: null);
+
+    /// <summary>
+    /// Deserialize cloud-config YAML. <paramref name="onUnknownKey"/> — when
+    /// supplied — is invoked once per top-level key that is not present on
+    /// <see cref="CloudConfig"/>. Mirrors cloud-init's runtime validation:
+    /// warn-but-continue. The static parser stays logger-free so callers in
+    /// any layer (provisioning service, validate CLI, tests) can decide
+    /// what to do with the warnings.
+    /// </summary>
+    public static CloudConfig Deserialize(string yaml, Action<string>? onUnknownKey)
     {
         var stripped = StripCloudConfigHeader(yaml);
         // An empty document (e.g. just the "#cloud-config" header or fully blank input)
@@ -53,6 +83,9 @@ public static class CloudConfigYamlSerializer
         if (string.IsNullOrWhiteSpace(stripped))
             return new CloudConfig();
 
+        if (onUnknownKey is not null)
+            WalkForUnknownTopLevelKeys(stripped, onUnknownKey);
+
         try
         {
             return Deserializer.Value.Deserialize<CloudConfig>(new StringParser(stripped));
@@ -60,6 +93,47 @@ public static class CloudConfigYamlSerializer
         catch (Exception ex)
         {
             throw InvalidConfigExceptionFactory.Create(ex);
+        }
+    }
+
+    // Snake-cased property names of CloudConfig — what the YAML keys should
+    // look like. Built once and cached. The `Type` property metadata is
+    // root-only because nested objects have wildly varying shapes (some
+    // wrapped in custom converters) and cloud-init's own validation surfaces
+    // unknown keys most usefully at the top level.
+    private static readonly Lazy<HashSet<string>> KnownTopLevelKeys = new(() =>
+        typeof(CloudConfig)
+            .GetProperties()
+            .Select(p => UnderscoredNamingConvention.Instance.Apply(p.Name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    private static void WalkForUnknownTopLevelKeys(string yaml, Action<string> onUnknownKey)
+    {
+        // Parse to YamlDocument so we can inspect the keys without going
+        // through the strongly-typed deserializer. A malformed document
+        // here is fine to swallow — the real Deserialize call below will
+        // produce the canonical error.
+        YamlStream stream;
+        try
+        {
+            stream = new YamlStream();
+            stream.Load(new StringReader(yaml));
+        }
+        catch
+        {
+            return;
+        }
+        if (stream.Documents.Count == 0) return;
+        if (stream.Documents[0].RootNode is not YamlMappingNode root) return;
+
+        var known = KnownTopLevelKeys.Value;
+        foreach (var entry in root.Children)
+        {
+            if (entry.Key is not YamlScalarNode keyNode) continue;
+            var keyName = keyNode.Value;
+            if (string.IsNullOrEmpty(keyName)) continue;
+            if (!known.Contains(keyName))
+                onUnknownKey(keyName);
         }
     }
 

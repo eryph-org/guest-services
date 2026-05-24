@@ -78,16 +78,41 @@ BeforeAll {
   Write-Host "Replacing egs-service binaries offline (publish=$resolvedPublishPath) ..."
   Update-EgsServiceBinariesOffline -VmId $catlet.VmId -PublishPath $resolvedPublishPath
 
+  # Record the OS partition size while the catlet is still offline. The
+  # growpart Context compares this against the in-guest partition size
+  # after first boot to prove the GrowpartModule actually grew it (and not
+  # that the parent gene happens to ship a large partition).
+  Write-Host "Recording offline OS partition size ..."
+  $script:offlineOsPartitionSize = Get-CatletOsPartitionSize -VmId $catlet.VmId
+  Write-Host "Offline OS partition size: $([math]::Round($offlineOsPartitionSize / 1GB, 2)) GB"
+
   Write-Host "Starting catlet $($catlet.Name) ..."
   Start-Catlet -Id $catlet.Id -Force
-
-  egs-tool update-ssh-config
-  egs-tool add-ssh-config $catlet.VmId
 
   Write-Host "Waiting for provisioning to complete (KVP eryph.provisioning.state) ..."
   $finalState = Wait-ForProvisioningComplete -VmId $catlet.VmId `
     -Timeout (New-TimeSpan -Minutes 10)
   Write-Host "Provisioning state: $finalState"
+
+  # Set up the SSH alias AFTER provisioning is done — egs-tool needs the
+  # post-reboot egs-service to be listening so it can resolve the catlet's
+  # Hyper-V socket. Calling earlier (or only once) produces stale aliases
+  # whose HostName never resolves.
+  Write-Host "Waiting for egs-service SSH listener (get-status=available) ..."
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Wait-Assert -Timeout (New-TimeSpan -Minutes 5) -Interval (New-TimeSpan -Seconds 3) {
+      $status = egs-tool get-status $catlet.VmId
+      if ($status -ne 'available') { throw "guest services not available: $status" }
+    }
+    Write-Host "egs-service is available — refreshing SSH config aliases ..."
+    egs-tool update-ssh-config | Out-Null
+    egs-tool add-ssh-config $catlet.VmId | Out-Null
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
 
   # Pester 5 isolates each Describe block — top-level functions are not in
   # scope unless defined inside a BeforeAll. Declare helpers here so every
@@ -103,11 +128,24 @@ BeforeAll {
 
   # Give SSH a moment to settle after the final boot — egs-service comes up
   # and registers Hyper-V sockets, but the Pester test process can race ahead.
-  for ($i = 0; $i -lt 20; $i++) {
-    $probe = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 `
-      "$($catlet.Id).eryph.alt" 'hostname' 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "SSH ready after $i probe(s) — hostname=$probe"; break }
-    Start-Sleep -Seconds 3
+  # The probe NEEDS to tolerate the early "connection refused" — keep the
+  # preference flag off while it polls or a single failed ssh.exe call would
+  # immediately throw.
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    for ($i = 0; $i -lt 40; $i++) {
+      $probe = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 `
+        "$($catlet.Id).eryph.alt" 'hostname' 2>$null
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "SSH ready after $i probe(s) — hostname=$probe"
+        break
+      }
+      Start-Sleep -Seconds 3
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
   }
 }
 
@@ -213,6 +251,49 @@ Describe 'Embedded provisioning at first boot' {
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph-e2e\runcmd-marker.txt'
       $r.ExitCode | Should -Be 0
       $r.Output.Trim() | Should -Be 'runcmd-ran'
+    }
+  }
+
+  Context 'growpart extended the OS partition' {
+    # The catlet config requests a 64 GB sda — larger than the parent gene's
+    # OS image — so the freshly-booted VM has unallocated space at the end
+    # of disk 0. GrowpartModule (Stage.Network, PerBoot) must extend the
+    # OS partition into that space on first boot.
+
+    It 'extended the OS partition by at least 2 GiB versus its offline size' {
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-Partition -DriveLetter C).Size'
+      $r.ExitCode | Should -Be 0
+      $live = [uint64] $r.Output.Trim()
+      $delta = $live - $script:offlineOsPartitionSize
+      Write-Host ("offline=$([math]::Round($script:offlineOsPartitionSize / 1GB, 2)) GB " +
+                  "live=$([math]::Round($live / 1GB, 2)) GB " +
+                  "delta=$([math]::Round($delta / 1GB, 2)) GB")
+      $delta | Should -BeGreaterThan ([uint64](2GB))
+    }
+
+    It 'has the OS partition close to the requested 64 GB disk size' {
+      # 64 GB request minus a few hundred MB for reserved / recovery /
+      # MSR partitions. 60 GB is a safe floor that catches "growpart no-op".
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-Partition -DriveLetter C).Size'
+      $r.ExitCode | Should -Be 0
+      $live = [uint64] $r.Output.Trim()
+      $live | Should -BeGreaterThan ([uint64](60GB))
+    }
+
+    It 'wrote a per-boot growpart semaphore with outcome=completed' {
+      # Module key matches the FullName of GrowpartModule. The semaphore
+      # is per-boot so it lives under the global sem/ dir, not the
+      # per-instance one — a regression that wires the module as
+      # per-instance would land it in the wrong path.
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "Get-Content -Raw -LiteralPath 'C:\ProgramData\eryph\provisioning\sem\Eryph.GuestServices.Provisioning.Modules.GrowpartModule.per-boot'"
+      $r.ExitCode | Should -Be 0
+      $r.Output | Should -Match '"outcome":\s*"completed"'
     }
   }
 

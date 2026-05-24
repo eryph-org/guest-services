@@ -7,16 +7,74 @@ This page lists every module that ships in v1, in the order they run.
 
 | Module | Stage / Order | Frequency | Cloud-config keys |
 | --- | --- | --- | --- |
+| `Growpart` | Network / 0 | per-boot | `growpart` |
 | `SetHostname` | Network / 1 | per-instance | `hostname`, `fqdn`, `preserve_hostname` |
 | `ApplyNetworkConfig` | Network / 2 | per-instance | (network-config document, not cloud-config) |
+| `NtpClient` | Network / 3 | per-instance | `ntp` |
+| `Timezone` | Network / 4 | per-instance | `timezone` |
+| `SetLocale` | Network / 5 | per-instance | `locale`, `keyboard` |
 | `UsersGroups` | Config / 0 | per-instance | `users`, `groups` |
 | `SetPasswords` | Config / 1 | per-instance | `chpasswd`, `password` |
 | `SshAuthorizedKeys` | Config / 2 | per-instance | `ssh_authorized_keys`, `users[].ssh_authorized_keys` |
 | `WriteFiles` | Config / 3 | per-instance | `write_files` |
 | `Runcmd` | Config / 4 | per-instance | `runcmd` |
+| `Licensing` | Config / 5 | per-instance | `license` |
 | `ScriptsUser` | Final / 0 | per-instance | (script payloads from MIME / shebang) |
+| `PowerState` | Final / last | per-instance | `power_state` |
 
 There are no Local-stage modules in v1; the slot exists for future use.
+
+## Acknowledged-but-no-op keys
+
+Not a module — handled inside `CloudConfigSerializer` at deserialize
+time. Logs (at Info) every cloud-init top-level key that the agent
+accepts but does not act on. Mirrors cloud-init's "log-and-continue"
+approach for cross-cloud cloud-config YAML: an operator who pastes
+their Linux cloud-config with `apt: { sources: ... }` and
+`packages: [git, vim]` gets a clear "we saw this, it's a Linux concept,
+safely ignored" line instead of a Warning per key.
+
+The keys handled here are **schema fields** on the parsed CloudConfig
+(stored as `object?` for the polymorphic shapes) — the deserializer
+accepts them without complaint. Truly unknown top-level keys (typos,
+unrecognised extensions) still hit the same `CloudConfigSerializer`
+on the Warning channel.
+
+Acknowledged keys:
+
+- Linux package management: `apt`, `apt_pipelining`, `packages`,
+  `package_update`, `package_upgrade`, `package_reboot_if_required`,
+  `snap`, `yum_repos`, `yum_repo_dir`
+- Linux disk / filesystem / mount: `disk_setup`, `fs_setup`, `mounts`
+- Linux network / hosts: `manage_etc_hosts`, `manage_resolv_conf`, `resolv_conf`
+- Deferred cloud-init modules: `bootcmd`, `phone_home`,
+  `final_message`, `ca_certs`, `disable_root`, `disable_root_opts`
+- Configuration-management bootstraps (future): `chef`, `ansible`,
+  `puppet`, `salt_minion`
+
+---
+
+## `Growpart`
+
+**Stage:** Network, Order 0. **Frequency:** per-boot.
+
+Extends the OS partition into any unallocated space at the end of the
+disk. Per-boot (not per-instance) because the host can enlarge the
+underlying VHD between reboots, and the operator expects the next boot
+to consume the new capacity.
+
+```yaml
+growpart:
+  mode: auto            # auto | off (also accepts YAML boolean `false`)
+  devices: ['/']        # default; '/' resolves to the Windows system drive
+```
+
+`devices` accepts `/` (the system drive — `%SystemDrive%`), a drive
+letter (`C`, `"C:"`, `"D:\"`), or `all` (every growable volume; never
+extends system / reserved / recovery partitions). Drive letters with a
+colon **must be quoted** — `- C:` parses as a YAML mapping.
+
+Design: [RFC 0023](../../rfcs/0023-extend-volumes-module.md).
 
 ---
 
@@ -55,6 +113,77 @@ Skipped silently when no network-config is present. Skipped per-entry
 (with a warning) when MAC is missing or doesn't match any adapter.
 
 Design: [RFC 0002](../../rfcs/0002-network-config-v1-v2-application.md).
+
+---
+
+## `NtpClient`
+
+**Stage:** Network, Order 3. **Frequency:** per-instance.
+
+Configures the Windows Time service (`w32time`) — start mode, SCM
+triggers, manual peer list — and optionally the
+`RealTimeIsUniversal` registry value (for guests where the host RTC is
+UTC).
+
+```yaml
+ntp:
+  enabled: true                  # default true
+  servers: [time.windows.com]
+  pools:   [pool.ntp.org]
+  real_time_clock_utc: true      # optional; opt-in only
+```
+
+`servers` and `pools` are concatenated into a single `w32tm` manual
+peer list (Windows doesn't distinguish). `enabled: false` stops
+w32time and sets its start mode to `Disabled`. Triggers are reset so
+the service follows network availability (cbi parity).
+
+Design: [RFC 0016](../../rfcs/0016-ntp-module.md).
+
+---
+
+## `Timezone`
+
+**Stage:** Network, Order 4. **Frequency:** per-instance.
+
+Sets the system timezone. Accepts either an IANA identifier
+(`Europe/Berlin`) or a Windows timezone key name
+(`W. Europe Standard Time`). IANA → Windows translation uses the CLDR
+mapping shipped with .NET.
+
+```yaml
+timezone: Europe/Berlin
+```
+
+Unknown identifiers (neither IANA nor Windows) return a clear failure
+instead of silently no-op'ing.
+
+Design: [RFC 0015](../../rfcs/0015-set-timezone-module.md).
+
+---
+
+## `SetLocale`
+
+**Stage:** Network, Order 5. **Frequency:** per-instance.
+
+Sets the display language / culture / keyboard layout. The
+`locale` and `keyboard` cloud-init keys are handled by one module
+because on Windows the language list and input method are tightly
+coupled.
+
+```yaml
+locale: de-DE                    # BCP-47 culture name
+keyboard:
+  layout: en-US                  # BCP-47 or "lang:KLID" form
+```
+
+Both fields are independent: keyboard-only (operator wants QWERTZ but
+leaves the UI in English) is fine. Changing the system locale
+(`Set-WinSystemLocale` — the non-Unicode ANSI codepage) requires reboot;
+the module returns `RebootRequested` only when that specific value
+changed.
+
+Design: [RFC 0027](../../rfcs/0027-set-locale-module.md).
 
 ---
 
@@ -197,6 +326,51 @@ error and continues with the next entry.
 
 ---
 
+## `Licensing`
+
+**Stage:** Config, Order 5. **Frequency:** per-instance.
+
+Activates Windows. Module is **always-on** with safe-by-default
+behaviour:
+
+- `set_avma` defaults to **true** — installs the AVMA key for the
+  guest's edition (silent no-op on non-Server SKUs or editions not in
+  our table).
+- `rearm` defaults to **true** — fires `slmgr /rearm` only when the
+  active product is an evaluation (`SoftwareLicensingProduct.IsEvaluation`).
+  Returns `RebootRequested` on success — rearm needs reboot to apply.
+- On Azure (active datasource = `Azure`), the activation path skips
+  itself: Windows on Azure activates against the Azure internal KMS
+  automatically. The rearm path still runs because Azure does NOT
+  manage evaluation grace periods.
+
+Operators can override any default:
+
+```yaml
+license:
+  # Explicit overrides (highest priority — auto-detect is bypassed):
+  product_key: AAAAA-BBBBB-CCCCC-DDDDD-EEEEE
+  kms_host:    "kms.example.com:1688"
+
+  # Auto-detect against the guest edition:
+  set_avma: true            # default true
+  set_kms:  false           # default false; when true, clears KMS host so DNS SRV takes over
+
+  # Extras:
+  activate: false           # default false — KMS clients self-activate
+  rearm:    true            # default true — only fires on evaluation editions
+  force:    false           # default false — apply activation path even on Azure
+```
+
+Resolution priority: `product_key` > AVMA > KMS auto. AVMA / KMS key
+tables are verified against the Microsoft Learn AVMA and KMS reference
+pages — covers Server 2012 R2 through 2025 (Datacenter / Standard /
+Solution / Datacenter:Azure Edition where applicable).
+
+Design: [RFC 0017](../../rfcs/0017-licensing-module.md).
+
+---
+
 ## `ScriptsUser`
 
 **Stage:** Final, Order 0. **Frequency:** per-instance.
@@ -212,3 +386,46 @@ and stderr are captured to per-script log files and emitted as a
 `ReportingEvent.Progress` per script.
 
 Exit code 1003 → reboot-and-continue, same as `Runcmd`.
+
+---
+
+## `PowerState`
+
+**Stage:** Final, Order `int.MaxValue - 1` (runs LAST). **Frequency:** per-instance.
+
+Optional controlled reboot / poweroff / hibernate at the END of
+provisioning. Distinct from exit-1003 reboot-and-continue, which is
+mid-stage. Use this when the operator wants "finish everything, then
+reboot on my schedule."
+
+```yaml
+power_state:
+  mode: reboot                 # reboot | poweroff | halt (default: reboot)
+  delay: now                   # now | +N (minutes) | HH:MM | integer (seconds)
+  message: 'Provisioning complete'
+  timeout: 30                  # accepted for cloud-init parity; no Windows mapping
+  condition: true              # bool or shell command (exit 0 = proceed)
+```
+
+`mode` notes:
+
+- `poweroff` accepts `shutdown` as a cbi-style alias.
+- `halt` has no clean Windows analogue; falls back to hibernate
+  (`shutdown.exe /h`) with a Warning logged.
+
+`delay` always honours a 5-second minimum so the StageRunner cleanup
+(per-instance semaphore + KVP "completed" event + datasource cleanup
+hook) has time to flush before Windows starts tearing the agent down.
+
+`condition`:
+
+- `null` / omitted → proceed.
+- `true` / `false` → literal proceed / skip.
+- string → run as a shell command (`cmd.exe /c <…>`); exit 0 proceeds,
+  anything else skips.
+
+The module returns `Completed`, not `RebootRequested` — per-instance
+semaphore stops the post-reboot run from re-entering and scheduling
+another shutdown (otherwise: infinite reboot loop).
+
+Design: [RFC 0024](../../rfcs/0024-power-state-module.md).

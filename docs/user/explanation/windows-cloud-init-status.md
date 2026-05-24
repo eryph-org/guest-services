@@ -28,9 +28,10 @@ User-data formats: `#cloud-config`, `#include` / `#include-once`,
 multipart MIME, `#ps1` / `#ps1_sysnative` / `#!`, `text/x-shellscript`
 parts, gzip-wrapped any-of-the-above.
 
-Modules: `SetHostname`, `ApplyNetworkConfig`, `UsersGroups`,
-`SetPasswords`, `SshAuthorizedKeys`, `WriteFiles`, `Runcmd`,
-`ScriptsUser`.
+Modules: `LinuxKeys`, `Growpart`, `SetHostname`, `ApplyNetworkConfig`,
+`NtpClient`, `Timezone`, `SetLocale`, `UsersGroups`, `SetPasswords`,
+`SshAuthorizedKeys`, `WriteFiles`, `Runcmd`, `Licensing`, `ScriptsUser`,
+`PowerState`.
 
 ## What's missing
 
@@ -47,8 +48,8 @@ warning or fall through to NoDataSource.
 | Part-handler (`#part-handler`) | Ignored with a warning. | [0012](../../rfcs/0012-part-handler.md) |
 | Boothook execution | Captured but not executed. | [0013](../../rfcs/0013-boothook-execution.md) |
 | Vendor-data merge | Parsed and discarded with an Info log. | [0001](../../rfcs/0001-vendor-data-merge-policy.md) |
-| `power_state_change` module | Not shipped. Use exit-1003 instead. | [0009](../../rfcs/0009-module-list-split.md) |
-| `disk_setup`, `growpart`, `apt`, `yum`, `phone_home`, `ntp`, `timezone`, etc. | Not shipped. | [0009](../../rfcs/0009-module-list-split.md) |
+| `disk_setup`, `apt`, `yum_repos`, `phone_home`, `bootcmd`, etc. | **Accepted in the schema** — logged at Info by `LinuxKeys`, not acted on. Cross-cloud YAML containing these blocks round-trips cleanly. | [0009](../../rfcs/0009-module-list-split.md) |
+| `growpart`, `ntp`, `timezone`, `locale` / `keyboard`, `license` | **Shipped** — see the modules list above. | — |
 | Configurable per-stage module lists | Not exposed; module set is fixed by `[Stage]` attributes. | [0009](../../rfcs/0009-module-list-split.md) |
 | Webhook reporting backend | Not shipped. | [0006](../../rfcs/0006-multi-handler-reporting-cloud-backends.md) |
 | OAuth / cloud-native reporting backends | Not shipped. | [0006](../../rfcs/0006-multi-handler-reporting-cloud-backends.md) |

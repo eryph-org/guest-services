@@ -1,6 +1,7 @@
-# RFC 0023 — Windows `extend_volumes` cloud-config module
+# RFC 0023 — `growpart` cloud-config module
 
-Status: Draft
+Status: Implemented
+Implemented in commit `<pending>`
 
 ## Problem
 
@@ -8,126 +9,114 @@ A catlet whose OS disk was sized larger than the source image's
 partition boots with the extra capacity sitting as unallocated space at
 the end of the disk — Windows does not auto-extend partitions to fill
 the disk. Operators hit this constantly: "I asked for a 64 GB disk and
-`C:` is still 20 GB." Today the workaround is a `runcmd` line invoking
-`Resize-Partition` or a diskpart script, both of which are fragile
-(partition number guesses, recovery-partition collisions, missing the
-fact that the volume might already be at max size).
+`C:` is still 20 GB."
 
-cloudbase-init has shipped a dedicated `extend_volumes` plugin for
-exactly this; eryph base catlets currently lean on fodder `runcmd`. We
-should ship a real module so the cloud-config key `extend_volumes:`
-works as it did under cbi.
+## What ships
 
-## What cloud-init does
+### Schema
 
-`cc_growpart` resizes a partition with `growpart`/`gdisk`, and the
-companion `cc_resizefs` then grows the filesystem to fill the new
-partition. Both are Linux-only — they rely on ext4 / xfs / btrfs
-online-resize support. Schema:
+Mirrors cloud-init's `cc_growpart` schema rather than cbi's
+config-file-only `volumes_to_extend = []`:
 
 ```yaml
 growpart:
-  mode: auto                # auto | growpart | gpart | off
-  devices: ['/']
-  ignore_growroot_disabled: false
-resize_rootfs: true
+  mode: auto         # auto | off (also accepts the YAML boolean `false`)
+  devices: ['/']     # default; '/' resolves to the Windows system drive
 ```
 
-Cloud-init reference:
-<https://cloudinit.readthedocs.io/en/latest/reference/modules.html#growpart>
+`devices` accepts:
 
-## What cloudbase-init does
+- `/` — the system drive (`%SystemDrive%`, normally `C:`).
+- A drive letter — `C`, `"C:"`, `"D:\"` (quote when the value contains
+  a colon — `- C:` is parsed as a YAML mapping with key `C`).
+- `all` — every growable volume (with safety: never extends system /
+  reserved / recovery partitions in this case).
 
-`cloudbaseinit/plugins/windows/extendvolumes.py` — iterates the
-configured volume labels (drive letters by default), reads
-`Win32_DiskPartition` for each, and calls `diskpart` with a
-`extend filesystem` script to consume any unallocated space adjacent to
-the partition. Default: extend `C:` only; recovery / system partitions
-are skipped.
-
-Source:
-<https://github.com/cloudbase/cloudbase-init/blob/master/cloudbaseinit/plugins/windows/extendvolumes.py>
-
-## What Windows needs
-
-Modern PowerShell on supported Server/Client SKUs exposes a cleaner
-path than `diskpart`:
-
-1. `Get-Partition -DriveLetter <L>` — find the partition.
-2. `Get-PartitionSupportedSize -DriveLetter <L>` — returns
-   `(SizeMin, SizeMax)`; `SizeMax` already accounts for unallocated
-   space adjacent to the partition. No `SizeMax > CurrentSize` → no-op.
-3. `Resize-Partition -DriveLetter <L> -Size <SizeMax>` — grows the
-   partition AND the NTFS filesystem in one call.
-4. Skip when `Get-Partition.Type` is `Recovery` or `System`, or when
-   the disk is offline/read-only.
-
-`diskpart` remains a fallback for older builds, but the genes we ship
-target Server 2019+ / Win10+, where `Resize-Partition` is universal.
-
-## Schema
-
-Smaller than the cloud-init schema because Windows doesn't expose the
-same knobs:
-
-```yaml
-extend_volumes:
-  drive_letters: [C]            # explicit list; omit/[]= "all OS fixed volumes"
-  skip_recovery: true           # default; never resize recovery / system
-```
-
-`drive_letters` is the only knob we expect operators to set. When
-absent or empty the module enumerates all fixed-disk OS volumes
-(`Get-Volume -DriveType Fixed`) and grows each one whose
-`SizeMax > CurrentSize`.
-
-## Tentative direction
-
-### POCO sketch
-
-```csharp
-public sealed record ExtendVolumesConfig
-{
-    public IReadOnlyList<string>? DriveLetters { get; init; }
-    public bool? SkipRecovery { get; init; }     // default true
-}
-```
+POCO `GrowpartConfig` on `CloudConfig.Growpart`.
 
 ### Module
 
-- `Eryph.GuestServices.Provisioning.Modules.ExtendVolumesModule`
-  (`[Stage(Stage.Local, Order = ..., Frequency = ModuleFrequency.PerInstance)]`).
-- Local stage on purpose — must run BEFORE `WriteFilesModule` and
-  anything else that might fill `C:` near its old limit.
-- New `IWindowsOs.ExtendVolumeAsync(char driveLetter, bool skipRecovery, …)`
-  returning a small result record `(WasExtended, OldSize, NewSize)`
-  so the module can log a clear summary.
-- Each drive letter is processed independently: a single bad letter
-  logs Warning and the module moves on. Module never returns Failed
-  for "nothing to do".
+- `Eryph.GuestServices.Provisioning.Modules.GrowpartModule`
+  (`Stage.Network`, `Order = 0`, `Frequency = PerBoot`).
+- **Per-boot** (not per-instance): host can resize the underlying VHD
+  between reboots — per-instance would miss the most common operator
+  workflow. Cloud-init's `cc_growpart` is also `per-always`.
+- Implementation: WSM via `MSFT_Partition.GetSupportedSize` +
+  `MSFT_Partition.Resize` against the storage WMI namespace
+  (`root\Microsoft\Windows\Storage`).
+- Two Windows-specific safety steps:
+  1. `MSFT_Disk.Update()` before partition enumeration — refreshes the
+     GPT secondary header that's still sitting at the old end-of-disk
+     when the host enlarged the VHD between boots. Cbi does NOT do this;
+     without it, `GetSupportedSize` returns the pre-resize value.
+  2. WSM (`Root\Microsoft\Windows\Storage`) instead of VDS — sidesteps
+     the documented cbi `VDS_E_EXTENT_SIZE_LESS_THAN_MIN` rounding bug
+     that cbi swallows in its VDS path.
 
-### Validation
+### OS seam
 
-`egs-service validate` rejects:
-- `drive_letters` entries that aren't `A`-`Z` (single ASCII letter).
-- Duplicates within the list (Warning, not Error).
+```csharp
+Task<IReadOnlyList<VolumeExtendResult>> ExtendVolumesAsync(
+    IReadOnlySet<char>? driveLetterFilter,
+    CancellationToken ct);
+```
 
-## Open questions
+`null` filter ≡ extend every growable volume; a non-null set restricts
+to those drive letters.
 
-- Should the module attempt to bring offline disks online first? cbi
-  does not; an offline disk is usually an operator signal. Tentative:
-  skip with Info log, document the workaround (a `runcmd` line that
-  sets the disk online before the module runs).
-- Per-boot vs per-instance: someone hot-resizing the VHDX while the
-  guest is up and expecting the next boot to pick it up. Per-instance
-  is wrong for that. Tentative: keep per-instance for v1 (matches cbi),
-  add a per-boot opt-in later if a real consumer surfaces.
-- Storage Spaces / dynamic volumes: out of scope. Document explicitly.
+### End-to-end test
+
+The provisioning e2e suite (`test/e2e/Provisioning.E2E.Tests.ps1`)
+provisions a catlet with `drives: - name: sda, size: 64` against a
+~40 GB starter image, then asserts the live C: partition is ≥ 60 GB and
+grew by ≥ 2 GB versus its pre-boot offline size. The per-boot semaphore
+is also checked. See `Context 'growpart extended the OS partition'`.
+
+## What changed from the original Draft — and why
+
+- **Top-level YAML key `extend_volumes:` → `growpart:`.** The Draft
+  proposed cbi-style naming (cbi's plugin is `ExtendVolumesPlugin`),
+  but cbi has no cloud-config binding for this — its config lives in
+  cloudbase-init.conf as `volumes_to_extend`. There is no operator
+  precedent for `extend_volumes:` to preserve. Meanwhile cloud-init
+  has had `cc_growpart` for years and the project's standing rule —
+  [Cloud-init fidelity](../../) — explicitly says "mirror cloud-init's
+  structure; question every simplification." This delta represents the
+  Draft predating the cloud-init-fidelity decision.
+- **POCO** `ExtendVolumesConfig { DriveLetters, SkipRecovery }` →
+  `GrowpartConfig { Mode, Devices }`. Same root cause — cloud-init
+  shape. The Draft's `SkipRecovery` is folded into module logic: when
+  `devices: all` the module refuses to extend protected partition
+  types unconditionally (no operator should ever opt INTO eating the
+  recovery partition by accident).
+- **Stage `Stage.Local` → `Stage.Network / Order 0`.** Two reasons:
+  1. Local-stage modules don't yet see user-data in our pipeline —
+     `ResolvedUserData` is resolved at the start of the first
+     non-Local stage. A Local-stage growpart could not read its own
+     `growpart:` cloud-config. The Draft missed this.
+  2. The Draft's stated goal — "must run BEFORE WriteFilesModule and
+     anything else that might fill C: near its old limit" — is
+     satisfied by Network/0 (Network runs before Config where
+     WriteFiles lives). Same outcome, different stage.
+- **Frequency `PerInstance` → `PerBoot`.** This was an explicit open
+  question in the Draft: "someone hot-resizing the VHDX while the
+  guest is up and expecting the next boot to pick it up — per-instance
+  is wrong for that." Resolved YES per-boot. Cloud-init's `cc_growpart`
+  is also `per-always`; cbi's plugin returns `EXECUTE_ON_NEXT_BOOT`.
+- **Mechanism** PowerShell `Get-Partition` / `Resize-Partition` →
+  direct WMI via `MSFT_Partition.GetSupportedSize` + `.Resize()`. Same
+  effect, no `powershell.exe` startup tax (a measurable second per
+  invocation), one fewer process layer in the failure path.
+- **Workaround beyond cbi**: we call `MSFT_Disk.Update()` before
+  enumerating partitions. Without it a guest that booted after the
+  host enlarged the VHD between reboots still has its GPT secondary
+  header at the old end-of-disk and `GetSupportedSize` returns the
+  pre-resize value. Cbi does NOT do this — flagged by sonnet-driven
+  review.
 
 ## Cross-references
 
 - [RFC 0007](0007-scripts-per-frequency-edge-cases.md) — operators who
-  need anything fancier than "grow to max" still drop a `runcmd`.
-- [RFC 0009](0009-module-list-split.md) — disable via
-  `disabledModules: [ExtendVolumesModule]` when fodder owns the resize
-  itself.
+  need anything beyond "grow to max" still drop a `runcmd`.
+- [RFC 0009](0009-module-list-split.md) — `disabledModules: [Growpart]`
+  for catlets that manage partitioning via fodder.

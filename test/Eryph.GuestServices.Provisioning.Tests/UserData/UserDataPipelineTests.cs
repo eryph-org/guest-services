@@ -170,7 +170,7 @@ public sealed class UserDataPipelineTests : IDisposable
     private UserDataPipeline BuildPipeline(out IUrlHelper urlHelper)
     {
         urlHelper = new UrlHelper(NullLogger<UrlHelper>.Instance);
-        var serializer = new CloudConfigSerializer();
+        var serializer = new CloudConfigSerializer(NullLogger<CloudConfigSerializer>.Instance);
         var handlers = new IUserDataHandler[]
         {
             new MultipartMimeHandler(NullLogger<MultipartMimeHandler>.Instance),

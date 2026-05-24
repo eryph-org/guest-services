@@ -76,7 +76,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
             .Returns(new RunCommandResult(0, "", ""));
 
         var stateStore = new FileStateStore(NullLogger<FileStateStore>.Instance, _stateDirectory);
-        var serializer = new CloudConfigSerializer();
+        var serializer = new CloudConfigSerializer(NullLogger<CloudConfigSerializer>.Instance);
         var urlHelper = Substitute.For<IUrlHelper>();
         var handlers = new IUserDataHandler[]
         {

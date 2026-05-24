@@ -53,6 +53,164 @@ public class AzureDataSourceTests
         result.Should().BeOfType<DataSourceProbeResult.NotApplicable>();
     }
 
+    // ---- PA-readiness gate (avoids racing Microsoft's PA chain) ----
+
+    // The gate has three signals; each test holds two green and turns one
+    // red to confirm the gate names the specific blocker in the
+    // WaitForReady reason. A reader greping for "OOBE" / "WindowsAzure" /
+    // "CustomData" in logs should be able to tell at a glance which
+    // signal is still missing on a stuck VM.
+
+    [Fact]
+    public async Task ProbeAsync_returns_WaitForReady_while_ImageState_not_complete()
+    {
+        var source = MakeAzureSource(
+            imageState: "IMAGE_STATE_UNDEPLOYABLE",
+            winGaState: "Running",
+            customDataPresent: true);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var wait = result.Should().BeOfType<DataSourceProbeResult.WaitForReady>().Subject;
+        wait.Reason.Should().Contain("OOBE").And.Contain("IMAGE_STATE_UNDEPLOYABLE");
+        wait.Backoff.Should().BeGreaterThan(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_WaitForReady_when_ImageState_registry_value_missing()
+    {
+        // Right after boot, before Windows Setup has written the key at all.
+        // The reader returns null; treat as not-ready rather than racing.
+        var source = MakeAzureSource(
+            imageState: null,
+            winGaState: "Running",
+            customDataPresent: true);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var wait = result.Should().BeOfType<DataSourceProbeResult.WaitForReady>().Subject;
+        wait.Reason.Should().Contain("ImageState");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_WaitForReady_while_WinGA_not_running()
+    {
+        var source = MakeAzureSource(
+            imageState: AzureDataSource.ImageStateComplete,
+            winGaState: "Stopped",
+            customDataPresent: true);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var wait = result.Should().BeOfType<DataSourceProbeResult.WaitForReady>().Subject;
+        wait.Reason.Should().Contain("WindowsAzureGuestAgent")
+            .And.Contain("Stopped");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_WaitForReady_when_WinGA_not_installed()
+    {
+        // azure-detect.ps1 set the service to Disabled but didn't find an
+        // install — or someone deployed an image without the agent MSI.
+        // We can't claim "PA finished" without that signal.
+        var source = MakeAzureSource(
+            imageState: AzureDataSource.ImageStateComplete,
+            winGaState: null,
+            customDataPresent: true);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var wait = result.Should().BeOfType<DataSourceProbeResult.WaitForReady>().Subject;
+        wait.Reason.Should().Contain("not installed");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_WaitForReady_while_CustomData_bin_missing()
+    {
+        // OOBE done, WinGA Running, but PA still has not flushed CustomData
+        // to disk — extremely brief window in practice but tested for
+        // determinism in the locator backoff loop.
+        var source = MakeAzureSource(
+            imageState: AzureDataSource.ImageStateComplete,
+            winGaState: "Running",
+            customDataPresent: false);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var wait = result.Should().BeOfType<DataSourceProbeResult.WaitForReady>().Subject;
+        wait.Reason.Should().Contain("CustomData.bin");
+    }
+
+    [Fact]
+    public async Task ProbeAsync_returns_Ready_when_all_three_PA_signals_complete()
+    {
+        // The happy path: PA has finished, WinGA is up, user-data is on disk.
+        // The full Read pipeline then runs through IMDS + CustomData.bin —
+        // we assert UserData is byte-exact (separate regression: see
+        // ReadAsync_emits_Ready_with_imds_vmid_and_byte_exact_userdata).
+        var payload = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF };
+        var source = MakeAzureSource(
+            imageState: AzureDataSource.ImageStateComplete,
+            winGaState: "Running",
+            customDataPresent: true,
+            customDataPayload: payload);
+
+        var result = await source.ProbeAsync(CancellationToken.None);
+
+        var ready = result.Should().BeOfType<DataSourceProbeResult.Ready>().Subject;
+        ready.Data.UserData.Should().Equal(payload);
+    }
+
+    [Fact]
+    public void ProbePaReadiness_propagates_service_read_failures_as_not_ready()
+    {
+        // CIM/WMI hiccups during early boot must NOT crash the probe loop —
+        // we surface them as "not ready" with the exception message in the
+        // reason so the operator can correlate.
+        var source = MakeAzureSource(
+            imageState: AzureDataSource.ImageStateComplete,
+            winGaState: "Running",
+            customDataPresent: true,
+            readServiceStateOverride: _ => throw new InvalidOperationException("RPC server unavailable"));
+
+        var probe = source.ProbePaReadiness();
+
+        probe.IsReady.Should().BeFalse();
+        probe.MissingSignal.Should().Contain("RPC server unavailable");
+    }
+
+    private static AzureDataSource MakeAzureSource(
+        string? imageState,
+        string? winGaState,
+        bool customDataPresent,
+        byte[]? customDataPayload = null,
+        Func<string, string?>? readServiceStateOverride = null)
+    {
+        var payload = customDataPayload ?? Array.Empty<byte>();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(LoadFixtureText("imds-instance.json")),
+        });
+
+        var volumes = Substitute.For<IVolumeProbe>();
+        volumes.EnumerateVolumes().Returns([]);
+
+        return new AzureDataSource(
+            volumes,
+            NullLogger<AzureDataSource>.Instance,
+            imdsClientFactory: () => new AzureImdsClient(
+                handler,
+                disposeHandler: false,
+                TimeSpan.FromSeconds(1),
+                NullLogger<AzureImdsClient>.Instance),
+            fileExists: p => customDataPresent && p == AzureDataSource.CustomDataPath,
+            readFileBytes: (_, _) => Task.FromResult(payload),
+            isRunningOnAzure: () => true,
+            readImageState: () => imageState,
+            readServiceState: readServiceStateOverride
+                ?? (name => name == AzureDataSource.WindowsAzureGuestAgentService ? winGaState : null));
+    }
+
     // ---- OnCompletedAsync cleanup (RFC 0005) ----
 
     // The Azure cleanup tests use a real-shape temp directory with a uniquely

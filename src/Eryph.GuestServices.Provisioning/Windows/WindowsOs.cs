@@ -367,6 +367,352 @@ internal sealed class WindowsOs : IWindowsOs
         CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetInterfaceMtu(interfaceIndex, mtu), cancellationToken);
 
+    public Task<IReadOnlyList<VolumeExtendResult>> ExtendVolumesAsync(
+        IReadOnlySet<char>? driveLetterFilter,
+        CancellationToken cancellationToken) =>
+        Task.Run<IReadOnlyList<VolumeExtendResult>>(() =>
+        {
+            // Refresh disk geometry first — without this a guest that booted
+            // after the host enlarged the underlying VHD will see the OLD
+            // size (GPT secondary header still at the old end-of-disk).
+            CimStorage.UpdateDisks(logger);
+            return CimStorage.ExtendPartitions(driveLetterFilter, logger);
+        }, cancellationToken);
+
+    public async Task ConfigureNtpClientAsync(
+        bool enabled,
+        IReadOnlyList<string> peers,
+        CancellationToken cancellationToken)
+    {
+        // Mirror cloudbase-init's NTPClientPlugin: w32time service either
+        // Automatic+running (with our manualpeerlist) or Disabled+stopped.
+        // We drive the start mode + start/stop via Win32_Service CIM rather
+        // than sc.exe — the SCM API doesn't depend on argv-quoting niceties.
+        if (!enabled)
+        {
+            await Task.Run(() =>
+            {
+                Win32.CimService.StopService("w32time", logger);
+                Win32.CimService.ChangeStartMode("w32time", Win32.CimService.StartMode.Disabled, logger);
+            }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await Task.Run(() =>
+        {
+            Win32.CimService.ChangeStartMode("w32time", Win32.CimService.StartMode.Automatic, logger);
+            Win32.CimService.StartService("w32time", logger);
+        }, cancellationToken).ConfigureAwait(false);
+
+        // SCM-trigger setup so w32time follows network availability.
+        // sc.exe is the only documented way to manipulate triggers — the WMI
+        // surface for Win32_Service does not expose triggerinfo. We delete
+        // any existing triggers first so a re-run produces the canonical
+        // start/networkon stop/networkoff pair, matching cbi's flow.
+        await RunOrThrowAsync(
+            "sc.exe",
+            ["triggerinfo", "w32time", "delete"],
+            cancellationToken,
+            ignoreNonZero: true);
+        await RunOrThrowAsync(
+            "sc.exe",
+            ["triggerinfo", "w32time", "start/networkon", "stop/networkoff"],
+            cancellationToken,
+            ignoreNonZero: true);
+
+        if (peers.Count > 0)
+        {
+            // w32tm accepts a space-separated list inside one quoted argument.
+            // We pass the joined list as a single argv entry — ProcessStartInfo
+            // ArgumentList quotes correctly without us hand-rolling the quoting.
+            var manualPeerList = string.Join(' ', peers);
+            await RunOrThrowAsync(
+                "w32tm.exe",
+                [
+                    "/config",
+                    $"/manualpeerlist:{manualPeerList}",
+                    "/syncfromflags:manual",
+                    "/update",
+                ],
+                cancellationToken);
+        }
+    }
+
+    public Task SetRealTimeClockUtcAsync(bool utc, CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            // cbi: winreg.SetValueEx(..., 'RealTimeIsUniversal', winreg.REG_DWORD, 1|0).
+            // Microsoft.Win32.Registry lives in System.Runtime — no extra dep needed.
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation",
+                writable: true)
+                ?? throw new InvalidOperationException(
+                    @"HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation is missing.");
+            key.SetValue("RealTimeIsUniversal", utc ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+            logger.LogInformation("RealTimeIsUniversal set to {Value}.", utc ? 1 : 0);
+        }, cancellationToken);
+
+    public async Task SetTimezoneAsync(string windowsTimezoneId, CancellationToken cancellationToken)
+    {
+        // tzutil /s "<id>" applies immediately and writes the registry entries
+        // (TimeZoneKeyName + dynamic DST data). It's also what the Settings UI
+        // uses under the hood, so the result is observably identical to a
+        // user-driven change.
+        await RunOrThrowAsync("tzutil.exe", ["/s", windowsTimezoneId], cancellationToken);
+    }
+
+    public async Task<LocaleApplyResult> ApplyLocaleAsync(LocaleSpec spec, CancellationToken cancellationToken)
+    {
+        // Set-* cmdlets in PowerShell are the documented way to manipulate
+        // locale / UI language / keyboard layout on Windows Server. Their
+        // COM-based underpinnings are awkward to call directly from .NET, so
+        // we drive them via powershell.exe with a tightly-scoped script.
+        var script = BuildLocaleScript(spec);
+        var psi = new ProcessStartInfo("powershell.exe")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(script);
+
+        var result = await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"powershell.exe applying locale failed (exit {result.ExitCode}): {result.StdErr.Trim()}");
+        }
+
+        // The script's final line is "REBOOT_REQUIRED=true" or =false.
+        var rebootRequired = result.StdOut
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => line.Trim().Equals("REBOOT_REQUIRED=true", StringComparison.OrdinalIgnoreCase));
+        return new LocaleApplyResult { RebootRequired = rebootRequired };
+    }
+
+    public async Task ApplyLicenseAsync(LicenseSpec spec, CancellationToken cancellationToken)
+    {
+        // slmgr.vbs is the canonical Windows licensing interface. //b suppresses
+        // GUI popups; //nologo trims the cscript banner. We use cscript over
+        // wscript so output goes to stdout/stderr (wscript would pop a dialog
+        // for `/dlv` style queries — we never call those, but cscript is the
+        // safe default).
+        var slmgrPath = SlmgrPath();
+
+        if (!string.IsNullOrWhiteSpace(spec.ProductKey))
+        {
+            await RunOrThrowAsync(
+                "cscript.exe",
+                ["//nologo", "//b", slmgrPath, "/ipk", spec.ProductKey],
+                cancellationToken);
+        }
+
+        if (!string.IsNullOrWhiteSpace(spec.KmsHost))
+        {
+            await RunOrThrowAsync(
+                "cscript.exe",
+                ["//nologo", "//b", slmgrPath, "/skms", spec.KmsHost],
+                cancellationToken);
+        }
+        else if (spec.ClearKmsHost)
+        {
+            // /ckms clears the configured host so DNS SRV discovery takes
+            // over — the canonical "go back to auto" lever.
+            await RunOrThrowAsync(
+                "cscript.exe",
+                ["//nologo", "//b", slmgrPath, "/ckms"],
+                cancellationToken);
+        }
+
+        if (spec.Activate)
+        {
+            await RunOrThrowAsync(
+                "cscript.exe",
+                ["//nologo", "//b", slmgrPath, "/ato"],
+                cancellationToken);
+        }
+    }
+
+    public async Task<RearmResult> RearmLicenseAsync(CancellationToken cancellationToken)
+    {
+        await RunOrThrowAsync(
+            "cscript.exe",
+            ["//nologo", "//b", SlmgrPath(), "/rearm"],
+            cancellationToken);
+        // Per Microsoft docs (and confirmed in the eryph rearm-evaluation.ps1
+        // gene), the rearm count is reset/decremented in the registry but the
+        // grace period only resets after reboot. Always advertise the reboot.
+        return new RearmResult { RebootRequired = true };
+    }
+
+    public Task<string?> ResolveVolumeActivationKeyAsync(
+        VolumeActivationKeyType type,
+        CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var product = Licensing.CimLicensing.FindActiveKmsClientProduct();
+            if (product is null)
+            {
+                logger.LogWarning(
+                    "Could not find an active KMS-client product in SoftwareLicensingProduct; cannot auto-resolve volume activation key.");
+                return (string?)null;
+            }
+
+            var osFamily = Licensing.OsVersionDetector.Detect();
+            if (osFamily == Licensing.OsVersionFamily.Unknown)
+            {
+                logger.LogWarning(
+                    "Unrecognised OS version {Version}; cannot resolve volume activation key.",
+                    Environment.OSVersion.Version);
+                return null;
+            }
+
+            var keyType = type == VolumeActivationKeyType.Avma
+                ? Licensing.VolumeActivationType.Avma
+                : Licensing.VolumeActivationType.Kms;
+
+            var key = Licensing.VolumeActivationKeys.Lookup(osFamily, product.LicenseFamily, keyType);
+            if (key is null)
+            {
+                logger.LogWarning(
+                    "No {Type} key found for OS {OsFamily} + LicenseFamily {Family}.",
+                    type, osFamily, product.LicenseFamily);
+            }
+            return key;
+        }, cancellationToken);
+
+    public Task<bool> IsEvaluationLicenseAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var product = Licensing.CimLicensing.FindActiveKmsClientProduct();
+            return product?.IsEvaluation ?? false;
+        }, cancellationToken);
+
+    public async Task RequestPowerStateAsync(PowerStateRequest request, CancellationToken cancellationToken)
+    {
+        // shutdown.exe action flag. /h (hibernate) is the closest Windows
+        // analogue to cloud-init's `halt` — neither "stop CPU, leave power
+        // on" semantics exist on Windows. The PowerStateModule logs a
+        // Warning so operators know we substituted.
+        var actionFlag = request.Action switch
+        {
+            PowerStateAction.Reboot => "/r",
+            PowerStateAction.Poweroff => "/s",
+            PowerStateAction.Halt => "/h",
+            _ => throw new ArgumentOutOfRangeException(nameof(request), request.Action, "Unknown power-state action."),
+        };
+
+        var argv = new List<string>
+        {
+            actionFlag,
+            "/f",                                  // force-close apps (we're unattended)
+            "/t", request.DelaySeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        };
+
+        if (!string.IsNullOrEmpty(request.Message))
+        {
+            // shutdown.exe truncates /c silently after 512 chars; clamp on
+            // our side so log messages are honest about what was sent.
+            var msg = request.Message.Length > 512 ? request.Message[..512] : request.Message;
+            argv.Add("/c");
+            argv.Add(msg);
+        }
+
+        // shutdown.exe with /r doesn't actually return until either the
+        // delay expires or `shutdown /a` aborts it — UNLESS /t > 0, in
+        // which case it schedules and returns immediately. We always use
+        // /t (>= 0) so the call returns promptly and the StageRunner can
+        // finish writing its semaphores before Windows actually goes down.
+        await RunOrThrowAsync("shutdown.exe", argv, cancellationToken);
+        logger.LogInformation(
+            "Scheduled {Action} in {Delay}s via shutdown.exe (message='{Msg}').",
+            request.Action, request.DelaySeconds, request.Message ?? "<none>");
+    }
+
+    private static string SlmgrPath()
+    {
+        var systemRoot = Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
+        return Path.Combine(systemRoot, "System32", "slmgr.vbs");
+    }
+
+    private async Task RunOrThrowAsync(
+        string fileName,
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken,
+        bool ignoreNonZero = false)
+    {
+        var psi = new ProcessStartInfo(fileName)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in argv) psi.ArgumentList.Add(a);
+        var result = await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0 && !ignoreNonZero)
+        {
+            throw new InvalidOperationException(
+                $"{fileName} {string.Join(' ', argv)} exited {result.ExitCode}: {result.StdErr.Trim()}");
+        }
+    }
+
+    // internal for unit testing — the PowerShell-string-building logic is a
+    // non-trivial composition root that we want exercised directly.
+    internal static string BuildLocaleScript(LocaleSpec spec)
+    {
+        // The script is intentionally compact: it queries current state, sets
+        // only what's different, and emits a single `REBOOT_REQUIRED=...` line
+        // for the caller to parse. Any cmdlet failure terminates via -ErrorAction
+        // Stop so RunAsync sees a non-zero exit.
+        var sb = new StringBuilder();
+        sb.AppendLine("$ErrorActionPreference = 'Stop'");
+        sb.AppendLine("$rebootRequired = $false");
+
+        if (!string.IsNullOrWhiteSpace(spec.Locale))
+        {
+            var locale = EscapePsSingleQuoted(spec.Locale);
+            // Set-Culture / Set-WinUILanguageOverride / Set-WinUserLanguageList
+            // are all sign-out-or-cmdlet-session safe. Set-WinSystemLocale needs
+            // a reboot to fully take effect, which we surface via the marker line.
+            sb.AppendLine($"Set-Culture -CultureInfo '{locale}'");
+            sb.AppendLine($"Set-WinUILanguageOverride -Language '{locale}'");
+            sb.AppendLine($"$langList = New-WinUserLanguageList -Language '{locale}'");
+            if (!string.IsNullOrWhiteSpace(spec.KeyboardLayout))
+            {
+                var kb = EscapePsSingleQuoted(spec.KeyboardLayout);
+                sb.AppendLine("$langList[0].InputMethodTips.Clear()");
+                sb.AppendLine($"$langList[0].InputMethodTips.Add('{kb}')");
+            }
+            sb.AppendLine("Set-WinUserLanguageList -LanguageList $langList -Force");
+            sb.AppendLine($"$currentSys = (Get-WinSystemLocale).Name");
+            sb.AppendLine($"if ($currentSys -ne '{locale}') {{");
+            sb.AppendLine($"  Set-WinSystemLocale -SystemLocale '{locale}'");
+            sb.AppendLine($"  $rebootRequired = $true");
+            sb.AppendLine("}");
+        }
+        else if (!string.IsNullOrWhiteSpace(spec.KeyboardLayout))
+        {
+            // Keyboard-only change: amend the existing language list rather
+            // than replacing it — the user may already have multiple langs.
+            var kb = EscapePsSingleQuoted(spec.KeyboardLayout);
+            sb.AppendLine("$langList = Get-WinUserLanguageList");
+            sb.AppendLine($"$langList[0].InputMethodTips.Clear()");
+            sb.AppendLine($"$langList[0].InputMethodTips.Add('{kb}')");
+            sb.AppendLine("Set-WinUserLanguageList -LanguageList $langList -Force");
+        }
+
+        sb.AppendLine("Write-Output \"REBOOT_REQUIRED=$rebootRequired\"");
+        return sb.ToString();
+    }
+
+    private static string EscapePsSingleQuoted(string value) => value.Replace("'", "''");
+
     public string TranslateUnixPath(string unixPath)
     {
         if (string.IsNullOrWhiteSpace(unixPath))

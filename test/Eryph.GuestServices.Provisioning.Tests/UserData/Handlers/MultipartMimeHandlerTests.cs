@@ -97,6 +97,38 @@ public sealed class MultipartMimeHandlerTests
             .Which.ContentType.Should().Be("text/x-cloud-config");
     }
 
+    [Fact]
+    public async Task ProcessAsync_HandlesUtf8BomFromWindowsPowerShellSetContent()
+    {
+        // PowerShell-authored multipart payload prefixed by EF BB BF. A
+        // raw Encoding.UTF8.GetString preserves the BOM as U+FEFF, so the
+        // first "MIME-Version:" header no longer starts at column 0 and
+        // the parser sees the document as headerless body. Decoding via
+        // UserDataEncoding.DecodeUtf8 strips the BOM so headers parse.
+        const string raw =
+            "MIME-Version: 1.0\r\n" +
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n" +
+            "\r\n" +
+            "--B\r\n" +
+            "Content-Type: text/x-cloud-config\r\n" +
+            "\r\n" +
+            "#cloud-config\nhostname: bom-mime\n" +
+            "\r\n" +
+            "--B--\r\n";
+        var bytes = new byte[] { 0xEF, 0xBB, 0xBF }
+            .Concat(Encoding.UTF8.GetBytes(raw))
+            .ToArray();
+
+        var handler = new MultipartMimeHandler(NullLogger<MultipartMimeHandler>.Instance);
+        var ctx = new TestResolutionContext();
+        var part = new UserDataPart("multipart/mixed", bytes, null);
+
+        await handler.ProcessAsync(part, ctx, CancellationToken.None);
+
+        ctx.NestedParts.Should().ContainSingle()
+            .Which.ContentType.Should().Be("text/x-cloud-config");
+    }
+
     // cbi-compat: cloudbase-init encodes the filename in the Content-Type
     // `name=` parameter (in addition to / instead of Content-Disposition).
     // Our parser extracts it from Content-Type when Content-Disposition is absent.

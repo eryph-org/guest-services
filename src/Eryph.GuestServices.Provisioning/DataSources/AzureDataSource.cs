@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using System.Text.Json;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.DataSources.Azure;
+using Eryph.GuestServices.Provisioning.Windows.Win32;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 
@@ -34,6 +35,20 @@ public sealed class AzureDataSource : IDataSource
     internal const string AzureVmIdValue = "VmId";
     internal const string CustomDataPath = @"C:\AzureData\CustomData.bin";
 
+    // The Windows OOBE-done sentinel. Windows Setup flips ImageState to
+    // IMAGE_STATE_COMPLETE when oobeSystem finishes — so on Azure this is
+    // the OS-level signal that PA's specialize/oobeSystem chain has wrapped.
+    // See: learn.microsoft.com/windows-hardware/manufacture/desktop/windows-setup-states
+    internal const string ImageStateKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State";
+    internal const string ImageStateValue = "ImageState";
+    internal const string ImageStateComplete = "IMAGE_STATE_COMPLETE";
+
+    // The Azure Windows Guest Agent service — installed Disabled on our
+    // images, enabled+started by azure-detect.ps1 only on Azure, and put
+    // into Running by Microsoft's PA chain after first Ready POST. So
+    // "WinGA Running" is the Azure-specific PA-finished signal.
+    internal const string WindowsAzureGuestAgentService = "WindowsAzureGuestAgent";
+
     private readonly ILogger<AzureDataSource> _logger;
     private readonly IVolumeProbe _volumeProbe;
     private readonly Func<AzureImdsClient> _imdsClientFactory;
@@ -42,6 +57,9 @@ public sealed class AzureDataSource : IDataSource
     private readonly Action<string> _deleteFile;
     private readonly Func<string, bool> _directoryExists;
     private readonly Action<string> _deleteDirectoryIfEmpty;
+    private readonly Func<bool> _isRunningOnAzure;
+    private readonly Func<string?> _readImageState;
+    private readonly Func<string, string?> _readServiceState;
     private readonly string _customDataPath;
 
     /// <summary>
@@ -57,6 +75,9 @@ public sealed class AzureDataSource : IDataSource
             deleteFile: File.Delete,
             directoryExists: Directory.Exists,
             deleteDirectoryIfEmpty: DeleteDirectoryIfEmpty,
+            isRunningOnAzure: PlatformProbes.IsRunningOnAzure,
+            readImageState: ReadImageStateFromRegistry,
+            readServiceState: ReadServiceStateViaCim,
             customDataPath: CustomDataPath)
     {
     }
@@ -75,6 +96,9 @@ public sealed class AzureDataSource : IDataSource
         Action<string>? deleteFile = null,
         Func<string, bool>? directoryExists = null,
         Action<string>? deleteDirectoryIfEmpty = null,
+        Func<bool>? isRunningOnAzure = null,
+        Func<string?>? readImageState = null,
+        Func<string, string?>? readServiceState = null,
         string? customDataPath = null)
     {
         _volumeProbe = volumeProbe;
@@ -85,6 +109,9 @@ public sealed class AzureDataSource : IDataSource
         _deleteFile = deleteFile ?? File.Delete;
         _directoryExists = directoryExists ?? Directory.Exists;
         _deleteDirectoryIfEmpty = deleteDirectoryIfEmpty ?? DeleteDirectoryIfEmpty;
+        _isRunningOnAzure = isRunningOnAzure ?? PlatformProbes.IsRunningOnAzure;
+        _readImageState = readImageState ?? ReadImageStateFromRegistry;
+        _readServiceState = readServiceState ?? ReadServiceStateViaCim;
         _customDataPath = customDataPath ?? CustomDataPath;
     }
 
@@ -111,8 +138,27 @@ public sealed class AzureDataSource : IDataSource
         if (!OperatingSystem.IsWindows())
             return DataSourceProbeResult.NotApplicable.Instance;
 
-        if (!PlatformProbes.IsRunningOnAzure())
+        if (!_isRunningOnAzure())
             return DataSourceProbeResult.NotApplicable.Instance;
+
+        // Gate the read on PA being finished. Microsoft's PA writes
+        // CustomData.bin during oobeSystem and only POSTs `Ready` to the
+        // wireserver after its chain completes; if we run modules in
+        // parallel (especially anything that triggers a reboot) we kill
+        // PA mid-flight and the Azure fabric times the VM out at ~40 min.
+        // Returning WaitForReady lets DataSourceLocator back off and retry
+        // — see RFC 0004 for the backoff + budget. The CLI defaults give
+        // us up to 15 minutes total which covers PA worst-case.
+        var readiness = ProbePaReadiness();
+        if (!readiness.IsReady)
+        {
+            _logger.LogDebug(
+                "Azure: deferring datasource read — {Reason}",
+                readiness.MissingSignal);
+            return new DataSourceProbeResult.WaitForReady(
+                readiness.MissingSignal ?? "PA has not finished provisioning",
+                TimeSpan.FromSeconds(5));
+        }
 
         try
         {
@@ -126,6 +172,71 @@ public sealed class AzureDataSource : IDataSource
         {
             return new DataSourceProbeResult.Failed(
                 $"Azure datasource failed during read: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Result of the three-signal PA-readiness probe. <c>IsReady</c> is true
+    /// iff Windows OOBE has completed (ImageState), the Azure Windows Guest
+    /// Agent service is Running (PA→WinGA handoff), and PA has written
+    /// <c>C:\AzureData\CustomData.bin</c>. Any miss yields a human-readable
+    /// reason for the WaitForReady the locator surfaces in its retry loop.
+    /// </summary>
+    internal readonly record struct PaReadinessProbe(bool IsReady, string? MissingSignal);
+
+    internal PaReadinessProbe ProbePaReadiness()
+    {
+        // (1) Windows OOBE: ImageState becomes IMAGE_STATE_COMPLETE only
+        // after oobeSystem exits. While PA's Unattend.wsf chain is still
+        // running this stays at IMAGE_STATE_UNDEPLOYABLE / _SPECIALIZE.
+        var imageState = SafeRead(_readImageState, nameof(_readImageState));
+        if (imageState is null)
+            return new PaReadinessProbe(false, "Windows ImageState registry value missing — OOBE still in progress.");
+        if (!string.Equals(imageState, ImageStateComplete, StringComparison.OrdinalIgnoreCase))
+            return new PaReadinessProbe(false,
+                $"Windows OOBE not finished (ImageState='{imageState}', expected '{ImageStateComplete}').");
+
+        // (2) PA → WinGA handoff: WinGA stays Disabled until azure-detect.ps1
+        // enables it (on Azure only). PA's oobeSystem chain transitions it to
+        // Running after the first Ready POST.
+        string? serviceState;
+        try
+        {
+            serviceState = _readServiceState(WindowsAzureGuestAgentService);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Azure: failed to read {Service} state; treating as not-ready", WindowsAzureGuestAgentService);
+            return new PaReadinessProbe(false,
+                $"Could not read state of '{WindowsAzureGuestAgentService}' service: {ex.Message}");
+        }
+        if (serviceState is null)
+            return new PaReadinessProbe(false,
+                $"Service '{WindowsAzureGuestAgentService}' is not installed on this host.");
+        if (!string.Equals(serviceState, "Running", StringComparison.OrdinalIgnoreCase))
+            return new PaReadinessProbe(false,
+                $"'{WindowsAzureGuestAgentService}' service is '{serviceState}', not Running — PA chain has not handed off yet.");
+
+        // (3) User-data materialised: PA decodes ovf-env CustomData and writes
+        // it before exiting; once present, the bytes are stable for the rest
+        // of the VM's life until our OnCompletedAsync cleanup removes them.
+        if (!_fileExists(_customDataPath))
+            return new PaReadinessProbe(false,
+                $"'{_customDataPath}' has not been written by PA yet.");
+
+        return new PaReadinessProbe(true, null);
+    }
+
+    private string? SafeRead(Func<string?> reader, string what)
+    {
+        try
+        {
+            return reader();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Azure: {What} threw; treating as missing", what);
+            return null;
         }
     }
 
@@ -317,6 +428,38 @@ public sealed class AzureDataSource : IDataSource
         using var key = Registry.LocalMachine.OpenSubKey(AzureVmIdKey);
         return key?.GetValue(AzureVmIdValue) as string;
     }
+
+    private static string? ReadImageStateFromRegistry()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        try
+        {
+            return ReadImageStateCore();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? ReadImageStateCore()
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(ImageStateKey);
+        return key?.GetValue(ImageStateValue) as string;
+    }
+
+    private static string? ReadServiceStateViaCim(string serviceName)
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+        return ReadServiceStateCore(serviceName);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? ReadServiceStateCore(string serviceName) =>
+        CimService.GetState(serviceName);
 
     internal sealed record ImdsCompute(
         string? VmId,

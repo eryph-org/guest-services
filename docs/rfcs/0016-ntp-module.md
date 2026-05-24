@@ -1,156 +1,87 @@
 # RFC 0016 — `ntp` cloud-config module
 
-Status: Draft
+Status: Implemented
+Implemented in commit `<pending>`
 
 ## Problem
 
 eryph base catlets historically relied on cloudbase-init to honour the
-cloud-config `ntp:` block. With egs-service taking over on Windows, that
-block is silently ignored: no module, no `Ntp` POCO field, no
-`IWindowsOs` method. Time-sync is a hard requirement on most operator
-catlets (cert validity, Kerberos, log timestamps) — we cannot ship the
-"works as cloudbase-init does" promise without it.
+cloud-config `ntp:` block. With egs-service taking over on Windows that
+block was silently ignored; time-sync is a hard requirement on most
+operator catlets (cert validity, Kerberos, log timestamps).
 
-## What cloud-init does
+## What ships
 
-`cc_ntp` is a structured module (richer than `set_timezone`):
+### Schema
 
 ```yaml
 ntp:
-  enabled: true
-  ntp_client: auto        # auto | chrony | ntp | ntpdate | systemd-timesyncd
-  servers:
-    - 0.pool.ntp.org
-    - 1.pool.ntp.org
-  pools:
-    - my-pool.example.org
-  config:
-    check_exe: chronyd
-    confpath: /etc/chrony/chrony.conf
-    packages: [chrony]
-    service_name: chrony
-    template: |
-      # custom chrony config template ...
+  enabled: true               # default true
+  servers: [time.windows.com]
+  pools:   [pool.ntp.org]
+  real_time_clock_utc: true   # optional; mirrors cbi's real_time_clock_utc
 ```
 
-On Linux cloud-init:
-- Picks the daemon (`ntp_client`) — falls back to whatever the distro
-  ships if `auto`.
-- Installs the package if missing.
-- Writes a config template referencing `servers` + `pools`.
-- Restarts the service.
-- Default frequency: per-instance.
-
-Reference: <https://cloudinit.readthedocs.io/en/latest/reference/modules.html#ntp>
-
-## What cloudbase-init does
-
-`NTPClientPlugin` reads the same block but maps the entire shape onto a
-single Windows daemon — **`w32time`**. Linux concepts that have no Windows
-analogue are ignored:
-
-- `ntp_client`: irrelevant on Windows (w32time is the only practical
-  option; ntpd / chrony Windows ports exist but eryph genes don't ship
-  them).
-- `config.check_exe` / `packages` / `service_name` / `template`: ignored.
-- `enabled: false`: leave w32time configuration alone (don't disable
-  Windows time at all — that breaks Kerberos and certificate validation).
-- `pools` and `servers`: merged into the w32time `manualpeerlist`.
-
-The actual Windows operation is roughly:
-
-```
-w32tm /config /manualpeerlist:"<servers + pools, space-separated>" `
-              /syncfromflags:manual /reliable:no /update
-net stop  w32time
-net start w32time
-w32tm /resync
-```
-
-## Tentative direction
-
-### POCO shape
-
-Mirror cloud-init's block as a strongly-typed record. The Linux-only
-fields stay on the model so YAML round-trips losslessly, but the Windows
-module just ignores them:
-
-```csharp
-public sealed record NtpConfig
-{
-    public bool? Enabled { get; init; }
-    public string? NtpClient { get; init; }                  // Linux only
-    public IReadOnlyList<string>? Servers { get; init; }
-    public IReadOnlyList<string>? Pools { get; init; }
-    public NtpConfigSection? Config { get; init; }           // Linux only
-}
-
-public sealed record NtpConfigSection
-{
-    // All Linux-specific. Carried for fidelity; never read on Windows.
-    public string? CheckExe { get; init; }
-    public string? ConfPath { get; init; }
-    public IReadOnlyList<string>? Packages { get; init; }
-    public string? ServiceName { get; init; }
-    public string? Template { get; init; }
-}
-```
+POCO `NtpConfig`: `Enabled`, `Servers`, `Pools`, `RealTimeClockUtc`.
+Linux-only cloud-init fields (`ntp_client`, `config.*`) are deliberately
+absent — cbi ignores them too on Windows.
 
 ### Module
 
-- `Eryph.GuestServices.Provisioning.Modules.NtpModule`
-  (Stage = Config, Order after `SetTimezoneModule`, Frequency = PerInstance).
-- Effective server list = `(servers ?? []) ∪ (pools ?? [])`, de-duped,
-  trimmed, comma-rejected.
-- If the resulting list is empty, log Info and exit Ok (the operator
-  chose to use w32time defaults — `time.windows.com` is fine).
-- If `enabled == false`, log Info and exit Ok without touching w32time
-  (matches cbi — we don't break Kerberos).
+- `Eryph.GuestServices.Provisioning.Modules.NtpClientModule`
+  (`Stage.Network`, `Order = 3`, `Frequency = PerInstance`).
+- Effective server list = `servers ∪ pools`, in input order, whitespace
+  trimmed, empties filtered.
+- `enabled: false` → stop w32time, set start mode `Disabled`.
+- `enabled: true` (default) → set w32time start mode `Automatic`, start
+  it, reset SCM triggers (`start/networkon stop/networkoff`), and write
+  the manual peer list via `w32tm /config /manualpeerlist:<...>
+  /syncfromflags:manual /update`.
+- `real_time_clock_utc` is opt-in only — when set, writes
+  `HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation\RealTimeIsUniversal`
+  to 1 / 0. The default null leaves the Windows default behaviour alone.
 
-### Windows mechanism
+### OS seam
 
-New `IWindowsOs.ConfigureW32TimeAsync(IReadOnlyList<string> peers, …)`
-backed by a sequence of `w32tm.exe` / `net.exe` invocations through the
-existing `RunArgvCommandAsync` path. Decorator (`DryRunWindowsOs`)
-intercepts in dry-run.
+- `IWindowsOs.ConfigureNtpClientAsync(bool enabled, IReadOnlyList<string> peers, ...)`
+- `IWindowsOs.SetRealTimeClockUtcAsync(bool utc, ...)`
+- Service control lives in `Win32\CimService` (Win32_Service CIM —
+  `ChangeStartMode`, `StartService`, `StopService`). Triggers still use
+  `sc.exe triggerinfo` (no CIM surface for triggers).
 
-A second helper `IsW32TimeAvailableAsync` short-circuits to a Warning if
-the service is absent (theoretically possible on a stripped Server Core
-image; in practice it's always present on the genes we ship).
+### Cloudbase-init parity points
 
-### Validation
+1. Same effective `w32tm` invocation (manualpeerlist + syncfromflags=manual).
+2. Same SCM trigger setup (`_set_ntp_trigger_mode` in cbi).
+3. Same opt-in `RealTimeIsUniversal` registry write (`set_real_time_clock_utc`).
 
-`egs-service validate` rejects:
-- `servers` / `pools` entries that aren't a hostname or IP literal.
-- Lists containing the same entry twice (operator confusion; trivial to
-  fix).
-- `ntp_client` other than the documented set (Warning, not Error — cbi
-  ignores it).
+## What changed from the original Draft — and why
+
+- **Module name** `NtpModule` → `NtpClientModule`. Matches cbi's
+  `NTPClientPlugin` type name. Cosmetic.
+- **Stage** `Stage.Config` (after `SetTimezoneModule`) → `Stage.Network`
+  Order 3. Same rationale as RFC 0015: NTP-before-Runcmd lets runcmd
+  entries trust the wall clock. Network/3 also runs *after*
+  `ApplyNetworkConfigModule` (Network/2), so by the time `w32tm`
+  manualpeerlist is set the network is reachable for the first sync.
+- **POCO simplified** — dropped `NtpConfigSection` (Linux-daemon config
+  block: `check_exe`, `confpath`, `packages`, `service_name`, `template`).
+  The Draft's argument for keeping them was YAML round-trip fidelity;
+  on closer look we never *serialise* cloud-config back out — we're a
+  consumer, not an emitter — so round-trip fidelity is irrelevant.
+  Nested unknown fields inside an `ntp:` block (a custom `ntp_client`
+  on a Windows guest, say) pass through the deserialiser via
+  `IgnoreUnmatchedProperties` and are silently ignored — they don't
+  reach the top-level unknown-key Warning path because they're not at
+  top level. Mirrors cloud-init's runtime contract: nested
+  additionalProperties are accepted; only top-level surprises log.
+- **Added `RealTimeClockUtc`** field. Not in the Draft — caught by a
+  sonnet-driven code review of cbi parity. Hyper-V guests with a UTC
+  host RTC drift by ±N hours when Windows interprets the RTC as local
+  time. Mirrors cbi's `set_real_time_clock_utc`.
 
 ## Cross-references
 
-- [RFC 0007](0007-scripts-per-frequency-edge-cases.md) — per-instance
-  frequency contract.
-- [RFC 0009](0009-module-list-split.md) — operators can disable the
-  module via `disabledModules: [NtpModule]` if they manage time-sync via
-  their own runcmd / fodder.
-- [RFC 0015](0015-set-timezone-module.md) — companion RFC for the timezone
-  side of clock configuration.
-
-## Open questions
-
-- Should the empty-server-list case be an explicit `enabled: true` with no
-  servers (i.e. assume the operator wants Windows defaults), or an
-  error (the operator wrote `ntp:` but supplied nothing meaningful)?
-  Tentative: log Info, treat as Ok. Matches cloud-init's permissiveness.
-- Should we also enforce `w32time` startup type Automatic? Cbi does not
-  touch the start type. Leave it alone in v1 — eryph genes already ship
-  `w32time` Automatic.
-- `enabled: false` semantics — cloud-init's `cc_ntp` interprets this as
-  "don't run the module at all". We do the same (no-op + log). Document
-  it explicitly so an operator who wants to *stop* w32time uses a
-  `runcmd` instead.
-- Linux Windows-only model: when egs-service grows a Linux provisioning
-  path, `NtpModule` will need a Linux branch that does the daemon
-  selection / package install / config-template work cloud-init does
-  today. Out of scope for v1.
+- [RFC 0015](0015-set-timezone-module.md) — companion timezone module.
+- [RFC 0009](0009-module-list-split.md) — operators can disable via
+  `disabledModules: [NtpClient]` when fodder manages time-sync.

@@ -2,7 +2,7 @@
 
 Status: Fixed
 Discovered: 2026-05-22
-Fixed: 2026-05-22 (commit pending)
+Fixed: 2026-05-22 (commit `d0c476e`)
 Service version observed: `0.3.1-provisioning-agent.37+Sha.9aab6d06d0926fa583c0c9a8198f385763575c5d`
 Severity: High (silent partial provisioning, `state.json` reports success)
 

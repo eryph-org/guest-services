@@ -155,4 +155,97 @@ public interface IWindowsOs
         int interfaceIndex,
         int mtu,
         CancellationToken cancellationToken);
+
+    // Storage — used by GrowpartModule. Mirrors cloudbase-init's extend_volumes
+    // via the WSM (root\Microsoft\Windows\Storage) WMI namespace.
+
+    /// <summary>
+    /// Refreshes every disk's geometry (so a guest that booted after the host
+    /// enlarged the underlying VHD picks up the new size — the GPT secondary
+    /// header migration cbi does not perform) and then resizes every targeted
+    /// partition to the maximum size the platform supports.
+    /// <para>
+    /// <paramref name="driveLetterFilter"/> is null when the caller wants every
+    /// growable volume; otherwise it lists uppercase drive letters to target.
+    /// Volumes without a drive letter are only considered when the filter is null.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<VolumeExtendResult>> ExtendVolumesAsync(
+        IReadOnlySet<char>? driveLetterFilter,
+        CancellationToken cancellationToken);
+
+    // Time service — used by NtpClientModule. Mirrors cloudbase-init's
+    // NTPClientPlugin: w32time service auto-start + manual peer list.
+
+    /// <summary>
+    /// Configures the Windows Time service (<c>w32time</c>). When
+    /// <paramref name="enabled"/> is true the service is set to
+    /// <c>Automatic</c>, started, the SCM triggers are reset so it follows
+    /// network availability (cloudbase-init parity), and the manual peer
+    /// list is set to the union of <paramref name="peers"/>. When false
+    /// the service is stopped and set to <c>Disabled</c>.
+    /// </summary>
+    Task ConfigureNtpClientAsync(
+        bool enabled,
+        IReadOnlyList<string> peers,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes
+    /// <c>HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation\RealTimeIsUniversal</c>.
+    /// <c>true</c> tells Windows to interpret the real-time clock as UTC;
+    /// <c>false</c> means "local time" (Windows default). Mirrors
+    /// cloudbase-init's <c>set_real_time_clock_utc</c>.
+    /// </summary>
+    Task SetRealTimeClockUtcAsync(bool utc, CancellationToken cancellationToken);
+
+    // Timezone — used by TimezoneModule. <paramref name="windowsTimezoneId"/>
+    // is a Windows timezone key name (e.g. "W. Europe Standard Time"). The
+    // module is responsible for translating an IANA name into the Windows id.
+
+    Task SetTimezoneAsync(string windowsTimezoneId, CancellationToken cancellationToken);
+
+    // Locale + keyboard — used by SetLocaleModule. ApplyLocaleAsync returns
+    // a struct indicating whether a reboot is needed (set-WinSystemLocale
+    // requires it; the other changes do not).
+
+    Task<LocaleApplyResult> ApplyLocaleAsync(LocaleSpec spec, CancellationToken cancellationToken);
+
+    // Licensing — used by LicensingModule. Sets the product key and/or KMS
+    // host via slmgr.vbs and optionally triggers activation. Throws on
+    // slmgr non-zero exit; the module surfaces failures as ModuleOutcome.Failed.
+
+    Task ApplyLicenseAsync(LicenseSpec spec, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs <c>slmgr /rearm</c>. Returns whether a reboot is required (per
+    /// Microsoft docs the answer is always "yes" after a successful rearm,
+    /// but the OS layer is authoritative — the module just relays).
+    /// </summary>
+    Task<RearmResult> RearmLicenseAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves the volume-activation key for the guest's current OS
+    /// edition. Returns null when no key is known (unsupported OS family,
+    /// non-Server SKU, or pre-2012R2 for AVMA). The module decides what to
+    /// do with a null result — usually surface as failure with a hint.
+    /// </summary>
+    Task<string?> ResolveVolumeActivationKeyAsync(
+        VolumeActivationKeyType type,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// True when the active Windows product is an evaluation edition (its
+    /// SoftwareLicensingProduct entry carries TIMEBASED_EVAL or has a real
+    /// EvaluationEndDate). Used by the licensing module to gate
+    /// <c>slmgr /rearm</c> so non-eval guests don't burn a rearm slot.
+    /// </summary>
+    Task<bool> IsEvaluationLicenseAsync(CancellationToken cancellationToken);
+
+    // Power-state — used by PowerStateModule. Schedules a controlled
+    // shutdown / reboot / hibernate at the end of provisioning via
+    // shutdown.exe. The OS layer just executes; the module does delay
+    // parsing / condition evaluation / mode mapping.
+
+    Task RequestPowerStateAsync(PowerStateRequest request, CancellationToken cancellationToken);
 }

@@ -70,6 +70,39 @@ public sealed class UserDataContentTypeSnifferTests
         UserDataContentTypeSniffer.Sniff(body).Should().Be(UserDataContentTypeSniffer.MultipartMixed);
     }
 
+    // Same shape as the mbox preamble, but with a colon — some producers
+    // emit "From: nobody Fri Jan 11 07:00:00 1980" turning the RFC 4155
+    // mbox marker into a degenerate RFC 5322 header. The next line is
+    // still the real Content-Type and the body is still a valid multipart.
+    // Captured from an Azure VM #include target gist used as a regression
+    // fixture (see fixtures/userdata/azure-winsrv2022-include.bin).
+    [Fact]
+    public void Sniff_FromColonPreambleBeforeMultipartHeader_Returns_MultipartMixed()
+    {
+        var body = Encoding.UTF8.GetBytes(
+            "From: nobody Fri Jan 11 07:00:00 1980\n" +
+            "Content-Type: multipart/mixed; boundary=\"==BOUNDARY==\"\n" +
+            "MIME-Version: 1.0\n\n" +
+            "--==BOUNDARY==\n");
+        UserDataContentTypeSniffer.Sniff(body).Should().Be(UserDataContentTypeSniffer.MultipartMixed);
+    }
+
+    // Real-world fixture: a published #include URL target authored as a
+    // MIME bundle with a "From:" preamble (colon-shaped). Pins the
+    // tolerance behaviour against a captured byte sequence rather than a
+    // synthetic shape.
+    [Fact]
+    public void Sniff_RealWorldGistFixtureWithFromColonPreamble_Returns_MultipartMixed()
+    {
+        var fixturePath = Path.Combine(
+            AppContext.BaseDirectory, "fixtures", "userdata", "azure-winsrv2022-include.bin");
+        File.Exists(fixturePath).Should().BeTrue(
+            "fixture must be copied to bin output (see csproj None Include for fixtures/userdata)");
+
+        var bytes = File.ReadAllBytes(fixturePath);
+        UserDataContentTypeSniffer.Sniff(bytes).Should().Be(UserDataContentTypeSniffer.MultipartMixed);
+    }
+
     [Fact]
     public void Sniff_GzippedMboxPreambleMultipart_DecompressFirst_ReturnsMultipart()
     {

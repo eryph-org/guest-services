@@ -446,6 +446,46 @@ function Disable-CloudbaseInitUnattend {
   }
 }
 
+function Get-CatletOsPartitionSize {
+  <#
+  .SYNOPSIS
+    Returns the byte size of the Windows OS partition inside a stopped
+    catlet's VHD, read offline via a transient Mount-VHD.
+
+  .DESCRIPTION
+    Used by the growpart e2e: we want a stable "before" measurement of the
+    OS partition size so the post-boot assertion can prove the partition
+    actually grew, not just that it happens to be large.
+
+    Mirror the discovery logic from Mount-CatletVhd: walk partitions, pick
+    the one whose volume root contains \Windows.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId
+  )
+
+  $vhdPath = Get-CatletVhdPath -VmId $VmId
+  Write-Verbose "Reading OS partition size from $vhdPath"
+  $disk = Mount-VHD -Path $vhdPath -PassThru -ErrorAction Stop
+  $disk = Get-Disk -Number $disk.Number
+  try {
+    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
+      $vol = $p | Get-Volume -ErrorAction SilentlyContinue
+      if (-not $vol) { continue }
+      if ($vol.FileSystem -notin 'NTFS', 'ReFS') { continue }
+      if (-not $vol.Path) { continue }
+      if (Test-Path -LiteralPath (Join-Path $vol.Path 'Windows')) {
+        return [uint64] $p.Size
+      }
+    }
+    throw "Could not locate a Windows OS partition on $vhdPath"
+  }
+  finally {
+    Dismount-VHD -Path $vhdPath -ErrorAction SilentlyContinue
+  }
+}
+
 function Set-OfflineServiceStartType {
   <#
   .SYNOPSIS
