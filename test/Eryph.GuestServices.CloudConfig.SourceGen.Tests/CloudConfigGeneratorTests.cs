@@ -69,6 +69,12 @@ public sealed class CloudConfigGeneratorTests
 
                 [CloudInitField]
                 public SubConfig? Sub { get; init; }
+
+                [CloudInitField]
+                public IReadOnlyDictionary<string, string>? StringDict { get; init; }
+
+                [CloudInitField]
+                public IReadOnlyDictionary<string, SubConfig>? RecordDict { get; init; }
             }
 
             public static partial class CloudConfigMerge { }
@@ -108,6 +114,10 @@ public sealed class CloudConfigGeneratorTests
             "nested [CloudInitRecord] properties default to DeepMerge");
         mergeText.Should().Contain("MergeSubConfig(",
             "the generator must emit a per-record helper");
+        mergeText.Should().Contain("StringDict = MergeDict(left.StringDict, right.StringDict)",
+            "IReadOnlyDictionary with a scalar value type defaults to plain DictMerge");
+        mergeText.Should().Contain("RecordDict = MergeDict(left.RecordDict, right.RecordDict, MergeSubConfig)",
+            "IReadOnlyDictionary with a [CloudInitRecord] value type passes the per-record merger");
 
         var inventoryText = sources.Single(s => s.HintName == "CloudConfigPlatformInventory.g.cs").SourceText.ToString();
         inventoryText.Should().Contain("\"hostname\"", "yaml key is snake_cased");
@@ -128,9 +138,9 @@ public sealed class CloudConfigGeneratorTests
             .ToList();
         var mergeText = sources.Single(s => s.HintName == "CloudConfigMerge.Merge.g.cs").SourceText.ToString();
 
-        // The mini source declares four properties on the root. Every one of
-        // them must be assigned in the generated initializer.
-        foreach (var name in new[] { "Hostname", "Apt", "Keys", "Sub" })
+        // Every property declared on the root must be assigned in the
+        // generated initializer.
+        foreach (var name in new[] { "Hostname", "Apt", "Keys", "Sub", "StringDict", "RecordDict" })
         {
             mergeText.Should().Contain($"{name} = ", $"the generator must cover '{name}'");
         }

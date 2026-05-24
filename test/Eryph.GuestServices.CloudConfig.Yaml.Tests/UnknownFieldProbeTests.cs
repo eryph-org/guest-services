@@ -163,29 +163,42 @@ public sealed class UnknownFieldProbeTests
     }
 
     [Fact]
-    public void Object_property_plain_bool_resolves_to_native_bool()
+    public void ManageEtcHosts_plain_bool_stringifies()
     {
-        // Parser-level fix: every object?-typed property gets PyYAML-style
-        // YAML 1.2 type resolution, not just power_state.condition. Pin
-        // the universality so a future per-property hack doesn't reappear.
-        // ManageEtcHosts is `object?` on CloudConfig — same path.
+        // Phase 2 retyped `manage_etc_hosts` to `string?` because cloud-init
+        // accepts a mixed union of bool literals (`true`/`false`) and string
+        // enums (`"localhost"`, `"template"`). YamlDotNet coerces a plain
+        // YAML bool to its invariant-culture string form when the target is
+        // `string` — operators get "True" / "False" back; the downstream
+        // (Linux) module would treat that the same as the original literal.
         const string yaml = "manage_etc_hosts: true";
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().Be(true);
+        config.ManageEtcHosts.Should().BeOneOf("true", "True");
     }
 
     [Fact]
-    public void Object_property_quoted_bool_stays_a_string()
+    public void ManageEtcHosts_quoted_bool_keeps_string()
     {
-        // The plain-vs-quoted distinction must hold across ALL object?
-        // properties, not just Condition.
         const string yaml = "manage_etc_hosts: \"true\"";
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().BeOfType<string>().And.Be("true");
+        config.ManageEtcHosts.Should().Be("true");
+    }
+
+    [Fact]
+    public void ManageEtcHosts_string_enum_round_trips()
+    {
+        // The documented string literals (`localhost`, `template`) must
+        // survive verbatim — these are the most-used values in real
+        // cloud-config YAML.
+        const string yaml = "manage_etc_hosts: localhost";
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.ManageEtcHosts.Should().Be("localhost");
     }
 
     [Fact]
@@ -205,11 +218,14 @@ public sealed class UnknownFieldProbeTests
     public void Object_property_plain_null_resolves_to_null()
     {
         // YAML's null tokens (`~`, `null`, empty) all resolve to .NET null.
-        const string yaml = "manage_etc_hosts: ~";
+        // apt_pipelining stays `object?` because cloud-init accepts a union
+        // of bool (true/false/none) plus the string "default" — the YAML 1.2
+        // resolver dispatches each form to its native .NET type.
+        const string yaml = "apt_pipelining: ~";
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
-        config.ManageEtcHosts.Should().BeNull();
+        config.AptPipelining.Should().BeNull();
     }
 
     [Fact]
@@ -218,16 +234,22 @@ public sealed class UnknownFieldProbeTests
         // Non-scalar shapes (mappings, sequences) must fall through to
         // YamlDotNet's standard handlers — Apt etc. need to retain their
         // structured contents so CloudConfigSerializer's presence-check
-        // can distinguish "set to {}" from "omitted entirely".
+        // can distinguish "set to {}" from "omitted entirely". The shape
+        // here mirrors cloud-init's documented apt.sources schema (each
+        // dict value is itself a mapping with source/keyid/etc fields).
         const string yaml = """
                             apt:
                               sources:
-                                deb: src
+                                my-source:
+                                  source: deb http://example /
+                                  keyid: ABCD1234
                             """;
 
         var config = CloudConfigYamlSerializer.Deserialize(yaml);
 
         config.Apt.Should().NotBeNull();
+        config.Apt!.Sources.Should().ContainKey("my-source");
+        config.Apt.Sources!["my-source"].Source.Should().Be("deb http://example /");
     }
 
     [Fact]
