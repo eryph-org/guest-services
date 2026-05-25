@@ -26,7 +26,8 @@ re-run.
   "dataSources": {
     "readinessTimeoutMinutes": 5,
     "minBackoffSeconds": 1,
-    "maxBackoffSeconds": 60
+    "maxBackoffSeconds": 60,
+    "dataSourceList": ["NoCloud", "ConfigDrive", "Azure"]
   },
   "scripts": {
     "perInstanceDirectory": "%ProgramData%\\eryph\\provisioning\\scripts\\per-instance",
@@ -59,6 +60,21 @@ are allowed.
 | `readinessTimeoutMinutes` | `5` | Total wall-clock budget for `LocateAsync` across **all** sources. When exhausted, the run exits with `NoDataSource`. |
 | `minBackoffSeconds` | `1` | Floor for the `WaitForReady` backoff. |
 | `maxBackoffSeconds` | `60` | Cap on exponential growth between retries. |
+| `dataSourceList` | _(unset)_ | Ordered list of datasource names to probe (e.g. `["NoCloud","ConfigDrive","Azure"]`), mirroring cloud-init's `datasource_list`. See below. |
+
+`dataSourceList` (the JSON key is camelCase, like every other setting)
+mirrors cloud-init's `datasource_list`:
+
+- **Unset / empty** (default): every registered source is probed in
+  `Priority` order — see [Datasources](datasources.md).
+- **Set**: only the named sources are probed, **in the listed order**
+  (priority is ignored for selection). Matching is case-insensitive on
+  the source name.
+- Names that match no registered source are logged at **Warning** and
+  ignored — a typo never crashes the run.
+- If *every* name is unknown, the locator logs a Warning and falls back
+  to all sources in `Priority` order, so a fully-typo'd list cannot
+  silently disable provisioning.
 
 Per-source overrides are not exposed in v1. See
 [RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md).
@@ -91,7 +107,9 @@ each reboot once) still trips the outer cap. Keep `maxPerScript` ≤
 
 ## What's not in v1
 
-- Per-stage module allow/deny lists. The module set is fixed; see
-  [RFC 0009](../../rfcs/0009-module-list-split.md).
 - Per-datasource overrides (e.g. `dataSources.azure.timeoutMinutes`).
 - Jinja2 / vendor-data merge knobs.
+
+> Per-stage module allow/deny lists (`stages.<Stage>.enabledModules` /
+> `disabledModules`) **are** supported — see
+> [RFC 0009](../../rfcs/0009-module-list-split.md).
