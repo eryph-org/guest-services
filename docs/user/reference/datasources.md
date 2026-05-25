@@ -1,142 +1,88 @@
 # Datasources
 
-The agent locates exactly one datasource at the start of each run. The
-locator probes every registered source, lowest `Priority` value first,
-and returns the first one that says `Ready`. If a source says
-`WaitForReady`, the locator backs off (1s → 60s, exponential) and tries
-again, sharing a global wall-clock budget with every other source
-(default 15 minutes).
+The agent picks one datasource at the start of a run. It probes the registered
+sources in priority order and uses the first one that has data. A source that
+isn't ready yet (Azure during OOBE, say) is retried with a growing backoff
+(1s up to 60s), sharing one overall budget across all sources — 15 minutes by
+default. If nothing becomes ready in that time, the run exits cleanly without
+provisioning; it isn't treated as a failure.
 
-If no source becomes ready within the budget, the run exits cleanly
-with `NoDataSource` — no provisioning happens, no failure is reported.
-
-| Source | Priority | Requires network |
+| Source | Priority | Needs network |
 | --- | --- | --- |
-| `Azure` | 10 | yes |
-| `EC2` | 20 | yes (stub) |
-| `NoCloud` | 30 | no |
-| `ConfigDrive` | 40 | no |
+| Azure | 10 | yes |
+| EC2 | 20 | yes (stub) |
+| NoCloud | 30 | no |
+| ConfigDrive | 40 | no |
 
-By default every registered source is probed in `Priority` order. The
-set and order are operator-configurable via the `dataSources.dataSourceList`
-[setting](settings.md#datasources--locator-tunables) — mirroring
-cloud-init's `datasource_list`. When it is set, only the named sources
-are probed, in the listed order (priority is ignored for selection);
-unknown names are logged at Warning and skipped. When unset, the
-priority order below applies.
-
-The `OverrideDataSource` used by `egs-service run --user-data` is
-synthetic and short-circuits discovery entirely.
-
----
+By default all sources are probed in this order. To restrict or reorder them,
+set `dataSources.dataSourceList` in [settings](settings.md) — the sources you
+name are probed in that order and the rest are ignored. `egs-service run
+--user-data` bypasses discovery entirely and uses the file you pass.
 
 ## Azure
 
-**Priority:** 10. **Requires network:** yes (link-local IMDS).
+Detected by the `HKLM\SOFTWARE\Microsoft\Windows Azure\VmId` registry value or
+the Azure SMBIOS asset tag. The agent reads, in order: `C:\AzureData\CustomData.bin`
+(written by Microsoft's Provisioning Agent during OOBE — raw bytes, not encrypted),
+the instance metadata service at `169.254.169.254` for instance details, and
+`ovf-env.xml` from a still-mounted ConfigDrive as a fallback. The instance id
+comes from IMDS, then the registry; the hostname from ovf-env or IMDS (the PA has
+usually already applied it).
 
-**Detection.** Two signals, either suffices:
-
-1. Registry value `HKLM\SOFTWARE\Microsoft\Windows Azure\VmId` exists and is non-empty.
-2. SMBIOS `Win32_SystemEnclosure.SMBIOSAssetTag` equals `7783-7084-3265-9085-8269-3286-77`.
-
-Neither match → `NotApplicable`.
-
-**Data read.** Three sources, in this order:
-
-1. `C:\AzureData\CustomData.bin` — written by Microsoft's Provisioning
-   Agent (PA) during OOBE. Raw bytes. **Not encrypted** at any layer.
-2. IMDS `http://169.254.169.254/metadata/instance?api-version=2021-02-01`
-   with the mandatory `Metadata: true` header. Used for `compute.vmId`,
-   `compute.name`, `compute.location`, `compute.zone`, `compute.vmSize`.
-3. `ovf-env.xml` from a still-mounted ConfigDrive (fallback, rare on
-   Azure post-PA).
-
-**InstanceId** resolution: IMDS `vmId` → registry `VmId` → `Failed`.
-**Hostname**: ovf-env → IMDS `name`. PA has usually already applied it;
-the value is largely informational.
-
-**Coexistence (HARD RULE).** PA and the long-running Windows Guest
-Agent (`WindowsAzureGuestAgent.exe`) own the Azure wireserver channel
-indefinitely. The agent **never** POSTs to the wireserver, never sends
-telemetry as a Microsoft component, never re-applies hostname / admin
-user / RDP — those are PA's job. See
+The agent never touches the Azure wireserver. The Provisioning Agent and the
+Windows Guest Agent own that channel and the hostname, admin user, and RDP
+setup — the agent stays off it entirely. See
 [Coexistence](../explanation/coexistence.md).
 
-**Cleanup hook.** On successful provisioning, `CustomData.bin` is
-deleted (and the parent directory removed if empty). Mirrors cloudbase-
-init. Best-effort; cleanup failures log a warning and the run still
-reports Success.
-
----
+On success the agent deletes `CustomData.bin` (and its directory if empty). A
+cleanup failure is logged and the run still succeeds.
 
 ## NoCloud
 
-**Priority:** 30. **Requires network:** no.
-
-**Detection.** A mounted volume whose label is `cidata`. On Azure the
-source declines (`NotApplicable`) defensively — that disk, if any, is
-PA's.
-
-**Layout expected on the volume root:**
+Detected by a mounted volume labelled `cidata`. On Azure the source declines —
+that disk belongs to the Provisioning Agent.
 
 | File | Required | Used for |
 | --- | --- | --- |
-| `meta-data` | yes | `instance-id`, `local-hostname` |
-| `user-data` | no | Raw user-data bytes (sniffed downstream) |
-| `vendor-data` | no | Vendor user-data bytes (parsed; not applied) |
-| `network-config` | no | network-config v1/v2 YAML |
+| `meta-data` | yes | `instance-id`, `local-hostname`, and any other keys |
+| `user-data` | no | the user-data payload |
+| `vendor-data` | no | vendor data (read, not applied) |
+| `network-config` | no | network-config v1 or v2 |
 
-`user-data` and `vendor-data` are read as **raw bytes** — never round-
-tripped through `ReadAllText`. Real-world user-data is frequently
-gzipped multipart MIME whose bytes are not valid UTF-8.
+`user-data` and `vendor-data` are read as raw bytes — real payloads are often
+gzipped multipart MIME, which isn't valid text. A `seedfrom` entry in
+`meta-data` pointing at a `file://` or `http(s)://` base fetches the seed's
+`meta-data` and `user-data` from there.
 
-**Cleanup hook.** No-op. eryph-zero keeps the cidata ISO attached so
-`egs-service reset` can re-read the same payload. Matches cloud-init.
-
----
+The agent doesn't eject the volume on success, so `egs-service reset` can read
+the same payload again.
 
 ## ConfigDrive
 
-**Priority:** 40. **Requires network:** no.
-
-**Detection.** A mounted volume whose label is `config-2`. Declines on
-Azure for the same reason as NoCloud.
-
-**Version walk.** Like cloud-init, the source walks the dated metadata
-versions `openstack/<version>/` newest-first (`2018-08-27` down to
-`2012-08-10`) and reads the first one whose `meta_data.json` is present,
-falling back to `openstack/latest/`. ISOs that omit the `latest` symlink are
-still picked up.
-
-**Layout expected** (`<version>` is the resolved version above):
+Detected by a mounted volume labelled `config-2`; declines on Azure for the same
+reason as NoCloud. The agent walks `openstack/<version>/` newest-first across the
+dated OpenStack versions (`2018-08-27` down to `2012-08-10`) and reads the first
+that has a `meta_data.json`, falling back to `openstack/latest/`. ISOs without
+the `latest` link are still found.
 
 | File | Required | Used for |
 | --- | --- | --- |
-| `openstack/<version>/meta_data.json` | yes | `uuid` (instance id), `hostname` / `name`, `availability_zone`, `public_keys` |
-| `openstack/<version>/user_data` | no | Raw user-data bytes |
-| `openstack/<version>/vendor_data.json` | no | Vendor data (parsed; merge deferred) |
-| `openstack/<version>/network_data.json` | no | network-config (best-effort YAML parse — JSON form is not v1 supported) |
+| `openstack/<version>/meta_data.json` | yes | `uuid` (instance id), hostname, availability zone, `public_keys` |
+| `openstack/<version>/user_data` | no | the user-data payload |
+| `openstack/<version>/vendor_data.json` | no | vendor data (read, not applied) |
+| `openstack/<version>/network_data.json` | no | network-config (best-effort) |
 
-Bytes are read raw, same as NoCloud.
-
-**SSH keys.** `meta_data.json` `public_keys` (the OpenStack object form, plus
-the string / array forms cloud-init tolerates) are applied to the resolved
-default user, merged with the cloud-config top-level `ssh_authorized_keys`.
-
-**Cleanup hook.** No-op. Same rationale as NoCloud.
-
----
+`public_keys` (the OpenStack object form, or the string/array forms cloud-init
+accepts) are applied to the default user, alongside the cloud-config
+`ssh_authorized_keys`. The volume isn't ejected on success.
 
 ## EC2
 
-A stub for future AWS use. Returns `NotApplicable` today.
+A stub for future AWS support — it reports no data today.
 
----
+## CLI override
 
-## Override (CLI)
-
-`egs-service run --user-data <path>` constructs an `OverrideDataSource`
-that bypasses discovery entirely. The instance id is either the
-`--instance-id` flag or `cli-override-<8-hex>`. Useful for `--dry-run`
-and for re-running the agent against a synthetic payload without
-touching the real datasource.
+`egs-service run --user-data <path>` reads a payload from disk and skips
+datasource discovery. The instance id comes from `--instance-id` or a generated
+`cli-override-<hex>` value. Useful with `--dry-run` and for re-running against a
+test payload.

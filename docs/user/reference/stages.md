@@ -1,74 +1,54 @@
 # Stages
 
-The agent runs four stages, in order: `Local`, `Network`, `Config`,
-`Final`. Names and intent mirror cloud-init.
+The agent runs four stages in order — `Local`, `Network`, `Config`, `Final` —
+with the same names and intent as cloud-init.
 
 | Stage | Modules | Purpose |
 | --- | --- | --- |
-| `Local` | (none) | Platform setup before networking is available. Reserved for future use (`disk_setup`, etc.). |
-| `Network` | `Growpart` (0), `SetHostname` (1), `ApplyNetworkConfig` (2), `NtpClient` (3), `Timezone` (4), `SetLocale` (5) | Identity + IP. Done before anything that talks over the wire. |
-| `Config` | `UsersGroups` (0), `SetPasswords` (1), `SshModule` (2), `WriteFiles` (3), `Runcmd` (4), `Licensing` (5) | Host configuration. The bulk of the cloud-config schema lives here. |
-| `Final` | `WriteFilesDeferred` (-1), `ScriptsUser` (0), `PowerState` (last) | Deferred writes, user scripts, optional controlled reboot — runs after everything else has settled. |
+| Local | (none) | Platform setup before networking. Reserved for future use. |
+| Network | Growpart, SetHostname, ApplyNetworkConfig, NtpClient, Timezone, SetLocale | Identity and IP, settled before anything talks over the network. |
+| Config | UsersGroups, SetPasswords, SshModule, WriteFiles, Runcmd, Licensing | Host configuration — most of the cloud-config schema. |
+| Final | WriteFilesDeferred, ScriptsUser, PowerState | Deferred writes, user scripts, and an optional controlled reboot, after everything else has run. |
 
-Modules declare their stage and order via the `[Stage(...)]` attribute.
-Order within a stage is the integer from the attribute, ties broken by
-type name.
+Within a stage, modules run in a fixed order. The order is part of each module
+and can't be changed; which modules run in a stage can — see the `stages` block
+in [settings](settings.md).
 
-## Run order
+## How a run proceeds
 
-`StageRunner.RunAsync(ct)` walks the stages top-to-bottom. Per stage:
+The agent works through the stages top to bottom. In each stage it runs the
+eligible modules in order, skipping any whose semaphore is already set. User-data
+is parsed once, the first time a stage past `Local` needs it. After the Final
+stage finishes, the agent runs the datasource's cleanup step — on Azure that
+deletes `CustomData.bin`; for the other datasources it does nothing.
 
-1. Emit `StageStarted`.
-2. Resolve user-data once (lazy — happens on first stage that isn't
-   `Local`).
-3. For each module: check the semaphore; skip if already satisfied;
-   otherwise call `ApplyAsync`.
-4. On `Completed` / `RebootRequested`, write the semaphore. On `Failed`
-   no semaphore is written — the module re-runs next pass.
-5. Emit `StageCompleted`.
-
-After Final completes successfully:
-- Emit `ProvisioningCompleted`.
-- Call the datasource's `OnCompletedAsync` cleanup hook (Azure deletes
-  `CustomData.bin` here; NoCloud / ConfigDrive / KVP are no-ops).
-
-## Running a single stage
+## Running one stage
 
 ```powershell
 egs-service run --stage network
 egs-service run --stage config
 ```
 
-User-data is resolved lazily so a `--stage local` call doesn't pay the
-parse cost. `--stage network`/`config`/`final` resolves user-data on
-entry — the Config and Final modules depend on it.
+User-data is parsed only when needed, so `--stage local` skips the parse; the
+other stages parse it on entry because their modules depend on it.
 
-## Reboot-and-continue
+## Reboot during a run
 
-A module that returns `ModuleOutcome.Reboot(...)` (e.g.
-`SetHostname` when Windows says rename-is-pending, or `Runcmd` /
-`ScriptsUser` when an entry exited 1003) suspends the run. The runner:
+When a module needs a reboot — `SetHostname` after a rename that Windows defers,
+or a `runcmd`/script that exits `1003` — the run stops, the agent records that
+module as done so it isn't repeated, and the guest reboots (`shutdown /r`, unless
+`--dry-run`). On the next boot the per-instance markers survive, so the agent
+skips the completed modules and continues from where it left off.
 
-1. Writes the module's semaphore (so this module is not re-evaluated
-   after the reboot).
-2. Returns `StageRunOutcome.RebootRequested`. The CLI translates this
-   into `shutdown.exe /r /t 5` unless `--dry-run` was given.
+## cloud-init mapping
 
-On the next boot, the agent's per-instance semaphores survive; the
-agent skips the already-completed modules and resumes from the next
-one.
-
-## Cloud-init mapping
-
-| Cloud-init stage | Agent stage |
+| cloud-init stage | This agent |
 | --- | --- |
-| `init-local` | `Local` |
-| `init` (network) | `Network` |
-| `modules:config` | `Config` |
-| `modules:final` | `Final` |
+| `init-local` | Local |
+| `init` (network) | Network |
+| `modules:config` | Config |
+| `modules:final` | Final |
 
-The four-stage shape and the names match by intent. Cloud-init's
-`cloud_init_modules` / `cloud_config_modules` / `cloud_final_modules`
-selection maps to the per-stage `enabledModules` / `disabledModules`
-allow/deny lists in [Settings](settings.md) — stage membership and
-intra-stage order stay fixed by the `[Stage]` / `[Order]` attributes.
+cloud-init's `cloud_init_modules` / `cloud_config_modules` /
+`cloud_final_modules` lists map to the per-stage `enabledModules` /
+`disabledModules` settings; stage membership and order stay fixed.
