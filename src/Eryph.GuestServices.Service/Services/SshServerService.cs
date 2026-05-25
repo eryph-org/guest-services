@@ -21,15 +21,26 @@ internal sealed class SshServerService(
     IGuestDataExchange guestDataExchange,
     IClientKeyProvider clientKeyProvider,
     IShellSelector shellSelector,
+    IServiceControlFlags controlFlags,
     ILogger<SshServerService> logger) : IHostedService, IAsyncDisposable
 {
     private Socket? _socket;
     private SocketSshServer? _server;
     private Task? _listenTask;
+    private bool _started;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await Task.Yield();
+
+        if (!controlFlags.IsRemoteAccessEnabled())
+        {
+            logger.LogInformation(
+                "Remote access disabled via registry (HKLM\\SOFTWARE\\eryph\\guest-services\\RemoteAccessEnabled=0); SSH transport not started.");
+            return;
+        }
+
+        _started = true;
 
         var hostKey = await keyStorage.GetHostKeyAsync();
         if (hostKey is null)
@@ -64,11 +75,18 @@ internal sealed class SshServerService(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // When remote access is disabled the transport was never started: no
+        // listener, no socket, and no status was advertised. Skip the teardown
+        // (including the KVP status clear) so a never-started service is safe to
+        // stop.
+        if (!_started)
+            return;
+
         await SetStatusAsync(null);
         _server?.Dispose();
         if (_listenTask is not null)
             await _listenTask.WaitAsync(cancellationToken);
-        
+
         _socket?.Dispose();
     }
 
@@ -119,6 +137,9 @@ internal sealed class SshServerService(
 
     public async ValueTask DisposeAsync()
     {
+        if (!_started)
+            return;
+
         await SetStatusAsync(null);
         _server?.Dispose();
         _socket?.Dispose();

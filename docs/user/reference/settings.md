@@ -89,6 +89,39 @@ individual script has hit `maxPerScript` (e.g. three different scripts
 each reboot once) still trips the outer cap. Keep `maxPerScript` ≤
 `maxPerModule`.
 
+## Service control (registry)
+
+Two operator on/off switches turn the top-level guest-services capabilities
+off. They are **registry-based, not part of `egs-provisioning.json`**: they are
+host/operator controls (the operator decides what a guest is allowed to do),
+separate from the provisioning tunables above.
+
+Key: `HKLM\SOFTWARE\eryph\guest-services`. Both values are `REG_DWORD`.
+
+| Value | Capability gated | Default |
+| --- | --- | --- |
+| `ProvisioningEnabled` | The cloud-init-style first-boot provisioning agent. When off, no user-data is applied at boot. | on |
+| `RemoteAccessEnabled` | The remote-access transport — the Hyper-V-vsock SSH server `egs-tool` connects to for shell / exec / file transfer. When off, the transport is not started. | on |
+
+Both are **opt-out**: a capability is **on** when the value is absent (or set to
+any non-zero number), and **off only** when set to an explicit `0`. A missing
+key, a read error, or a non-Windows host all leave the capability on (fail-open
+— a registry problem never silently disables a capability).
+
+Turn a capability off (PowerShell, elevated):
+
+```powershell
+New-Item -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Force | Out-Null
+# disable first-boot provisioning
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'ProvisioningEnabled' -Type DWord -Value 0
+# disable the remote-access SSH transport
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'RemoteAccessEnabled' -Type DWord -Value 0
+```
+
+Set the value back to `1` (or delete it) to re-enable. The flags are read at
+service start, so restart the `eryph guest services` service after changing
+them.
+
 ## What's not in v1
 
 - Per-stage module allow/deny lists. The module set is fixed; see

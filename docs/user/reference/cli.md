@@ -112,3 +112,10 @@ egs-service version
 
 Prints the entry-assembly name + version + the
 `AssemblyInformationalVersionAttribute` informational string.
+
+## Disabling a capability
+
+To turn off first-boot provisioning or the remote-access SSH transport on a
+guest, use the opt-out registry flags `ProvisioningEnabled` /
+`RemoteAccessEnabled` under `HKLM\SOFTWARE\eryph\guest-services`. See
+[Service control (registry)](settings.md#service-control-registry).

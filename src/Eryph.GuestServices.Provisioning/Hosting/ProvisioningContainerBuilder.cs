@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.DataSources;
@@ -66,6 +67,11 @@ internal static class ProvisioningContainerBuilder
         // helpers depend on ProvisioningSettings directly; tunables that were
         // previously public constants live here so they're operator-configurable.
         container.RegisterInstance(ProvisioningSettings.LoadOrDefault());
+
+        // Operator on/off flags (HKLM\SOFTWARE\eryph\guest-services). Injected so
+        // ProvisioningHostedService can gate the first-boot run. Opt-out: ON
+        // unless an explicit REG_DWORD 0 turns it off.
+        container.Register<IServiceControlFlags, RegistryServiceControlFlags>(Lifestyle.Singleton);
 
         // Data sources. The locator orders by IDataSource.Priority, not registration
         // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40).
