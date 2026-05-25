@@ -1,14 +1,12 @@
 # `egs-service` CLI
 
-Every subcommand exits 0 on success. Common flags:
+Every subcommand exits 0 on success. `--state-dir <DIR>` overrides the state
+root (default `%ProgramData%\eryph\provisioning`) and works on any subcommand —
+useful for trying the agent in a sandbox.
 
-- `--state-dir <DIR>` — override the state root (default
-  `%ProgramData%\eryph\provisioning`). Lets you exercise the agent in
-  a sandbox.
+## `run`
 
-## `run` — execute the stages
-
-Runs the configured stages synchronously and exits.
+Runs the stages and exits.
 
 ```powershell
 egs-service run
@@ -19,18 +17,16 @@ egs-service run --instance-id i-12345 --user-data C:\Temp\sample.yaml
 
 | Flag | Description |
 | --- | --- |
-| `--dry-run` | Log intended actions; do not mutate the guest. Reboots are also suppressed. |
-| `--stage <s>` | Run a single stage only: `local`, `network`, `config`, `final`. |
-| `--user-data <PATH>` | Override the datasource with the bytes of a local file. |
-| `--instance-id <ID>` | Override the instance id. Implies fresh-instance treatment. |
+| `--dry-run` | Log what would happen; change nothing, and don't reboot. |
+| `--stage <s>` | Run one stage only: `local`, `network`, `config`, `final`. |
+| `--user-data <PATH>` | Use a local file instead of a discovered datasource. |
+| `--instance-id <ID>` | Override the instance id (treated as a fresh instance). |
 | `--state-dir <DIR>` | Override the state root. |
 
-Exit codes:
-- `0` — Success or `NoDataSource` or `RebootRequested` (with reboot triggered or dry-run).
-- `1` — Failed (any stage threw).
-- `2` — Bad CLI args (e.g. unknown `--stage`, missing `--user-data` file).
+Exit codes: `0` success (including no datasource found, or a reboot triggered);
+`1` a stage failed; `2` bad arguments (unknown `--stage`, missing `--user-data`).
 
-## `status` — inspect the current state
+## `status`
 
 ```powershell
 egs-service status
@@ -38,17 +34,14 @@ egs-service status --json
 egs-service status --wait
 ```
 
-Reads `state.json` from disk (never an in-memory copy) so the result
-reflects what the next agent boot will see. `--wait` polls every 2s
-for up to 60 minutes until the `Final` stage is in
-`completedStages`.
+Reads the on-disk state, so it reflects what the next boot will see. `--wait`
+polls every 2 seconds for up to 60 minutes until the Final stage has completed.
+Exit codes: `0` success, `3` `--wait` timed out.
 
-Exit codes: 0 on success, 3 on `--wait` timeout.
+## `reset`
 
-## `reset` — clear semaphores and state
-
-Mirrors `cloud-init clean`. See
-[Reset and re-run](../howto/reset-and-rerun.md) for the matrix.
+Clears semaphores and state, like `cloud-init clean`. See
+[Reset and re-run](../howto/reset-and-rerun.md).
 
 ```powershell
 egs-service reset
@@ -59,63 +52,56 @@ egs-service reset --logs --scripts
 
 | Flag | Description |
 | --- | --- |
-| `--logs` | Also delete `logs\` (per-script logs). |
+| `--logs` | Also delete per-script logs. |
 | `--scripts` | Also delete staged user-data scripts. |
-| `--reset-once` | Also clear per-once semaphores. Default behavior keeps them. |
-| `--keep-per-boot` | Keep per-boot semaphores. Default behavior clears them. |
-| `-y` / `--yes` | No-op (reset never prompts). Kept for script compatibility. |
+| `--reset-once` | Also clear per-once semaphores (kept by default). |
+| `--keep-per-boot` | Keep per-boot semaphores (cleared by default). |
+| `-y` / `--yes` | Accepted for script compatibility; reset never prompts. |
 
-## `collect-logs` — bundle the state for support
+## `collect-logs`
 
 ```powershell
 egs-service collect-logs C:\Temp\egs-bundle.zip
 ```
 
-Zips `state.json`, `logs\`, `scripts\`, and a `version.txt`. Overwrites
-the output. Missing inputs are skipped silently.
+Zips the state file, the logs, the staged scripts, and a version file into the
+given path, overwriting it. Missing inputs are skipped.
 
-## `validate` — sanity-check a cloud-config
+## `validate`
 
-Runs the same parser and validators the agent uses at run-time, without
-applying anything.
+Runs the same parser and checks the agent uses at boot, without applying
+anything.
 
 ```powershell
 egs-service validate --user-data C:\Temp\sample.yaml
 egs-service validate --user-data C:\Temp\sample.yaml --target windows
-egs-service validate --user-data C:\Temp\sample.yaml --target linux
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--user-data <PATH>` | Path to the cloud-config user-data file (required). |
-| `--target <TARGET>` | Platform portability check: `windows`, `linux`, or `all` (default). |
+| `--user-data <PATH>` | The cloud-config file to check (required). |
+| `--target <TARGET>` | Portability check: `windows`, `linux`, or `all` (default). |
 
-`--target windows` walks the source-generated platform inventory and
-emits a Warning for every top-level key present in the YAML that has
-no Windows behaviour (e.g. `apt`, `chef`, `phone_home`). Useful in CI
-to flag cross-cloud cloud-config that drifts into Linux-only territory.
+`--target windows` warns about each top-level key in the file that does nothing
+on Windows (`apt`, `chef`, `phone_home`, …) — handy in CI to catch cross-cloud
+configs drifting into Linux-only territory. `--target linux` flags the reverse
+(today, `license`). `--target all` skips the portability check. Validation runs
+either way.
 
-`--target linux` mirrors the check from the other direction — flags
-Windows-only keys (today: `license`).
+Exit codes: `0` valid (portability warnings are informational); `1` rejected;
+`2` not parseable, or an unknown `--target`.
 
-`--target all` (the default) is the lenient form — no portability
-warnings. Validation always runs regardless.
-
-Exit codes: 0 valid (portability warnings are informational), 1
-validation rejected, 2 not parseable or unknown `--target` value.
-
-## `version` — print the agent version
+## `version`
 
 ```powershell
 egs-service version
 ```
 
-Prints the entry-assembly name + version + the
-`AssemblyInformationalVersionAttribute` informational string.
+Prints the agent name and version.
 
-## Disabling a capability
+## Turning a capability off
 
-To turn off first-boot provisioning or the remote-access SSH transport on a
-guest, use the opt-out registry flags `ProvisioningEnabled` /
-`RemoteAccessEnabled` under `HKLM\SOFTWARE\eryph\guest-services`. See
-[Service control (registry)](settings.md#service-control-registry).
+To disable first-boot provisioning or the remote-access transport on a guest,
+use the registry flags `ProvisioningEnabled` / `RemoteAccessEnabled` under
+`HKLM\SOFTWARE\eryph\guest-services` — see
+[Service control](settings.md#service-control-registry).
