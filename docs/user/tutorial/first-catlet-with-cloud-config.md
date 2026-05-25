@@ -77,11 +77,9 @@ Get-LocalUser alice               # exists, in Administrators
 
 ## Step 5 — re-run on the same VM
 
-The provisioning agent is gated by per-instance semaphores: it sees the
-existing instance id and skips already-completed modules. If you change
-the fodder and `eryph catlet update --reload`, the agent re-evaluates
-the per-instance semaphores; modules whose frequency is `per-instance`
-will not re-run unless you reset state inside the guest:
+On the same instance the agent skips modules that already ran. Changing
+the fodder and reloading the catlet doesn't re-run the per-instance
+modules — reset state inside the guest first:
 
 ```powershell
 ssh demo.eryph.alt

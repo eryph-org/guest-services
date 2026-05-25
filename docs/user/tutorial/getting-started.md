@@ -37,8 +37,7 @@ egs-service run --dry-run --user-data C:\Temp\sample.yaml
 
 Output, in order:
 
-- An override-datasource probe — `--user-data` short-circuits discovery
-  with a synthetic source, so no real datasource is consulted.
+- A note that the file you passed is being used instead of a datasource.
 - A header per stage (`Local`, `Network`, `Config`, `Final`) listing the
   modules it will run.
 - A "DRY-RUN: …" line for each action a module would take.
