@@ -104,6 +104,3 @@ mid-rename. See [Stages reference](../reference/stages.md).
 egs-service reset
 egs-service run --stage network
 ```
-
-See [RFC 0002](../../rfcs/0002-network-config-v1-v2-application.md) for the
-design.

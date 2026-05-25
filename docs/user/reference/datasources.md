@@ -5,7 +5,7 @@ locator probes every registered source, lowest `Priority` value first,
 and returns the first one that says `Ready`. If a source says
 `WaitForReady`, the locator backs off (1s → 60s, exponential) and tries
 again, sharing a global wall-clock budget with every other source
-(default 15 minutes). See [RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md).
+(default 15 minutes).
 
 If no source becomes ready within the budget, the run exits cleanly
 with `NoDataSource` — no provisioning happens, no failure is reported.
@@ -60,15 +60,12 @@ Agent (`WindowsAzureGuestAgent.exe`) own the Azure wireserver channel
 indefinitely. The agent **never** POSTs to the wireserver, never sends
 telemetry as a Microsoft component, never re-applies hostname / admin
 user / RDP — those are PA's job. See
-[Coexistence](../explanation/coexistence.md) and
-[RFC 0008](../../rfcs/0008-platform-native-provisioner-coexistence.md) /
-[RFC 0014](../../rfcs/0014-azure-datasource.md).
+[Coexistence](../explanation/coexistence.md).
 
 **Cleanup hook.** On successful provisioning, `CustomData.bin` is
 deleted (and the parent directory removed if empty). Mirrors cloudbase-
 init. Best-effort; cleanup failures log a warning and the run still
-reports Success. See
-[RFC 0005](../../rfcs/0005-datasource-cleanup-hook.md).
+reports Success.
 
 ---
 
@@ -86,7 +83,7 @@ PA's.
 | --- | --- | --- |
 | `meta-data` | yes | `instance-id`, `local-hostname` |
 | `user-data` | no | Raw user-data bytes (sniffed downstream) |
-| `vendor-data` | no | Vendor user-data bytes (parsed; merge deferred — see [RFC 0001](../../rfcs/0001-vendor-data-merge-policy.md)) |
+| `vendor-data` | no | Vendor user-data bytes (parsed; not applied) |
 | `network-config` | no | network-config v1/v2 YAML |
 
 `user-data` and `vendor-data` are read as **raw bytes** — never round-
@@ -132,8 +129,7 @@ default user, merged with the cloud-config top-level `ssh_authorized_keys`.
 
 ## EC2
 
-A stub for future AWS use. Returns `NotApplicable` today. Tracked under
-[RFC 0008](../../rfcs/0008-platform-native-provisioner-coexistence.md).
+A stub for future AWS use. Returns `NotApplicable` today.
 
 ---
 

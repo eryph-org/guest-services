@@ -30,8 +30,7 @@ type name.
 After Final completes successfully:
 - Emit `ProvisioningCompleted`.
 - Call the datasource's `OnCompletedAsync` cleanup hook (Azure deletes
-  `CustomData.bin` here; NoCloud / ConfigDrive / KVP are no-ops). See
-  [RFC 0005](../../rfcs/0005-datasource-cleanup-hook.md).
+  `CustomData.bin` here; NoCloud / ConfigDrive / KVP are no-ops).
 
 ## Running a single stage
 
@@ -73,4 +72,3 @@ The four-stage shape and the names match by intent. Cloud-init's
 selection maps to the per-stage `enabledModules` / `disabledModules`
 allow/deny lists in [Settings](settings.md) — stage membership and
 intra-stage order stay fixed by the `[Stage]` / `[Order]` attributes.
-See [RFC 0009](../../rfcs/0009-module-list-split.md).

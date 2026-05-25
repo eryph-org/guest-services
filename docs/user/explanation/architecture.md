@@ -49,9 +49,7 @@ When all sources have been dropped or the budget is exhausted, the run
 exits cleanly with `NoDataSource` — the "this is not a provisioning
 environment" path. A Hyper-V VM with no fodder attached lands here.
 
-See [datasources reference](../reference/datasources.md) and
-[RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md) /
-[RFC 0005](../../rfcs/0005-datasource-cleanup-hook.md).
+See [datasources reference](../reference/datasources.md).
 
 ## User-data pipeline
 
@@ -105,8 +103,7 @@ The recursion limit is `userData.maxRecursionDepth`
   host can read it. This is how `egs-tool get-status` works.
 
 Multi-handler reporting (Azure wireserver callback, AWS lifecycle
-signals, generic webhook) is deferred to
-[RFC 0006](../../rfcs/0006-multi-handler-reporting-cloud-backends.md).
+signals, generic webhook) is not shipped.
 
 ## State store
 

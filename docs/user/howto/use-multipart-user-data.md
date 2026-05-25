@@ -36,7 +36,7 @@ Write-Host 'second'
 | --- | --- |
 | `text/cloud-config`, `text/x-cloud-config` | Cloud-config fragment (merged into the final config). |
 | `text/x-shellscript` | Script payload (PowerShell or cmd; see below). |
-| `text/cloud-boothook` | Captured as a boothook but **not executed** in v1. See [RFC 0013](../../rfcs/0013-boothook-execution.md). |
+| `text/cloud-boothook` | Captured as a boothook but **not executed** in v1. |
 | `text/x-include-url`, `text/x-include-once-url` | Fetch URL(s) and recurse on the result. |
 | `multipart/mixed`, `multipart/*` | Nested multipart — recursed into. |
 | `application/octet-stream`, `text/plain`, missing | Sniffed from the body — same rules as the root user-data. |
@@ -56,18 +56,19 @@ extension matches what you want to run (`.ps1`, `.cmd`/`.bat`). This is
 what eryph fodder genes already emit; the rule exists so we accept the
 same shape cloudbase-init does.
 
-## Missing close delimiter
+## Close delimiter is required
 
-RFC 2046 requires the multipart to end with `--boundary--`. Real eryph
-fodder sometimes ships without the closing line. The agent tolerates
-that and flushes the last open part — otherwise the last script would
-be silently dropped. cloudbase-init may not tolerate the same shape.
+The MIME spec requires the multipart to end with `--boundary--`. The
+agent enforces this — a multipart that omits the closing line is
+rejected, so make sure your last part is followed by `--boundary--`. The
+example above ends with `--==BOUNDARY==--` for exactly this reason.
 
 ## Sniffing the root
 
-If the root user-data starts with a `From nobody …` mbox preamble (cbi
-historically wraps multiparts that way) the agent skips the line before
-sniffing. UTF-8 BOM at the start of the file is stripped too.
+A leading `From ` mbox envelope line or a `From:` header before the MIME
+headers is normal and common — the agent reads the multipart whether or
+not such a line precedes the headers. UTF-8 BOM at the start of the file
+is stripped too.
 
 ## Validating
 
