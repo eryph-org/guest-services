@@ -41,14 +41,12 @@ public sealed class MultipartMimeHandlerTests
         ctx.NestedParts[1].Filename.Should().Be("boot.ps1");
     }
 
-    // Regression: eryph-zero's configdrive ships multipart MIME WITHOUT the
-    // RFC 2046 mandatory `--boundary--` close delimiter. Our parser only
-    // flushed a collecting part on `--boundary--` or the next `--boundary`,
-    // so the LAST part was silently dropped — including the user-data
-    // cloud-config we wanted to apply. cloud-init handles this gracefully
-    // by flushing at EOF; we do the same.
+    // A multipart message missing the RFC 2046 `--boundary--` close delimiter
+    // is malformed: the trailing part is unterminated. The parser dispatches
+    // the parts it could fully delimit and drops the dangling one (with a
+    // warning) rather than guessing where it ends.
     [Fact]
-    public async Task ProcessAsync_FlushesLastPartWithoutCloseDelimiter()
+    public async Task ProcessAsync_DropsUnterminatedTrailingPartWithoutCloseDelimiter()
     {
         // Note the absence of "--BOUNDARY--" terminator at the end.
         const string raw =
@@ -70,8 +68,8 @@ public sealed class MultipartMimeHandlerTests
 
         await handler.ProcessAsync(part, ctx, CancellationToken.None);
 
-        ctx.NestedParts.Should().HaveCount(2, "both parts must be dispatched even without the close delimiter");
-        Encoding.UTF8.GetString(ctx.NestedParts[1].Body).Should().Contain("hostname: last");
+        ctx.NestedParts.Should().HaveCount(1, "the unterminated trailing part is dropped");
+        Encoding.UTF8.GetString(ctx.NestedParts[0].Body).Should().Contain("hostname: first");
     }
 
     [Fact]

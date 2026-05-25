@@ -37,7 +37,7 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
         IUserDataResolutionContext ctx,
         CancellationToken cancellationToken)
     {
-        var parsed = MimeParser.Parse(part.Body);
+        var parsed = MimeParser.Parse(part.Body, logger);
         if (parsed is null)
         {
             logger.LogWarning("Could not parse multipart user-data; ignoring");
@@ -136,7 +136,7 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
     {
         private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
 
-        public static IReadOnlyList<MimeChild>? Parse(byte[] raw)
+        public static IReadOnlyList<MimeChild>? Parse(byte[] raw, ILogger logger)
         {
             if (raw is null || raw.Length == 0)
                 return null;
@@ -154,14 +154,12 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
                 start = Utf8Bom.Length;
             }
 
-            // Cloud-init's userdata MIME messages — and the configdrive ISO
-            // that eryph-zero generates — are sometimes prefixed with an
-            // mbox-style "From " line (RFC 4155 preamble) before the actual
-            // MIME headers. Some producers emit "From:" with a colon, turning
-            // the marker into a degenerate RFC 5322 header. We tolerate both
-            // shapes by skipping the first line if it starts with either —
-            // the next line should still be Content-Type / MIME-Version.
-            start = SkipMboxPreamble(raw, start);
+            // A multipart message may begin with a leading "From" line before
+            // the MIME headers: either an mbox envelope line "From " (RFC 4155,
+            // no colon) or a normal "From:" RFC 5322 header. Both are common.
+            // Skip it so Content-Type detection starts at the real headers
+            // regardless of which form a producer used.
+            start = SkipLeadingFromLine(raw, start);
 
             var (rootHeaders, rootBodyStart) = ReadHeaders(raw, start);
             if (rootBodyStart < 0) return null;
@@ -225,11 +223,15 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
                 idx = lineEnd + 1;
             }
 
-            // RFC 2046 mandates a `--boundary--` close delimiter, but real
-            // producers (eryph-zero's configdrive among them) sometimes omit
-            // it. Flush the last open part at EOF so it isn't silently lost.
+            // A well-formed multipart ends with the `--boundary--` close
+            // delimiter, which flushes the final part above. If we reach EOF
+            // still inside a part, the message is missing its close delimiter
+            // (RFC 2046 §5.1.1 requires it) — the trailing part is malformed
+            // and dropped rather than guessed at.
             if (inPart)
-                FlushChild(children, raw, collectingStart, collectingEnd);
+                logger.LogWarning(
+                    "Multipart user-data is missing its closing '--{Boundary}--' delimiter; "
+                    + "dropping the unterminated trailing part.", boundary);
 
             return children;
 
@@ -266,10 +268,11 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
         private static readonly IReadOnlyDictionary<string, string> EmptyHeaders =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        private static int SkipMboxPreamble(byte[] raw, int start)
+        private static int SkipLeadingFromLine(byte[] raw, int start)
         {
-            // Match "From " or "From:" at the very top of the document
-            // (case-sensitive ASCII per the mbox / RFC 4155 convention).
+            // Skip a leading "From " (mbox envelope, RFC 4155) or "From:"
+            // (RFC 5322 header) line if present, so the MIME headers are read
+            // from the right offset. Either form is valid and common.
             if (raw.Length - start < 5) return start;
             if (raw[start] != (byte)'F' || raw[start + 1] != (byte)'r'
                 || raw[start + 2] != (byte)'o' || raw[start + 3] != (byte)'m'

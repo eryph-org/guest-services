@@ -14,9 +14,9 @@ namespace Eryph.GuestServices.Provisioning.Tests.UserData.Handlers;
 // part body — silently mangling any non-UTF-8 byte sequence along the way.
 //
 // Per memory feedback_binary_contracts every Content-Transfer-Encoding tier
-// gets its own named test, and per feedback_tolerance_tests each tolerance
-// (missing close delimiter, mbox preamble, etc.) is locked by a regression
-// whose name reveals the scenario.
+// gets its own named test, and each parser edge (mbox/From line, malformed
+// missing close delimiter, etc.) is locked by a regression whose name reveals
+// the scenario.
 public sealed class MultipartBinaryFidelityTests
 {
     [Fact]
@@ -106,12 +106,13 @@ public sealed class MultipartBinaryFidelityTests
     }
 
     [Fact]
-    public async Task MissingCloseBoundary_StillFlushesLastPart()
+    public async Task MissingCloseBoundary_DropsUnterminatedTrailingPart()
     {
-        // Regression — locked in differences-from-cloud-init.md and the
-        // pre-existing MultipartMimeHandlerTests, but the byte-level parser
-        // rewrite needs its own coverage so the next regression is caught
-        // here rather than in the legacy string-based test.
+        // RFC 2046 requires the `--boundary--` close delimiter. Without it the
+        // trailing part is unterminated and malformed; the parser dispatches
+        // the parts it could fully delimit and drops the dangling one rather
+        // than guessing where it ends. The first part (closed by the second
+        // boundary line) is still dispatched.
         const string raw =
             "MIME-Version: 1.0\n" +
             "Content-Type: multipart/mixed; boundary=\"BOUNDARY\"\n" +
@@ -127,8 +128,8 @@ public sealed class MultipartBinaryFidelityTests
 
         var ctx = await DispatchAsync(Encoding.UTF8.GetBytes(raw));
 
-        ctx.NestedParts.Should().HaveCount(2);
-        Encoding.UTF8.GetString(ctx.NestedParts[1].Body).Should().Contain("hostname: last");
+        ctx.NestedParts.Should().HaveCount(1);
+        Encoding.UTF8.GetString(ctx.NestedParts[0].Body).Should().Contain("hostname: first");
     }
 
     [Fact]
