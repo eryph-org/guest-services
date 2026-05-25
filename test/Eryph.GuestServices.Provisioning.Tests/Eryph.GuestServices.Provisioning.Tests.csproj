@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Eryph.GuestServices.Provisioning.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AwesomeAssertions" Version="9.1.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Eryph.GuestServices.Provisioning\Eryph.GuestServices.Provisioning.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Real-world fixtures captured from upstream (Azure-documented format).
+         Copied to bin/.../fixtures/azure/ at build so tests can load them via
+         relative paths under AppContext.BaseDirectory. -->
+    <None Include="..\fixtures\azure\*.*" Link="fixtures\azure\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Network-config fixtures (cloud-init v1/v2 captures + synthetic). The
+         eryph-v1-dhcp.yaml sample mirrors what eryph-zero emits today. -->
+    <None Include="..\fixtures\network-config\*.*" Link="fixtures\network-config\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- User-data fixtures captured from real-world producers (PowerShell
+         tooling, MIME bundles published as #include targets). Used to pin
+         tolerance behaviours in the user-data pipeline. -->
+    <None Include="..\fixtures\userdata\*.*" Link="fixtures\userdata\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- NoCloud meta-data fixture: representative cidata meta-data with a
+         nested public-keys map and a network-interfaces block scalar, modeled
+         on cloud-init's documented NoCloud datasource shape. -->
+    <None Include="..\fixtures\nocloud\*" Link="fixtures\nocloud\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- ConfigDrive fixture: a representative OpenStack config-2 tree with a
+         dated version directory (no `latest`) and a nested public_keys map.
+         Recursive so the openstack/<version>/ layout is preserved at runtime. -->
+    <None Include="..\fixtures\configdrive\**\*" Link="fixtures\configdrive\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

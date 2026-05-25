@@ -1,0 +1,15 @@
+version: 1
+config:
+- type: physical
+  name: eth0
+  mac_address: 00:11:22:33:44:55
+  mtu: 1400
+  subnets:
+  - type: static
+    address: 10.0.0.5/24
+    gateway: 10.0.0.1
+    dns_nameservers:
+    - 1.1.1.1
+    - 8.8.8.8
+    dns_search:
+    - corp.local

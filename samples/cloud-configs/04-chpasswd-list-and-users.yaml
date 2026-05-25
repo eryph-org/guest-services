@@ -1,0 +1,33 @@
+#cloud-config
+# Sample 04 — chpasswd in legacy `list:` form plus per-user `passwd:` shorthand.
+#
+# Covers both ways to assign passwords:
+#   - The legacy `chpasswd.list:` multi-line block (one user:password per line).
+#   - The per-user `users[].passwd:` field (handled by UsersGroupsModule, NOT
+#     SetPasswordsModule, but exercised here so the sample touches both modules).
+#
+# Note: cloud-init forbids combining `chpasswd.list` with `chpasswd.users`
+# in the same block. Our validator agrees; see CloudConfigValidations.
+# Sample 04 picks legacy `list`; sample 04 is paired with sample 01 which
+# uses no chpasswd at all and sample 09 which exercises `plain_text_passwd`.
+#
+# Exercises:
+#   - SetPasswordsModule.ProcessChpasswdListAsync (legacy newline-delimited form).
+#   - UsersGroupsModule password path via `users[].passwd`.
+#
+# Expected provisioning outcome:
+#   - Local users 'alice', 'bob', and 'carol' exist.
+#   - 'alice' has the password set via `users[].passwd` ("AlicePwd!1").
+#   - 'bob' and 'carol' have their passwords set via the chpasswd list.
+#cloud-config
+users:
+  - name: alice
+    passwd: AlicePwd!1
+  - name: bob
+  - name: carol
+
+chpasswd:
+  expire: false
+  list: |
+    bob:BobPwd!2
+    carol:CarolPwd:3

@@ -190,6 +190,373 @@ try {
   }
 }
 
+function Get-CatletVhdPath {
+  <#
+  .SYNOPSIS
+    Returns the path of the OS VHD attached to a catlet.
+
+  .DESCRIPTION
+    eryph delegates to Hyper-V; the catlet's VmId is the Hyper-V Vm.Id. We
+    take the first VMHardDiskDrive, which for a catlet built from a starter
+    parent is the boot/OS disk. If a catlet ever ships with multiple disks
+    we should be smarter — flag for v2.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId
+  )
+
+  $vm = Get-VM -Id $VmId -ErrorAction Stop
+  $drive = (Get-VMHardDiskDrive -VM $vm)[0]
+  if (-not $drive) { throw "Catlet $VmId has no VMHardDiskDrive" }
+  return $drive.Path
+}
+
+function Mount-CatletVhd {
+  <#
+  .SYNOPSIS
+    Mounts the catlet's VHD on the host and returns the Windows-volume drive
+    letter (e.g. 'E') that contains the guest's C:\.
+
+  .DESCRIPTION
+    Mounts the catlet's CHILD differencing VHD (returned by Get-VMHardDiskDrive).
+    Hyper-V resolves the chain automatically so the joined parent + child view
+    is what we read/write; copy-on-write keeps the parent intact.
+
+    Returns the volume root as a Volume GUID path (e.g. \\?\Volume{<guid>}\)
+    rather than a drive letter — no Add-PartitionAccessPath / drive-letter
+    assignment, no host registry mutation, nothing to clean up. The catlet
+    must NOT be running (Hyper-V holds the lock otherwise).
+
+    Requires administrator (Mount-VHD needs Hyper-V management rights).
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId
+  )
+
+  $vhdPath = Get-CatletVhdPath -VmId $VmId
+  Write-Verbose "Mounting catlet VHD: $vhdPath"
+  $disk = Mount-VHD -Path $vhdPath -PassThru -ErrorAction Stop
+  $disk = Get-Disk -Number $disk.Number
+
+  try {
+    # Walk the partitions and find the one whose volume root contains
+    # \Windows. Volume.Path is the \\?\Volume{GUID}\ form, always populated
+    # for a mounted NTFS/ReFS volume even without a drive letter.
+    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
+      $vol = $p | Get-Volume -ErrorAction SilentlyContinue
+      if (-not $vol) { continue }
+      if ($vol.FileSystem -notin 'NTFS', 'ReFS') { continue }
+      if (-not $vol.Path) { continue }
+
+      $volumeRoot = $vol.Path
+      if (Test-Path -LiteralPath (Join-Path $volumeRoot 'Windows')) {
+        Write-Verbose "Found OS partition at $volumeRoot"
+        return [pscustomobject]@{
+          VhdPath    = $vhdPath
+          VolumeRoot = $volumeRoot
+        }
+      }
+    }
+
+    # No match — dump partition state so the failure is debuggable.
+    $summary = (Get-Partition -DiskNumber $disk.Number) | ForEach-Object {
+      $vol = $_ | Get-Volume -ErrorAction SilentlyContinue
+      "  #$($_.PartitionNumber) Size=$($_.Size) FS=$($vol.FileSystem) VolumePath=$($vol.Path) Type=$($_.Type)"
+    }
+    throw "Could not find a Windows OS partition on $vhdPath. Partitions:`n$($summary -join "`n")"
+  }
+  catch {
+    Dismount-VHD -Path $vhdPath -ErrorAction SilentlyContinue
+    throw
+  }
+}
+
+function Dismount-CatletVhd {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $VhdPath
+  )
+  Write-Verbose "Dismounting $VhdPath"
+  Dismount-VHD -Path $VhdPath -ErrorAction Stop
+}
+
+function Update-EgsServiceBinariesOffline {
+  <#
+  .SYNOPSIS
+    Replaces the egs-service binaries inside a stopped catlet's VHD with the
+    locally-built publish output, and disables cloudbase-init.
+
+  .DESCRIPTION
+    The parent gene already installed egs-service into
+    `C:\Program Files\eryph\guest-services\bin\` and registered it as a
+    Windows service — we just overwrite the files. This requires admin
+    (Mount-VHD + offline reg edit for cbi disable).
+
+  .PARAMETER VmId
+    The catlet's VmId. The catlet must be Off (not Running, not Saved).
+
+  .PARAMETER PublishPath
+    Directory containing the `dotnet publish` output of egs-service. Must
+    include `egs-service.exe`.
+
+  .NOTES
+    Operates ONLY on the offline VHD — does not touch the host.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $PublishPath
+  )
+
+  if (-not (Test-Path -LiteralPath $PublishPath)) {
+    throw "PublishPath not found: $PublishPath. Run 'dotnet publish' first."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $PublishPath 'egs-service.exe'))) {
+    throw "egs-service.exe not present under $PublishPath."
+  }
+
+  $status = (Get-VM -Id $VmId).State
+  if ($status -eq 'Running' -or $status -eq 'Saved') {
+    throw "Catlet must be Stopped (current: $status) before mounting its VHD."
+  }
+
+  $mount = Mount-CatletVhd -VmId $VmId
+  try {
+    $root = $mount.VolumeRoot
+    $binDir = Join-Path $root 'Program Files\eryph\guest-services\bin'
+    $cbiDir = Join-Path $root 'Program Files\Cloudbase Solutions\Cloudbase-Init'
+
+    if (-not (Test-Path -LiteralPath $binDir)) {
+      throw "Expected egs-service install at $binDir but the directory is missing. " +
+            "The parent gene should have egs-service pre-installed; without it this " +
+            "test cannot just replace binaries — it would need to install the service " +
+            "too. Verify the parent gene or pick one with egs-service baked in."
+    }
+
+    Write-Verbose "Replacing egs-service binaries in $binDir"
+    # Mirror copy: drop new file contents on top of the existing layout.
+    Get-ChildItem -LiteralPath $PublishPath -Recurse -File | ForEach-Object {
+      $relative = $_.FullName.Substring($PublishPath.Length).TrimStart('\','/')
+      $target = Join-Path $binDir $relative
+      $targetDir = Split-Path $target -Parent
+      if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+      }
+      Copy-Item -LiteralPath $_.FullName -Destination $target -Force
+    }
+
+    # Three places cbi can be invoked from. We neuter all three:
+    #
+    #   (1) The cbi install directory — renamed so the binaries are unreachable.
+    #   (2) The cbi Windows service — Start=Disabled in the offline SYSTEM hive
+    #       so the SCM doesn't try to spawn a service whose binary just moved.
+    #   (3) Sysprep's unattend.xml — RunSynchronousCommand entries that invoke
+    #       cbi during OOBE specialize. If we don't patch these, OOBE runs
+    #       cbi.exe at the renamed path, gets a non-zero exit code, and halts
+    #       before egs-service ever starts.
+    if (Test-Path -LiteralPath $cbiDir) {
+      $disabledName = "$cbiDir.disabled-$(Get-Date -Format 'yyyyMMddHHmmss')"
+      Write-Verbose "Disabling cloudbase-init: $cbiDir -> $disabledName"
+      Move-Item -LiteralPath $cbiDir -Destination $disabledName -Force
+
+      Set-OfflineServiceStartType -VolumeRoot $mount.VolumeRoot `
+        -ServiceName 'cloudbase-init' -StartType 4   # 4 = Disabled
+    } else {
+      Write-Verbose "cloudbase-init not present at $cbiDir; skipping dir rename"
+    }
+
+    Disable-CloudbaseInitUnattend -VolumeRoot $mount.VolumeRoot
+  }
+  finally {
+    Dismount-CatletVhd -VhdPath $mount.VhdPath
+  }
+}
+
+function Disable-CloudbaseInitUnattend {
+  <#
+  .SYNOPSIS
+    Replaces RunSynchronousCommand entries that invoke cloudbase-init with
+    a no-op success command in every unattend.xml found in the offline image.
+
+  .DESCRIPTION
+    The parent gene's sysprep'd image references cloudbase-init from an
+    OOBE/specialize unattend.xml, e.g.:
+
+      <RunSynchronousCommand wcm:action="add">
+        <Order>10</Order>
+        <Path>cmd.exe /c ""C:\Program Files\Cloudbase Solutions\Cloudbase-Init\Python\Scripts\cloudbase-init.exe" --config-file "...\cloudbase-init-unattend.conf" && exit 1 || exit 2"</Path>
+        ...
+      </RunSynchronousCommand>
+
+    If we only rename the cbi install dir, this command exits non-zero and
+    OOBE halts. We rewrite each matching entry to `cmd.exe /c "exit 0"` and
+    set WillReboot to Never. Order is preserved so other commands in the
+    sequence still line up.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $VolumeRoot
+  )
+
+  $candidates = @(
+    (Join-Path $VolumeRoot 'Windows\System32\Sysprep\unattend.xml'),
+    (Join-Path $VolumeRoot 'Windows\Panther\unattend.xml'),
+    (Join-Path $VolumeRoot 'Windows\Panther\unattend\unattend.xml'),
+    (Join-Path $VolumeRoot 'unattend.xml')
+  )
+
+  foreach ($path in $candidates) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+
+    Write-Verbose "Scanning unattend.xml for cloudbase-init RunSynchronousCommand entries: $path"
+    [xml]$xml = Get-Content -LiteralPath $path
+
+    $ns = New-Object System.Xml.XmlNamespaceManager $xml.NameTable
+    $ns.AddNamespace('u', 'urn:schemas-microsoft-com:unattend')
+
+    $modified = $false
+    foreach ($node in $xml.SelectNodes('//u:RunSynchronousCommand', $ns)) {
+      $pathNode = $node.SelectSingleNode('u:Path', $ns)
+      if (-not $pathNode) { continue }
+      if ($pathNode.InnerText -notmatch 'cloudbase-init') { continue }
+
+      $order = $node.SelectSingleNode('u:Order', $ns).InnerText
+      Write-Verbose "  Patching cbi RunSynchronousCommand at Order=$order"
+      $pathNode.InnerText = 'cmd.exe /c "exit 0"'
+
+      $descNode = $node.SelectSingleNode('u:Description', $ns)
+      if ($descNode) {
+        $descNode.InnerText = 'placeholder — cloudbase-init disabled by eryph e2e harness'
+      }
+      $willRebootNode = $node.SelectSingleNode('u:WillReboot', $ns)
+      if ($willRebootNode) {
+        $willRebootNode.InnerText = 'Never'
+      }
+      $modified = $true
+    }
+
+    if ($modified) {
+      Write-Verbose "  Saving patched $path"
+      $xml.Save($path)
+    } else {
+      Write-Verbose "  No cbi entries in $path"
+    }
+  }
+}
+
+function Get-CatletOsPartitionSize {
+  <#
+  .SYNOPSIS
+    Returns the byte size of the Windows OS partition inside a stopped
+    catlet's VHD, read offline via a transient Mount-VHD.
+
+  .DESCRIPTION
+    Used by the growpart e2e: we want a stable "before" measurement of the
+    OS partition size so the post-boot assertion can prove the partition
+    actually grew, not just that it happens to be large.
+
+    Mirror the discovery logic from Mount-CatletVhd: walk partitions, pick
+    the one whose volume root contains \Windows.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId
+  )
+
+  $vhdPath = Get-CatletVhdPath -VmId $VmId
+  Write-Verbose "Reading OS partition size from $vhdPath"
+  $disk = Mount-VHD -Path $vhdPath -PassThru -ErrorAction Stop
+  $disk = Get-Disk -Number $disk.Number
+  try {
+    foreach ($p in (Get-Partition -DiskNumber $disk.Number)) {
+      $vol = $p | Get-Volume -ErrorAction SilentlyContinue
+      if (-not $vol) { continue }
+      if ($vol.FileSystem -notin 'NTFS', 'ReFS') { continue }
+      if (-not $vol.Path) { continue }
+      if (Test-Path -LiteralPath (Join-Path $vol.Path 'Windows')) {
+        return [uint64] $p.Size
+      }
+    }
+    throw "Could not locate a Windows OS partition on $vhdPath"
+  }
+  finally {
+    Dismount-VHD -Path $vhdPath -ErrorAction SilentlyContinue
+  }
+}
+
+function Set-OfflineServiceStartType {
+  <#
+  .SYNOPSIS
+    Updates an existing service's Start value in the offline SYSTEM hive.
+    Useful for disabling cloudbase-init (StartType=4) before our binary boots.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $VolumeRoot,
+    [Parameter(Mandatory = $true)] [string] $ServiceName,
+    [Parameter(Mandatory = $true)] [int] $StartType
+  )
+
+  $hivePath = Join-Path $VolumeRoot 'Windows\System32\config\SYSTEM'
+  $tempHive = "HKLM\OfflineSystem_$([guid]::NewGuid().ToString('N'))"
+  $regExe = "$env:WINDIR\System32\reg.exe"
+
+  & $regExe load $tempHive $hivePath | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "reg load failed for $hivePath" }
+  try {
+    $svcKey = "$tempHive\ControlSet001\Services\$ServiceName"
+    # If the service doesn't exist in the hive there's nothing to disable.
+    $exists = & $regExe query $svcKey 2>$null
+    if ($LASTEXITCODE -eq 0) {
+      & $regExe add $svcKey /f /v Start /t REG_DWORD /d $StartType | Out-Null
+    }
+  }
+  finally {
+    [System.GC]::Collect()
+    [System.GC]::WaitForPendingFinalizers()
+    & $regExe unload $tempHive | Out-Null
+  }
+}
+
+function Wait-ForProvisioningComplete {
+  <#
+  .SYNOPSIS
+    Polls KVP for `eryph.provisioning.state` until it reads "completed",
+    "failed", or a timeout expires.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter()] [timespan] $Timeout = (New-TimeSpan -Minutes 10),
+    [Parameter()] [timespan] $Interval = (New-TimeSpan -Seconds 5)
+  )
+
+  $cutOff = (Get-Date).Add($Timeout)
+  while ($true) {
+    try {
+      $kvp = egs-tool get-data --json $VmId | ConvertFrom-Json -AsHashtable
+      $state = $kvp.guest.'eryph.provisioning.state'
+      if ($state -eq 'completed') {
+        return $state
+      }
+      if ($state -eq 'failed') {
+        $err = $kvp.guest.'eryph.provisioning.error'
+        throw "Provisioning reported failed: $err"
+      }
+      Write-Verbose "Provisioning state=$state — waiting..."
+    } catch {
+      if ($_.Exception.Message -like 'Provisioning reported failed*') { throw }
+      Write-Verbose "KVP not yet readable: $_"
+    }
+    if ((Get-Date) -gt $cutOff) {
+      throw "Timed out waiting for provisioning to complete on $VmId."
+    }
+    Start-Sleep -Seconds $Interval.TotalSeconds
+  }
+}
+
 function Invoke-EgsShellProbe {
   <#
   .SYNOPSIS
@@ -229,4 +596,83 @@ function Invoke-EgsShellProbe {
   # (CSI / OSC), which is unreadable in test diagnostics and also chokes
   # Pester's NUnit3 XML serializer (ESC = 0x1B is invalid in XML 1.0).
   return $raw -replace "`e\[[0-?]*[ -/]*[@-~]", '' -replace "`e\][^`a]*`a", ''
+}
+
+function Save-GuestDiagnostics {
+  <#
+    .SYNOPSIS
+      Pulls the provisioning agent's logs and the datasource contents off a
+      running catlet into a local directory, so a failed (or passing) e2e run
+      leaves a diagnosable artifact set instead of needing a manual SSH session.
+
+    .DESCRIPTION
+      Best-effort and non-throwing: diagnostics collection must never turn a
+      real test failure into a cleanup error. Each probe is captured to its own
+      file; a probe that fails records the error and the rest still run.
+
+      Probe scripts use single quotes only so they survive the
+      `ssh.exe "powershell -Command \"...\""` wrapping without escaping issues.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] $CatletId,
+    [Parameter(Mandatory)][string] $OutputDir
+  )
+
+  # The guest's eryph.alt alias is keyed on the catlet id (NOT the Hyper-V
+  # VmId) — the same name the test's SSH probes connect to.
+  $hostName = "$CatletId.eryph.alt"
+  try { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null } catch { }
+  Write-Host "Collecting guest diagnostics to $OutputDir ..."
+
+  $probes = [ordered]@{
+    'state.json' =
+      'Get-Content -Raw -LiteralPath C:\ProgramData\eryph\provisioning\state.json'
+    'provisioning-tree.txt' =
+      'Get-ChildItem -Recurse -Path C:\ProgramData\eryph\provisioning -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName'
+    'script-logs.txt' =
+      'Get-ChildItem -Path C:\ProgramData\eryph\provisioning\logs -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName }'
+    'eventlog.txt' =
+      'Get-WinEvent -LogName Application -MaxEvents 300 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match ''eryph|egs'' -or $_.Message -match ''provisioning|egs-service'' } | Sort-Object TimeCreated | Format-List TimeCreated, LevelDisplayName, ProviderName, Message | Out-String'
+    'configdrive-tree.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } else { ''config-2 volume not found'' }'
+    'configdrive-user-data.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter user_data -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+    'configdrive-meta-data.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter meta_data.json -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+  }
+
+  # ssh.exe non-zero exits must not abort the loop.
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    foreach ($name in $probes.Keys) {
+      $dest = Join-Path $OutputDir $name
+      try {
+        $script = $probes[$name]
+        $out = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=10 $hostName `
+          "powershell -NoProfile -Command `"$script`"" 2>&1
+        Set-Content -LiteralPath $dest -Value ($out | Out-String)
+      }
+      catch {
+        Set-Content -LiteralPath $dest -Value "diagnostic collection failed: $_"
+      }
+    }
+
+    # Also pull the egs-service collect-logs bundle (state + per-script logs).
+    try {
+      $bundleCmd = "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-bundle.zip"
+      ssh.exe -o StrictHostKeyChecking=no $hostName `
+        "powershell -NoProfile -Command `"$bundleCmd`"" 2>&1 | Out-Null
+      scp.exe -o StrictHostKeyChecking=no `
+        "${hostName}:C:/Windows/Temp/egs-bundle.zip" (Join-Path $OutputDir 'egs-bundle.zip') 2>&1 | Out-Null
+    }
+    catch {
+      Write-Host "collect-logs bundle pull failed (non-fatal): $_"
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+  Write-Host "Guest diagnostics saved to $OutputDir"
 }

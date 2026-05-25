@@ -1,0 +1,23 @@
+#cloud-config
+# Sample 09 — User with plain_text_passwd (cloud-init alias for passwd that
+# explicitly signals "this is plaintext, not a hash").
+#
+# Exercises:
+#   - YAML deserialization of `plain_text_passwd` (underscored convention).
+#   - UsersGroupsModule.ProcessUsersAsync: `plain_text_passwd` takes precedence
+#     over `passwd` when both are set; on Windows where hashing is meaningless
+#     they behave identically, but the precedence rule still matters.
+#   - Validation forbids setting both `passwd` and `plain_text_passwd` on the
+#     same user (see CloudConfigValidations.ValidateUserConfig). This sample
+#     only sets `plain_text_passwd`.
+#
+# Expected provisioning outcome:
+#   - Local user 'opsadmin' is created with the plaintext password.
+#   - "Setting password for 'opsadmin'." is logged.
+#cloud-config
+users:
+  - name: opsadmin
+    plain_text_passwd: OpsAdmin-Pa55w0rd!
+    groups:
+      - Administrators
+    sudo: ALL=(ALL) NOPASSWD:ALL

@@ -1,0 +1,15 @@
+#cloud-config
+# Intentionally broken sample.
+#
+# The YAML below has an unterminated flow-style sequence — the closing `]`
+# is missing — and a mis-aligned mapping. The CloudConfigYamlSerializer
+# should fail with a parse error mentioning the file location.
+#
+# Expected outcome:
+#   - `egs-provisioning validate --user-data ...` exits non-zero.
+#   - Output contains the substring "YAML" or a parse-error class name.
+users:
+  - name: admin
+    groups: [ Administrators, RemoteDesktopUsers
+    sudo: ALL=(ALL) NOPASSWD:ALL
+   bad_indent: true

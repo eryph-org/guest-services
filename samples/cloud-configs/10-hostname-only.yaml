@@ -1,0 +1,20 @@
+#cloud-config
+# Sample 10 — Minimal config that only sets the hostname.
+#
+# Exercises:
+#   - SetHostnameModule on a bare hostname (no fqdn).
+#   - The "no other modules trigger" path: every other module sees null inputs
+#     and returns ModuleOutcome.Ok() without touching the OS.
+#
+# preserve_hostname: false is set explicitly so that the module does not
+# short-circuit when the agent runs against a previously-named guest. Cloud-init
+# treats `preserve_hostname` as a "don't touch what's already there" flag.
+#
+# Expected provisioning outcome:
+#   - Calls IWindowsOs.SetComputerNameAsync("eryph-guest-10", ...).
+#   - Log line "Computer name change to 'eryph-guest-10' is pending reboot." or
+#     "Computer name is already 'eryph-guest-10'." depending on the current
+#     guest state.
+#cloud-config
+hostname: eryph-guest-10
+preserve_hostname: false

@@ -1,0 +1,60 @@
+using Eryph.GuestServices.Core;
+using Eryph.GuestServices.Provisioning.Hosting;
+using Eryph.GuestServices.Provisioning.Stages;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
+
+namespace Eryph.GuestServices.Provisioning.Tests.Hosting;
+
+public class ProvisioningHostedServiceGateTests
+{
+    [Fact]
+    public async Task ExecuteAsync_ProvisioningDisabled_DoesNotRunStageRunner()
+    {
+        var runner = Substitute.For<IStageRunner>();
+        var service = CreateService(runner, provisioningEnabled: false);
+
+        await RunOnceAsync(service);
+
+        await runner.DidNotReceiveWithAnyArgs().RunAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProvisioningEnabled_RunsStageRunner()
+    {
+        var runner = Substitute.For<IStageRunner>();
+        runner.RunAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<StageRunOutcome>(StageRunOutcome.Success.Instance));
+        var service = CreateService(runner, provisioningEnabled: true);
+
+        await RunOnceAsync(service);
+
+        await runner.Received(1).RunAsync(Arg.Any<CancellationToken>());
+    }
+
+    private static ProvisioningHostedService CreateService(IStageRunner runner, bool provisioningEnabled)
+    {
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var flags = new FixedFlags(provisioningEnabled);
+        return new ProvisioningHostedService(
+            runner, lifetime, flags, NullLogger<ProvisioningHostedService>.Instance);
+    }
+
+    // BackgroundService.StartAsync kicks off ExecuteAsync and exposes the task
+    // via ExecuteTask. Awaiting it directly is deterministic: both the disabled
+    // short-circuit and the substitute's synchronous Success run to completion
+    // (no real I/O), so we don't depend on StopAsync cancellation timing.
+    private static async Task RunOnceAsync(ProvisioningHostedService service)
+    {
+        await service.StartAsync(CancellationToken.None);
+        if (service.ExecuteTask is not null)
+            await service.ExecuteTask;
+    }
+
+    private sealed class FixedFlags(bool provisioningEnabled) : IServiceControlFlags
+    {
+        public bool IsProvisioningEnabled() => provisioningEnabled;
+        public bool IsRemoteAccessEnabled() => true;
+    }
+}

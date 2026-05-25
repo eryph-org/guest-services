@@ -22,12 +22,18 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.7" />
+    <PackageReference Include="SimpleInjector" Version="5.5.0" />
+    <PackageReference Include="SimpleInjector.Integration.GenericHost" Version="5.2.0" />
+    <PackageReference Include="SimpleInjector.Integration.ServiceCollection" Version="5.5.0" />
+    <PackageReference Include="Spectre.Console" Version="0.51.1" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Extensions\Eryph.GuestServices.DevTunnels.Ssh.Extensions.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.HvDataExchange.Guest\Eryph.GuestServices.HvDataExchange.Guest.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.Provisioning\Eryph.GuestServices.Provisioning.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
   </ItemGroup>
 

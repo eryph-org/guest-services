@@ -1,0 +1,32 @@
+#cloud-config
+# Sample 02 — write_files exercising every supported encoding in one config.
+#
+# Exercises:
+#   - WriteFilesModule with plain text, base64, and gzip+base64 encodings.
+#   - The path translator (TranslateUnixPath) on a mix of /etc-style and
+#     /ProgramData-style Linux-flavored paths.
+#
+# Encoded payloads:
+#   - 02-plain.txt        : the literal string "plain content\n".
+#   - 02-base64.bin       : base64-decoded bytes of "hello base64\n".
+#   - 02-gzip-base64.txt  : gzip-compressed then base64-encoded "hello gzip\n".
+#
+# Expected provisioning outcome:
+#   - Three files are written under C:\ProgramData\eryph-samples\02\.
+#   - Each file contains the literal decoded payload from above.
+#cloud-config
+write_files:
+  - path: /ProgramData/eryph-samples/02/02-plain.txt
+    content: |
+      plain content
+    permissions: "0644"
+
+  - path: /ProgramData/eryph-samples/02/02-base64.bin
+    encoding: base64
+    content: aGVsbG8gYmFzZTY0Cg==
+    permissions: "0600"
+
+  - path: /ProgramData/eryph-samples/02/02-gzip-base64.txt
+    encoding: gzip+base64
+    content: H4sIAAAAAAAACstIzcnJV0ivyizgAgA5fGNWCwAAAA==
+    permissions: "0644"

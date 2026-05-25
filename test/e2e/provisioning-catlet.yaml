@@ -1,0 +1,53 @@
+name: provisioning-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# Force the OS disk to be larger than the parent gene's image so that the
+# fresh catlet boots with a chunk of unallocated space at the end of the
+# disk. The GrowpartModule should grow C: into it on first boot — that
+# is what the "growpart" Context in Provisioning.E2E.Tests.ps1 asserts.
+drives:
+  - name: sda
+    size: 64
+
+# The cloud-config below IS the test input. eryph-zero compiles fodder into
+# a ConfigDrive ISO attached to the catlet; our embedded provisioning agent
+# (baked into the VHD by the test harness before first start) discovers
+# that ConfigDrive, parses this cloud-config, and runs the stages.
+#
+# Cloudbase-init is disabled offline so our agent owns the lifecycle.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-cloud-config
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-prov-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      users:
+        # NOTE: Windows complexity policy rejects passwords that contain three
+        # or more consecutive characters of the account name (case-insensitive).
+        # `prov_test_user` contains "test", so do NOT use "Test"/"prov" in the
+        # password — Windows will refuse with NERR_PasswordTooShort (2245).
+        - name: prov_test_user
+          passwd: 'XyzqW3lc0me!2!'
+          groups:
+            - Administrators
+      write_files:
+        - path: /ProgramData/eryph-e2e/marker-plain.txt
+          content: marker-plain
+          permissions: '0644'
+        - path: /ProgramData/eryph-e2e/marker-b64.txt
+          encoding: base64
+          content: bWFya2VyLWI2NA==
+          permissions: '0644'
+      runcmd:
+        - 'powershell -NoProfile -Command "New-Item -Force -ItemType Directory C:\ProgramData\eryph-e2e | Out-Null; Set-Content -LiteralPath C:\ProgramData\eryph-e2e\runcmd-marker.txt -Value runcmd-ran"'

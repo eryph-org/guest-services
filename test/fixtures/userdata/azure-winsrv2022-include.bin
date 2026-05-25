@@ -1,0 +1,28 @@
+From: nobody Fri Jan 11 07:00:00 1980
+Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+MIME-Version: 1.0
+
+--==BOUNDARY==
+Content-Type: text/x-shellscript; charset="utf-8"
+Content-Disposition: attachment; filename="enable_azure_agent.ps1"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+U2V0LVNlcnZpY2UgV2luZG93c0F6dXJlR3Vlc3RBZ2VudCAtU3RhcnR1cFR5cGUgQXV0b21hdGljClN0YXJ0LVNlcnZpY2UgV2luZG93c0F6dXJlR3Vlc3RBZ2VudCAtRXJyb3JBY3Rpb24gU2lsZW50bHlDb250aW51ZQ==
+
+--==BOUNDARY==
+Content-Type: text/cloud-config; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+I2Nsb3VkLWNvbmZpZwp1c2VyczoKICAtIG5hbWU6IEFkbWluCiAgICBncm91cHM6IFsgJ0FkbWluaXN0cmF0b3JzJyBdCiAgICBwYXNzd2Q6IEluaXRpYWxQYXNzdzByZCE=
+
+--==BOUNDARY==
+Content-Type: text/x-shellscript; charset="utf-8"
+Content-Disposition: attachment; filename="enable_rd.ps1"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+U2V0LUl0ZW1Qcm9wZXJ0eSAiSEtMTTpcU1lTVEVNXEN1cnJlbnRDb250cm9sU2V0XENvbnRyb2xcVGVybWluYWwgU2VydmVyXCIgLU5hbWUgImZEZW55VFNDb25uZWN0aW9ucyIgLVZhbHVlIDAKU2V0LUl0ZW1Qcm9wZXJ0eSAiSEtMTTpcU1lTVEVNXEN1cnJlbnRDb250cm9sU2V0XENvbnRyb2xcVGVybWluYWwgU2VydmVyXFdpblN0YXRpb25zXFJEUC1UY3BcIiAtTmFtZSAiVXNlckF1dGhlbnRpY2F0aW9uIiAtVmFsdWUgMQpFbmFibGUtTmV0RmlyZXdhbGxSdWxlIC1EaXNwbGF5R3JvdXAgIlJlbW90ZSBEZXNrdG9wIg==
+
+--==BOUNDARY==--

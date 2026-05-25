@@ -1,413 +1,313 @@
 # Eryph Guest Services
 
-
 [![License](https://img.shields.io/github/license/eryph-org/guest-services.svg)](LICENSE)
 
+Eryph Guest Services (EGS) is a small service that runs **inside** a Windows or Linux VM. It bundles two independent capabilities in one binary:
 
-Eryph Guest Services (EGS) provides secure SSH connectivity to Hyper-V virtual machines through Hyper-V sockets, eliminating the need for network configuration. The service can be used both as part of the [eryph platform](https://www.eryph.io) and standalone with plain Hyper-V.
+1. **Userless SSH login over the Hyper-V socket** — a dedicated SSH server bound to the Hyper-V socket. Connect from the Hyper-V host with no IP, no firewall holes, no shared password. **Hyper-V only** — uses the Hyper-V socket directly, not the network.
+2. **A cloud-init-compatible provisioning agent** — reads `#cloud-config` user-data from NoCloud / ConfigDrive / Azure / Hyper-V KVP on first boot and applies it (hostname, users, SSH keys, files, scripts, network). **Works on any Windows VM**; the datasources determine where the data comes from, the hypervisor doesn't matter.
 
-## Why EGS?
+The two capabilities share a binary but can be used independently. EGS is the runtime baked into every [eryph](https://www.eryph.io) catlet, where both run together; either capability can also be used on its own.
 
-EGS provides a unified, cross-platform solution that works consistently on both Windows and Linux VMs without network dependencies.  
-While Windows Server 2025 ships with OpenSSH by default, native Hyper-V socket support remains missing ([Win32-OpenSSH issue #2200](https://github.com/PowerShell/Win32-OpenSSH/issues/2200)). [PowerShell Direct](https://learn.microsoft.com/en-us/powershell/scripting/learn/remoting/ps-direct) is Windows-only with poor file transfer performance, and Linux vsock SSH support varies by distribution.  
+---
 
+## Three use cases
 
-## Features
+EGS is shaped around three deployment shapes — pick the one that matches yours.
 
-- **Network-free connectivity**: Access VMs via Hyper-V sockets without network setup
-- **Cross-platform support**: Works on Windows and Linux VMs
-- **SSH-based access**: Standard SSH protocol over Hyper-V transport
-- **File transfer capabilities**: Upload/download files and directories to/from VMs
-- **Pseudo-terminal support**: Interactive shell sessions
-- **Configurable shell**: Override the shell spawned for SSH sessions per VM (e.g. `pwsh.exe` instead of Windows PowerShell)
-- **Public key authentication**: Secure key-based authentication
-- **Easy installation**: Simple installer scripts for both platforms
+### (a) Hyper-V standalone — userless SSH, optional provisioning
 
-## Limitations
-- **No FTP subsystem** - use `unison` for file synchronization instead of `scp`
+You have a Hyper-V VM (no eryph) and want to talk to it without setting up networking. Install the ISO, run the host tool, and you have SSH over the Hyper-V socket. The provisioning agent ships in the same binary but you don't have to use it — your VM is already configured by whatever you used to build it.
 
-## How It Works
+→ [Quick start (standalone)](#quick-start-a-hyper-v-standalone)
 
-EGS doesn't reinvent the wheel. Like the `hvc ssh` command, EGS builds a Hyper-V socket connection using SSH ProxyCommand:
+### (b) Eryph — provisioning is the standard path
 
-```
-ProxyCommand hvc nc -t vsock <vmid> 5002
-```
+eryph injects a ConfigDrive ISO into every catlet at create time. The provisioning agent picks that up on first boot, applies your cloud-config fodder, and reports state back to the host via Hyper-V KVP. Userless SSH is enabled the same way as standalone. This is the path the project is built for.
 
-The `egs-tool` writes SSH configuration to `%LOCALAPPDATA%\.eryph\ssh\config`, mapping hostnames to VM IDs and proxy commands. During configuration, SSH keys are exchanged between host and guest, enabling passwordless authentication to the EGS service account (Windows) or root (Linux).
+→ [Quick start (eryph)](#quick-start-b-eryph)
 
-The guest implements a custom SSH server independent of any existing OpenSSH installation, avoiding configuration conflicts.
+### (c) Windows cloud-init alternative (WIP)
 
-**Components:**
-1. **Guest Service** (`egs-service`): Runs inside VMs as a system service, providing SSH server functionality over Hyper-V sockets
-2. **Host Tool** (`egs-tool`): Command-line tool running on the Hyper-V host for managing connections and file uploads
+EGS as a general-purpose replacement for cloudbase-init on Windows VMs in scenarios outside eryph (OpenStack, custom KVM, hand-rolled NoCloud images). **This is work in progress and not fully supported yet.** The core RFCs (network-config, frequencies, semaphores, scripts, datasource lifecycle) are landed; the longer tail (jinja2, part-handler, boothook, OpenStack-specific quirks) is not. See [Windows cloud-init status](docs/user/explanation/windows-cloud-init-status.md) before relying on this in production.
 
-## System Requirements
+---
 
-### Host Requirements
-- Windows 10/11 Pro, Enterprise, or Education
-- Windows Server 2016 or newer
-- Hyper-V enabled
-- Administrator privileges
+## Components
 
-### Guest Requirements
-- Windows VMs: Windows Server 2016+ or Windows 10+
-- Linux VMs: Modern Linux distribution with systemd
-- Hyper-V integration services enabled
+| Binary | Where it runs | What it does |
+|---|---|---|
+| `egs-service` | Inside the VM (Windows service / systemd unit) | SSH server over Hyper-V socket + provisioning agent |
+| `egs-tool` | On the Hyper-V host | SSH config writer, file transfer, status, key exchange |
 
-## Installation
+The provisioning side of `egs-service` is a library; the CLI subcommands (`run`, `status`, `reset`, `validate`, `collect-logs`, `version`) are surfaced on the same `egs-service.exe` binary.
 
-There are two ways to use eryph guest services:
+---
 
-### Option 1: With eryph Platform
+## Quick start (a) — Hyper-V standalone
 
-If you're using eryph, guest services are installed automatically via genes:
+### Install the host tool
 
-#### Guest Installation (via eryph genes)
-```yaml
-# For Linux VMs
-fodder:
-  - source: gene:dbosoft/guest-services:linux-install
-
-# For Windows VMs  
-fodder:
-  - source: gene:dbosoft/guest-services:win-install
-```
-
-More details: [genepool.eryph.io/b/dbosoft/guest-services](https://genepool.eryph.io/b/dbosoft/guest-services)
-
-#### egs-tool
-Same installations as for standalone Hyper-V - see below.
-
-### Option 2: Standalone with Plain Hyper-V
-
-For standalone Hyper-V environments without eryph:
-
-#### Guest Installation (manual ISO)
-1. Download the installation ISO from [releases.dbosoft.eu/eryph/guest-services/](https://releases.dbosoft.eu/eryph/guest-services/)
-2. Mount the ISO in your VM
-3. Run the installation script from the mounted ISO:
-
-**Windows VMs:**
 ```powershell
-# Run as Administrator from the mounted ISO
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/eryph-org/guest-services/main/src/Eryph.GuestServices.Tool/install.ps1'))
+egs-tool initialize
+```
+
+### Install the guest
+
+Download the installer ISO from [releases.dbosoft.eu/eryph/guest-services/](https://releases.dbosoft.eu/eryph/guest-services/), mount it in the VM, then:
+
+```powershell
+# Windows guest, as Administrator
 D:\install.ps1
 ```
 
-**Linux VMs:**
 ```bash
-# Run as root from the mounted ISO
+# Linux guest, as root
 sudo /media/cdrom/install.sh
 ```
 
-#### Host Tool Installation
-1. Install `egs-tool` using the PowerShell installer:
-```powershell
-# Run as Administrator
-iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/eryph-org/guest-services/main/src/Eryph.GuestServices.Tool/install.ps1'))
-```
-
-2. Initialize the host-side configuration:
+### Connect
 
 ```powershell
-# Initialize the host-side configuration
-egs-tool initialize
-```
-
-This registers the Hyper-V integration service and generates SSH keys.
-
-## Usage
-
-### Standalone Hyper-V Usage
-
-For plain Hyper-V environments without eryph:
-
-#### 1. Check VM Status
-```powershell
-egs-tool get-status <VM-ID>
-```
-
-#### 2. Configure SSH Access
-```powershell
-# Add VM to SSH configuration
-egs-tool add-ssh-config <VM-ID> [optional-alias]
-
-# Update SSH config (creates ~/.ssh/config entries)
-egs-tool update-ssh-config
-```
-
-#### 3. Connect via SSH
-```powershell
-# Connect using the generated alias
+egs-tool add-ssh-config <VM-ID>
 ssh <VM-ID>.hyper-v.alt
-# or if you provided a custom alias:
-ssh <alias>
 ```
 
-#### 4. File Transfer
-```powershell
-# Upload single file to VM
-egs-tool upload-file <VM-ID> <local-file> <remote-file>
+That's it — no IP, no firewall, no password. The provisioning agent is present but only runs if you feed it a datasource (NoCloud ConfigDrive ISO, Hyper-V KVP user-data, etc.); see [User docs](docs/user/index.md).
 
-# Upload directory to VM (non-recursive - root files only)
-egs-tool upload-directory <VM-ID> <local-directory> <remote-directory>
+## Quick start (b) — eryph
 
-# Upload directory recursively (including subdirectories)
-egs-tool upload-directory <VM-ID> <local-directory> <remote-directory> --recursive
+### Build a catlet with cloud-config fodder
 
-# Download single file from VM
-egs-tool download-file <VM-ID> <remote-file> <local-file>
-
-# Download directory from VM (non-recursive - root files only)
-egs-tool download-directory <VM-ID> <remote-directory> <local-directory>
-
-# Download directory recursively (including subdirectories)
-egs-tool download-directory <VM-ID> <remote-directory> <local-directory> --recursive
-
-# All commands support --overwrite flag
-egs-tool upload-file <VM-ID> <local-file> <remote-file> --overwrite
+```yaml
+name: my-vm
+parent: dbosoft/winsrv2022-standard/starter
+fodder:
+  - name: bootstrap
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: my-vm
+      users:
+        - name: alice
+          groups: [Administrators]
+          passwd: 'S0meStr0ngPass!'
+      ssh_authorized_keys:
+        - 'ssh-ed25519 AAAA...'
+      write_files:
+        - path: /ProgramData/marker.txt
+          content: hello from cloud-config
+      runcmd:
+        - 'powershell -NoProfile -Command "Write-Host provisioned"'
 ```
 
-#### 5. Configure the Shell
+```powershell
+New-Catlet -Config (Get-Content .\my-vm.yaml -Raw) -Name my-vm
+Start-Catlet -Name my-vm
+```
 
-By default, interactive SSH sessions land in `powershell.exe` on Windows VMs
-and the user's `$SHELL` (or `/bin/bash`) on Linux VMs. The default can be
-overridden per VM:
+The agent runs on first boot, applies the cloud-config, and reports `eryph.provisioning.state = completed` via KVP. Connect:
 
 ```powershell
-# Use PowerShell 7 instead of Windows PowerShell
+egs-tool update-ssh-config
+ssh my-vm.<project>.eryph.alt
+```
+
+→ See [Tutorial: first catlet with cloud-config](docs/user/tutorial/first-catlet-with-cloud-config.md) for a full walkthrough.
+
+## Quick start (c) — Windows cloud-init alternative (WIP)
+
+See [Windows cloud-init status](docs/user/explanation/windows-cloud-init-status.md) for what works today, what doesn't, and how to file feedback.
+
+---
+
+## What the provisioning agent supports
+
+Cloud-init-compatible. If you've used `#cloud-config` before, the same payloads work here. Concrete coverage:
+
+- **Modules**: `set_hostname`, `users`, `groups`, `set_passwords`, `ssh_authorized_keys`, `write_files`, `runcmd`, `scripts_user`, `apply_network_config`. Each declares a frequency (per-instance / per-boot / per-once).
+- **User-data formats**: `#cloud-config`, `#!`, `#ps1*`, `#cloud-boothook`, `#include`, `#include-once`, multipart MIME (with base64 / no-close-delimiter tolerance).
+- **Datasources**: NoCloud, ConfigDrive (OpenStack), Azure (with PA / WinGA coexistence), Hyper-V KVP.
+- **Stages**: Local → Network → Config → Final. Reboot-and-continue (exit 1003) honored.
+- **State**: Per-instance / per-boot / per-once semaphores under `%ProgramData%\eryph\provisioning\`.
+- **Reporting**: Hyper-V KVP (`eryph.provisioning.state`, `eryph.provisioning.error`).
+
+What's **not** supported (yet): jinja2 templating, part-handler, boothook execution as cloud-init does, OpenStack network_data.json (we read v1/v2 cloud-init network-config instead). See [differences from cloud-init](docs/user/explanation/differences-from-cloud-init.md).
+
+→ Full [user documentation](docs/user/index.md) | [RFC index](docs/rfcs/README.md)
+
+---
+
+## SSH access
+
+The guest exposes a dedicated SSH server on the Hyper-V socket (service ID `0000138a-facb-11e6-bd58-64006a7986d3` / Linux vsock port 5002). The host tool writes an SSH config that uses `hvc nc -t vsock <vmid> 5002` as the proxy command. Key exchange happens through Hyper-V KVP so no manual `ssh-copy-id` is needed.
+
+```powershell
+# Status of the guest agent in a VM
+egs-tool get-status <VM-ID>
+
+# Add a single VM to the SSH config
+egs-tool add-ssh-config <VM-ID> [alias]
+
+# Refresh the SSH config for all VMs / catlets
+egs-tool update-ssh-config
+
+# Connect
+ssh <VM-ID>.hyper-v.alt          # standalone
+ssh <catlet>.<project>.eryph.alt # eryph
+```
+
+### Configure the shell
+
+By default interactive sessions land in `powershell.exe` (Windows) or `$SHELL` / `/bin/bash` (Linux). Override per-VM:
+
+```powershell
 egs-tool set-shell <VM-ID> --command pwsh.exe
-
-# With arguments (note the '=' — Spectre.Console.Cli treats space-separated
-# '-'-prefixed values as new flags)
 egs-tool set-shell <VM-ID> --command pwsh.exe --arguments="-NoLogo -NoProfile"
-
-# Clear the override and return to the default
 egs-tool set-shell <VM-ID> --reset
 ```
 
-The override takes effect on the next SSH session. SSH clients can also
-send the `SHELL` / `SHELL_ARGS` environment variables per-session (e.g.
-`ssh -o "SetEnv=SHELL=pwsh.exe" …`); the per-VM override always wins.
+SSH clients can also send `SHELL` / `SHELL_ARGS` env vars; the per-VM override always wins.
 
-### Eryph Platform Usage
-
-When used with eryph, the guest services are typically installed via genes:
-
-```yaml
-# For Linux VMs
-fodder:
-  - source: gene:dbosoft/guest-services:linux-install
-
-# For Windows VMs  
-fodder:
-  - source: gene:dbosoft/guest-services:win-install
-```
-
-#### SSH Configuration with eryph
-If you don't provide an SSH key in the gene configuration, set up access after VM creation:
+### File transfer
 
 ```powershell
-# Update SSH config for all eryph catlets
-egs-tool update-ssh-config
+egs-tool upload-file      <VM-ID> <local> <remote>  [--overwrite]
+egs-tool upload-directory <VM-ID> <local> <remote>  [--recursive] [--overwrite]
+egs-tool download-file    <VM-ID> <remote> <local>  [--overwrite]
+egs-tool download-directory <VM-ID> <remote> <local> [--recursive] [--overwrite]
 ```
 
-Then connect using the generated aliases:
-```powershell
-# Connect using catlet name and project
-ssh <catlet-name>.<project-name>.eryph.alt
+No `scp` — the channel is built on the same SSH-over-Hyper-V-socket transport. For interactive sync, use `unison` over the SSH tunnel.
 
-# For default project, you can also use:
-ssh <catlet-name>.eryph.alt
-```
+---
 
-## Configuration
+## Why this exists
 
-### SSH Key Management
+- Windows Server 2025 ships OpenSSH but [still no Hyper-V socket support](https://github.com/PowerShell/Win32-OpenSSH/issues/2200).
+- [PowerShell Direct](https://learn.microsoft.com/en-us/powershell/scripting/learn/remoting/ps-direct) is Windows-only and has poor file-transfer performance.
+- Linux vsock SSH is distro-dependent.
+- For provisioning: cloudbase-init has known bugs (requires `filename=` in multipart MIME, ignores shebangs, several Python 2 / Windows-encoding traps). EGS is .NET-native, byte-clean, and ships fixes for these. See [differences from cloudbase-init](docs/user/explanation/differences-from-cloudbase-init.md).
 
-The guest services use dedicated SSH keys separate from your regular SSH keys:
+---
 
-```powershell
-# View the public key
-egs-tool get-ssh-key
+## Requirements
 
-# Reinitialize keys if needed
-egs-tool initialize
-```
+**Host**: Windows 10/11 Pro/Enterprise/Education or Windows Server 2016+, Hyper-V enabled, administrator privileges.
 
-### Gene Configuration Variables
+**Guest**: Windows Server 2016+ / Windows 10+ or a modern Linux distribution with systemd. Hyper-V integration services enabled.
 
-When installing via eryph genes, these variables are supported:
-
-- **version**: Version to install (`latest`, `prerelease`, or specific version like `0.1.0`)
-- **downloadUrl**: Custom download URL if not using GitHub releases
-- **sshPublicKey**: SSH public key for authentication (optional - if not provided, use `egs-tool add-ssh-config` after VM creation)
-
-Example:
-```yaml
-fodder:
-  - source: gene:dbosoft/guest-services:linux-install
-    variables:
-      - name: version
-        value: "0.3"
-      - name: sshPublicKey
-        value: "ssh-rsa AAAAB3NzaC1yc2E..."
-```
+---
 
 ## Authentication
 
-The guest services use SSH public key authentication:
-
-1. **Username**: Always `egs` 
-2. **Authentication**: SSH public key only (password authentication disabled)
-3. **Key Exchange**: Keys are exchanged via Hyper-V data exchange service
-4. **Host Trust**: Host keys are automatically trusted (secure due to Hyper-V socket isolation)
-
-## Command Reference
-
-### egs-tool Commands
-
-| Command | Description | Arguments |
-|---------|-------------|-----------|
-| `initialize` | Register Hyper-V service and generate SSH keys | None |
-| `unregister` | Unregister Hyper-V integration service | None |
-| `get-status <VM-ID>` | Check if guest services are available | VM GUID |
-| `get-ssh-key` | Display the SSH public key | None |
-| `add-ssh-config <VM-ID> [alias]` | Configure SSH access for a VM | VM GUID, optional alias |
-| `update-ssh-config` | Update SSH config for all VMs/catlets | None |
-| `upload-file <VM-ID> <local> <remote>` | Upload single file to VM | VM GUID, local file, remote file |
-| `upload-directory <VM-ID> <local> <remote>` | Upload directory to VM | VM GUID, local dir, remote dir |
-| `download-file <VM-ID> <remote> <local>` | Download single file from VM | VM GUID, remote file, local file |
-| `download-directory <VM-ID> <remote> <local>` | Download directory from VM | VM GUID, remote dir, local dir |
-| `set-shell <VM-ID>` | Configure the shell spawned for SSH sessions | VM GUID, `--command`/`--arguments` or `--reset` |
-
-**Flags for file/directory commands:**
-- `--overwrite`: Overwrite existing files/directories
-- `--recursive`: Include subdirectories (directory commands only)
-
-### Finding VM IDs
-
-For standalone Hyper-V, get VM IDs using:
+- Username: `egs` (don't change it)
+- SSH public key authentication only — passwords disabled
+- Keys exchanged via Hyper-V data-exchange service
+- Host keys trusted automatically (transport is isolated to the Hyper-V socket)
 
 ```powershell
-# PowerShell
-Get-VM | Select-Object Name, Id
-
-# Or using Hyper-V Manager
-# VM Settings → Hardware → Details shows the VM ID
+egs-tool get-ssh-key   # show the host-side public key
+egs-tool initialize    # regenerate keys if needed
 ```
 
-For eryph catlets:
+---
+
+## CLI quick reference
+
+### `egs-tool` (host)
+
+| Command | What |
+|---|---|
+| `initialize` | Register Hyper-V service + generate SSH keys |
+| `unregister` | Remove the Hyper-V integration service |
+| `get-status <VM-ID>` | Check whether the guest agent is reachable |
+| `get-ssh-key` | Print the host's SSH public key |
+| `add-ssh-config <VM-ID> [alias]` | Add one VM to the SSH config |
+| `update-ssh-config` | Refresh SSH config for every VM / catlet |
+| `upload-file` / `upload-directory` | Push file(s) to a VM |
+| `download-file` / `download-directory` | Pull file(s) from a VM |
+| `set-shell <VM-ID>` | Override the interactive shell |
+| `get-data --json <VM-ID>` | Dump Hyper-V KVP for the VM |
+
+Flags: `--overwrite`, `--recursive` (directory commands), `--reset` (`set-shell`).
+
+### `egs-service` (guest)
+
+| Command | What |
+|---|---|
+| `(no args)` | Run as a Windows service / systemd unit |
+| `run [--dry-run] [--user-data <path>] [--instance-id <id>] [--stage <s>] [--state-dir <dir>]` | Run the provisioning agent once |
+| `status [--json] [--state-dir <dir>]` | Print current provisioning state |
+| `reset [--logs] [--scripts] [--reset-once] [--keep-per-boot] [--state-dir <dir>]` | Clear state for a fresh re-provisioning |
+| `validate --user-data <path>` | Validate cloud-config user-data without applying it |
+| `collect-logs [--output <path>] [--state-dir <dir>]` | Bundle state + logs + scripts into a zip |
+| `version` | Print agent version |
+
+→ Full reference: [docs/user/reference/cli.md](docs/user/reference/cli.md)
+
+---
+
+## Finding VM IDs
+
 ```powershell
+# Plain Hyper-V
+Get-VM | Select-Object Name, Id
+
+# eryph
 Get-Catlet | Select-Object Name, VmId
 ```
 
+---
+
 ## Troubleshooting
 
-### Common Issues
+- **`get-status` returns `unknown`** — agent not running or Hyper-V integration services disabled in the VM.
+- **SSH `Connection refused` / banner timeout** — the agent crashed; check `Get-EventLog -LogName Application -Source egs-service` in the VM.
+- **Provisioning reports `failed`** — read `eryph.provisioning.error` via `egs-tool get-data --json <VM-ID>`; the agent also writes `%ProgramData%\eryph\provisioning\state.json` and per-script logs under `%ProgramData%\eryph\provisioning\logs\`.
+- **Re-running provisioning** — `egs-service reset` (then reboot the VM, or use `egs-service run` for a one-shot synchronous run). See [docs/user/howto/reset-and-rerun.md](docs/user/howto/reset-and-rerun.md).
 
-1. **Status shows "unknown"**
-   - Guest services not installed or not running in VM
-   - Check VM has Hyper-V integration services enabled
+---
 
-2. **Authentication failed**
-   - Run `egs-tool add-ssh-config <VM-ID>` to set up authentication
-   - Ensure you ran `egs-tool initialize` on the host
+## Documentation
 
-3. **Connection refused**
-   - Guest service may not be running: check service status in VM
-   - Hyper-V integration services may be disabled
+- **User docs**: [docs/user/](docs/user/index.md) — tutorials, how-to guides, reference, explanation.
+- **RFCs**: [docs/rfcs/](docs/rfcs/README.md) — design decisions, including divergences from cloud-init / cloudbase-init.
+- **Research notes**: [docs/research/](docs/research/) — Azure wireserver dissection, CustomData encryption verification.
 
-4. **File transfer failed**
-   - Check paths exist and are writable/readable
-   - Use `--overwrite` flag if file/directory already exists
-   - Use `--recursive` flag for directory operations that need subdirectories
-
-### Service Management
-
-#### Windows VMs
-```powershell
-# Check service status
-Get-Service eryph-guest-services
-
-# Restart service
-Restart-Service eryph-guest-services
-```
-
-#### Linux VMs
-```bash
-# Check service status
-sudo systemctl status eryph-guest-services
-
-# Restart service
-sudo systemctl restart eryph-guest-services
-```
-
-## Architecture
-
-### Components
-
-- **egs-service**: Guest service (SSH server over Hyper-V sockets)
-- **egs-tool**: Host tool (SSH client and management)
-- **Hyper-V Integration Service**: Transport layer for communication
-- **Hyper-V Data Exchange**: Key exchange and status communication
-
-### Network Stack
-
-```
-Host (egs-tool) ←→ Hyper-V Socket ←→ Guest (egs-service)
-                        ↑
-               Service ID: 0000138a-facb-11e6-bd58-64006a7986d3
-               Linux VSock Port: 5002
-```
-
-### Security
-
-- All communication encrypted via SSH
-- Public key authentication only
-- Host keys automatically trusted (isolated transport)
-- Separate key management from system SSH
+---
 
 ## Development
 
-### Building
-
 ```bash
-# Build solution
 dotnet build
-
-# Run tests
 dotnet test
-
-# Create packages
 dotnet pack
 ```
 
-### Project Structure
+Solution layout:
 
-- `src/Eryph.GuestServices.Service/` - Guest service implementation
-- `src/Eryph.GuestServices.Tool/` - Host tool implementation  
-- `src/Eryph.GuestServices.Sockets/` - Hyper-V socket abstraction
-- `src/Eryph.GuestServices.Pty/` - Pseudo-terminal support
-- `src/Eryph.GuestServices.DevTunnels.Ssh.Extensions/` - SSH server extensions
-- `packaging/iso/` - Installation scripts
-- `tests/` - Test projects
+```
+src/Eryph.GuestServices.CloudConfig         POCOs + validators for #cloud-config
+src/Eryph.GuestServices.CloudConfig.Yaml    YAML serialization
+src/Eryph.GuestServices.Provisioning        the agent (library)
+src/Eryph.GuestServices.Service             egs-service (guest binary)
+src/Eryph.GuestServices.Tool                egs-tool (host binary)
+src/Eryph.GuestServices.Sockets             Hyper-V socket abstraction
+src/Eryph.GuestServices.Pty                 PTY support
+test/                                       unit + integration + e2e tests
+docs/                                       this documentation
+```
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
+MIT — see [LICENSE](LICENSE).
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/eryph-org/guest-services/issues)
-- **Documentation**: [eryph Documentation](https://eryph.io/docs)
-- **Community**: [eryph Discussions](https://github.com/eryph-org/eryph/discussions)
+- Issues: [GitHub Issues](https://github.com/eryph-org/guest-services/issues)
+- eryph docs: [eryph.io/docs](https://eryph.io/docs)
+- Community: [eryph Discussions](https://github.com/eryph-org/eryph/discussions)
