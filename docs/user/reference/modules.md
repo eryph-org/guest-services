@@ -1,198 +1,120 @@
 # Modules
 
-Modules are the units of work the agent runs. Each declares its stage
-and a frequency (per-instance / per-boot / per-once). They run in this
-order:
+Each module owns one area of guest configuration. They run in a fixed order,
+grouped into stages, and each runs at a frequency (per-instance, per-boot, or
+per-once). Which modules run in a stage is configurable; their order is not.
 
-| Module | Stage / Order | Frequency | Cloud-config keys |
+| Module | Stage / order | Frequency | Cloud-config keys |
 | --- | --- | --- | --- |
-| `Growpart` | Network / 0 | per-boot | `growpart` |
-| `SetHostname` | Network / 1 | per-instance | `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` |
-| `ApplyNetworkConfig` | Network / 2 | per-instance | (network-config document, not cloud-config) |
-| `NtpClient` | Network / 3 | per-instance | `ntp` |
-| `Timezone` | Network / 4 | per-instance | `timezone` |
-| `SetLocale` | Network / 5 | per-instance | `locale`, `keyboard` |
-| `UsersGroups` | Config / 0 | per-instance | `users`, `groups` |
-| `SetPasswords` | Config / 1 | per-instance | `chpasswd`, `password` |
-| `SshModule` | Config / 2 | per-instance | `ssh_authorized_keys`, `users[].ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `ssh_genkeytypes`, `disable_root`, `ssh` |
-| `WriteFiles` | Config / 3 | per-instance | `write_files` (entries with `defer: true` are skipped here) |
-| `Runcmd` | Config / 4 | per-instance | `runcmd` |
-| `Licensing` | Config / 5 | per-instance | `license` |
-| `WriteFilesDeferred` | Final / -1 | per-instance | `write_files` (entries with `defer: true` only) |
-| `ScriptsUser` | Final / 0 | per-instance | (script payloads from MIME / shebang) |
-| `PowerState` | Final / last | per-instance | `power_state` |
+| Growpart | Network / 0 | per-boot | `growpart` |
+| SetHostname | Network / 1 | per-instance | `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` |
+| ApplyNetworkConfig | Network / 2 | per-instance | network-config document (not cloud-config) |
+| NtpClient | Network / 3 | per-instance | `ntp` |
+| Timezone | Network / 4 | per-instance | `timezone` |
+| SetLocale | Network / 5 | per-instance | `locale`, `keyboard` |
+| UsersGroups | Config / 0 | per-instance | `users`, `groups` |
+| SetPasswords | Config / 1 | per-instance | `chpasswd`, `password` |
+| SshModule | Config / 2 | per-instance | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` |
+| WriteFiles | Config / 3 | per-instance | `write_files` |
+| Runcmd | Config / 4 | per-instance | `runcmd` |
+| Licensing | Config / 5 | per-instance | `license` |
+| WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
+| ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
+| PowerState | Final / last | per-instance | `power_state` |
 
-Stage membership and intra-stage order are fixed by the `[Stage]` /
-`[Order]` attributes, but which modules run in a stage is operator-
-configurable — see the `stages` block in [Settings](settings.md).
+To run a different set of modules in a stage, use the `stages` block in
+[settings](settings.md). There are no Local-stage modules; the stage exists for
+future use.
 
-There are no Local-stage modules; the slot exists for future use.
+## Growpart
 
-## Acknowledged-but-no-op keys
-
-Not a module — handled inside `CloudConfigSerializer` at deserialize
-time. Logs at Info every cloud-init top-level key the agent accepts but
-does not act on, mirroring cloud-init's log-and-continue handling of
-cross-cloud YAML. Paste a Linux cloud-config with `apt: { sources: ... }`
-and `packages: [git, vim]` and you get one "saw it, Linux concept,
-ignored" line per key instead of a Warning.
-
-The keys handled here are **schema fields** on the parsed CloudConfig
-(stored as `object?` for the polymorphic shapes) — the deserializer
-accepts them without complaint. Truly unknown top-level keys (typos,
-unrecognised extensions) still hit the same `CloudConfigSerializer`
-on the Warning channel.
-
-Acknowledged keys:
-
-- Linux package management: `apt`, `apt_pipelining`, `packages`,
-  `package_update`, `package_upgrade`, `package_reboot_if_required`,
-  `snap`, `yum_repos`, `yum_repo_dir`
-- Linux disk / filesystem / mount: `disk_setup`, `fs_setup`, `mounts`
-- Linux network / hosts: `manage_etc_hosts`, `manage_resolv_conf`, `resolv_conf`
-- Deferred cloud-init modules: `bootcmd`, `phone_home`,
-  `final_message`, `ca_certs`, `disable_root`, `disable_root_opts`
-- Configuration-management bootstraps (future): `chef`, `ansible`,
-  `puppet`, `salt_minion`
-
----
-
-## `Growpart`
-
-**Stage:** Network, Order 0. **Frequency:** per-boot.
-
-Extends the OS partition into any unallocated space at the end of the
-disk. Per-boot (not per-instance) because the host can enlarge the
-underlying VHD between reboots, and the operator expects the next boot
-to consume the new capacity.
+Extends the OS partition into unallocated space at the end of the disk. It runs
+per-boot, not per-instance, because the host can enlarge the underlying VHD
+between reboots and the next boot should pick up the new space.
 
 ```yaml
 growpart:
-  mode: auto            # auto | off (also accepts YAML boolean `false`)
-  devices: ['/']        # default; '/' resolves to the Windows system drive
+  mode: auto            # auto | off
+  devices: ['/']        # '/' is the system drive
 ```
 
-`devices` accepts `/` (the system drive — `%SystemDrive%`), a drive
-letter (`C`, `"C:"`, `"D:\"`), or `all` (every growable volume; never
-extends system / reserved / recovery partitions). Drive letters with a
-colon **must be quoted** — `- C:` parses as a YAML mapping.
+`devices` takes `/` (the system drive), a drive letter (`C`, `"C:"`, `"D:\"`),
+or `all`. Drive letters with a colon must be quoted, or YAML reads `- C:` as a
+mapping. `all` never touches system, reserved, or recovery partitions.
 
----
+## SetHostname
 
-## `SetHostname`
-
-**Stage:** Network, Order 1. **Frequency:** per-instance.
-
-Sets the Windows ComputerName (the unqualified NetBIOS name). Uses the
-first label of `fqdn` if `hostname` is unset.
-
-`preserve_hostname: true` makes the module a no-op. If the name change
-requires a reboot, the module returns `RebootRequested` — the run is
-suspended, `shutdown /r /t 5` is invoked, and the agent resumes on the
-next boot via the per-instance semaphore.
-
-`prefer_fqdn_over_hostname: true` swaps the precedence: when both
-`hostname` and `fqdn` are set, the first label of `fqdn` wins. With the
-flag absent or `false`, the default (hostname-first, fqdn-fallback)
-holds. Cloud-init parity.
+Sets the Windows computer name (the unqualified NetBIOS name). If only `fqdn` is
+given, its first label is used.
 
 ```yaml
-#cloud-config
 hostname: web01
 ```
 
----
+`preserve_hostname: true` skips the module. `prefer_fqdn_over_hostname: true`
+takes the first label of `fqdn` even when `hostname` is also set. When the name
+change needs a reboot, provisioning suspends, the guest reboots, and the run
+resumes afterward.
 
-## `ApplyNetworkConfig`
+## ApplyNetworkConfig
 
-**Stage:** Network, Order 2. **Frequency:** per-instance.
+Applies a network-config document (v1 or v2) to the guest. The document comes
+from the datasource — for example inside a `config-2` ConfigDrive — not from
+cloud-config. See [Configure networking](../howto/configure-networking.md).
 
-Applies a cloud-init **network-config** document (v1 or v2) to the
-Windows guest. The document lives on the datasource (e.g. inside the
-`config-2` ConfigDrive), not in cloud-config. See
-[Configure networking](../howto/configure-networking.md).
+Adapters are matched by MAC address. For each match the module applies the
+addresses (IPv4 and IPv6, static or DHCP), gateways, routes, DNS servers and
+search suffixes, and MTU. An entry whose MAC matches no adapter is skipped with
+a warning; an absent network-config is a no-op.
 
-Matches adapters by MAC address. Disables DHCP before applying static
-addresses. Honors `nameservers.addresses` and `mtu`.
+## NtpClient
 
-Skipped silently when no network-config is present. Skipped per-entry
-(with a warning) when MAC is missing or doesn't match any adapter.
-
----
-
-## `NtpClient`
-
-**Stage:** Network, Order 3. **Frequency:** per-instance.
-
-Configures the Windows Time service (`w32time`) — start mode, SCM
-triggers, manual peer list — and optionally the
-`RealTimeIsUniversal` registry value (for guests where the host RTC is
-UTC).
+Configures the Windows Time service (`w32time`): start mode, network-availability
+triggers, and the manual peer list.
 
 ```yaml
 ntp:
-  enabled: true                  # default true
+  enabled: true
   servers: [time.windows.com]
   pools:   [pool.ntp.org]
-  real_time_clock_utc: true      # optional; opt-in only
+  real_time_clock_utc: true    # optional, opt-in
 ```
 
-`servers` and `pools` are concatenated into a single `w32tm` manual
-peer list (Windows doesn't distinguish). `enabled: false` stops
-w32time and sets its start mode to `Disabled`. Triggers are reset so
-the service follows network availability (cbi parity).
+`servers` and `pools` are combined into one peer list — Windows draws no
+distinction. `enabled: false` stops the service and disables it.
+`real_time_clock_utc` writes the `RealTimeIsUniversal` registry value; leave it
+unset to keep the Windows default (it's only needed on hosts that keep the RTC
+in UTC).
 
----
+## Timezone
 
-## `Timezone`
-
-**Stage:** Network, Order 4. **Frequency:** per-instance.
-
-Sets the system timezone. Accepts either an IANA identifier
-(`Europe/Berlin`) or a Windows timezone key name
-(`W. Europe Standard Time`). IANA → Windows translation uses the CLDR
-mapping shipped with .NET.
+Sets the system timezone. Accepts an IANA name (`Europe/Berlin`) or a Windows
+timezone key (`W. Europe Standard Time`); the IANA-to-Windows mapping ships with
+.NET. An unrecognized value fails rather than being ignored.
 
 ```yaml
 timezone: Europe/Berlin
 ```
 
-Unknown identifiers (neither IANA nor Windows) return a clear failure
-instead of silently no-op'ing.
+## SetLocale
 
----
-
-## `SetLocale`
-
-**Stage:** Network, Order 5. **Frequency:** per-instance.
-
-Sets the display language / culture / keyboard layout. The
-`locale` and `keyboard` cloud-init keys are handled by one module
-because on Windows the language list and input method are tightly
-coupled.
+Sets the display language, culture, and keyboard layout. `locale` and `keyboard`
+share one module because on Windows the language list and input method are tied
+together.
 
 ```yaml
-locale: de-DE                    # BCP-47 culture name
+locale: de-DE
 keyboard:
-  layout: en-US                  # BCP-47 or "lang:KLID" form
+  layout: en-US
 ```
 
-Both fields are independent: keyboard-only (operator wants QWERTZ but
-leaves the UI in English) is fine. Changing the system locale
-(`Set-WinSystemLocale` — the non-Unicode ANSI codepage) requires reboot;
-the module returns `RebootRequested` only when that specific value
-changed.
+The two are independent — a keyboard-only change (German layout, English UI) is
+fine. Changing the system locale needs a reboot, which the module requests only
+when that value actually changed.
 
----
+## UsersGroups
 
-## `UsersGroups`
-
-**Stage:** Config, Order 0. **Frequency:** per-instance.
-
-Creates local groups, creates local users, sets passwords from
-`users[].passwd` / `users[].plain_text_passwd`, adds users to groups,
-and (when `sudo` is non-`false`) ensures the user is in the local
-`Administrators` group.
+Creates local groups and users, sets passwords, and adds users to groups.
 
 ```yaml
 groups:
@@ -205,26 +127,16 @@ users:
     sudo: true
 ```
 
-Windows-specific notes:
+On Windows, `passwd` and `plain_text_passwd` are treated the same (no hash is
+applied); `plain_text_passwd` wins if both are set. `sudo: true` (or any value
+other than `false`) adds the user to `Administrators` — Linux sudoers rules are
+ignored. `lock_passwd: true` disables the account. `gecos` sets the account's
+full name (the "Full name" column in `lusrmgr.msc`).
 
-- `plain_text_passwd` and `passwd` are treated identically (no hashes
-  apply on Windows). `plain_text_passwd` wins if both are set, matching
-  cloud-init.
-- `sudo: true` (or any non-`false` value) → user added to
-  `Administrators`. Linux sudoers entries are ignored.
-- `lock_passwd: true` disables the account.
-- `gecos: "Full Name"` maps to the NTUser `FullName` field — visible as
-  "Full name" in `lusrmgr.msc`. Cloud-init mirrors the same value into
-  `/etc/passwd`'s comment column on Linux.
+## SetPasswords
 
----
-
-## `SetPasswords`
-
-**Stage:** Config, Order 1. **Frequency:** per-instance.
-
-Runs after `UsersGroups`, so a `chpasswd` entry overrides the password
-the user record set — matches cloud-init.
+Runs after `UsersGroups`, so a `chpasswd` entry overrides a password set on the
+user record.
 
 ```yaml
 chpasswd:
@@ -233,38 +145,28 @@ chpasswd:
       password: BobP!42
   list: |
     carol:CarolP!42
-    dave:DaveP!42
-password: TopLevelP!42    # shorthand; lands on the resolved default user
+password: TopLevelP!42      # applies to the default user
 ```
 
-**Random passwords are not supported.** cloud-init's `type: RANDOM`
-(and the `chpasswd.list` `R`/`RANDOM` tokens, and a password-less
-`chpasswd.users` entry) generate a password and deliver it by writing
-it to `/dev/console`. Windows guests have no console channel reliably
-captured across the clouds eryph targets, so a generated password could
-never be retrieved — setting one would silently lock the operator out.
-`egs-service validate` rejects these, and at runtime they are
-warn-and-skipped. Specify an explicit password instead.
+Random passwords aren't supported — `type: RANDOM`, the `chpasswd.list`
+`R`/`RANDOM` tokens, and password-less entries are rejected at validate and
+skipped at runtime. cloud-init returns a generated password over the system
+console, which Windows guests can't reliably offer here, so the value would be
+lost. Set an explicit password.
 
-`chpasswd.expire` controls the "must change at next logon" flag. The
-cloud-init default is `true` — every changed password is flagged for
-change at first login. `expire: false` suppresses the flag. The default
-applies to all three input forms: `chpasswd.users`, `chpasswd.list`,
-and the top-level `password` shorthand.
+`chpasswd.expire` flags changed passwords for change at next login. It defaults
+to `true` (as in cloud-init) and applies to all three forms above; set it to
+`false` to keep the password as-is.
 
----
+## SshModule
 
-## `SshModule`
-
-**Stage:** Config, Order 2. **Frequency:** per-instance.
-
-The cloud-init `cc_ssh` equivalent for the OS-level Win32-OpenSSH daemon
-under `C:\ProgramData\ssh\`. This is the host OS sshd — distinct from the
-egs-service Hyper-V-vsock remote-access transport `egs-tool` connects to.
+Configures the guest's own OpenSSH server under `C:\ProgramData\ssh\`. This is
+the standard network sshd — separate from the Hyper-V remote-access transport
+that `egs-tool` uses.
 
 ```yaml
-ssh_pwauth: false                 # PasswordAuthentication in the drop-in (omitted if unset)
-disable_root: true                # DenyUsers the built-in Administrator (resolved by RID-500 SID)
+ssh_pwauth: false
+disable_root: true
 ssh_authorized_keys:
   - ssh-ed25519 AAAA... fleet
 users:
@@ -272,86 +174,89 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAA... alice
 ssh:
-  install_openssh: true           # install the Win32-OpenSSH server if absent
+  install_openssh: true
 ```
 
-What it does:
+Top-level `ssh_authorized_keys` (together with any keys the datasource supplies)
+go to the default user; per-user keys go to each named user. Keys are merged into
+the existing `authorized_keys`, not replaced.
 
-- **authorized_keys.** Top-level `ssh_authorized_keys` (merged with any
-  datasource-supplied public keys) land on the resolved default user;
-  per-user `users[].ssh_authorized_keys` land on each named user. Keys
-  are **merged** into the existing `authorized_keys`, not overwritten.
-- **Host keys.** Generates host keys (`ed25519`, `ecdsa`, `rsa` by
-  default; override with `ssh_genkeytypes`) on the first instance boot,
-  or writes operator-supplied `ssh_keys` verbatim. DSA is skipped
-  (removed in OpenSSH 9.8).
-- **sshd_config drop-in.** Writes
-  `C:\ProgramData\ssh\sshd_config.d\50-eryph.conf`:
-  `PasswordAuthentication` from `ssh_pwauth` (omitted when unset),
-  always `PubkeyAuthentication yes`, and `DenyUsers <Administrator>` when
-  `disable_root: true`.
-- **Install.** `ssh.install_openssh: true` installs the Win32-OpenSSH
-  server when no sshd is present. Without it, the module just writes
-  `authorized_keys` (sshd reads them per-connection once one exists) and
-  skips host-key / config / restart work.
-- **Fingerprints.** Regenerated host-key fingerprints are reported
-  unless `ssh.emit_keys_to_console: false`.
+On the first boot the module generates host keys (`ed25519`, `ecdsa`, `rsa`;
+override with `ssh_genkeytypes`), or writes the keys you supply in `ssh_keys`.
+It writes a drop-in at `sshd_config.d\50-eryph.conf` for
+`PasswordAuthentication` (from `ssh_pwauth`) and, when `disable_root: true`, a
+`DenyUsers` entry for the built-in Administrator. The daemon restarts only when
+host keys or the config changed.
 
-The daemon restarts only when host keys or the drop-in actually changed.
+If no sshd is installed the module still writes `authorized_keys` and skips the
+rest, unless `ssh.install_openssh: true`, which installs the Win32-OpenSSH
+server first.
 
----
+## WriteFiles
 
-## `WriteFiles`
-
-**Stage:** Config, Order 3. **Frequency:** per-instance.
-
-Writes files to disk; creates parent directories as needed; rejects
-path-traversal (`..`) attempts.
+Writes files, creating parent directories as needed.
 
 ```yaml
 write_files:
   - path: C:\demo\config.json
     encoding: b64
     content: eyJrIjogInYifQ==
-  - path: C:\demo\bundle.tar
-    encoding: gz+b64
-    content: H4sIAA...
   - path: C:\demo\restricted.txt
     content: secret
     permissions: "0640"
     owner: alice
-    append: false
 ```
 
-Encodings: empty / `text/plain` (UTF-8 bytes), `b64` / `base64`,
-`gz` / `gzip`, `gz+b64` and its aliases. Unknown encoding fails the
-single entry; the module continues with the next.
+`encoding` accepts plain text (the default), `b64`/`base64`, `gz`/`gzip`, and
+`gz+b64`. A POSIX path is translated to a Windows path under `C:\`; a path that
+escapes via `..` is rejected and fails the module. POSIX `permissions` are mapped
+to NTFS ACLs (owner, group as Users, others as Everyone; SYSTEM and Administrators
+always keep full control), and `owner` sets the file owner.
 
-POSIX paths starting with `/` are translated to Windows paths under
-`C:\`. Paths that try to escape via `..` are rejected and the module
-**fails** (the module returns Fail rather than silently skipping a
-suspicious entry).
+Entries marked `defer: true` are left for `WriteFilesDeferred`.
 
-POSIX `permissions` is mapped onto NTFS ACLs the same way cloudbase-init
-does (owner / group→Users / others→Everyone; SYSTEM and Administrators
-always retain FullControl) via `WindowsOs.SetPosixPermissionsAsync`,
-which also applies `owner`. When only `owner` is set, the existing ACL is
-left alone and just the owner changes. An ACL failure logs a warning and
-the entry's content write still stands.
+## Runcmd
 
-Entries flagged `defer: true` are skipped by this Config-stage module
-and handled by `WriteFilesDeferred` at Final — see below.
+Runs each entry in order. A string runs through `cmd.exe`; a list is an argument
+vector passed straight to the process.
 
----
+```yaml
+runcmd:
+  - powershell.exe -NoProfile -Command "Write-Host 'shell'"
+  - [powershell.exe, -NoProfile, -Command, "Write-Host 'argv'"]
+```
 
-## `WriteFilesDeferred`
+A command that exits non-zero is logged and the next one still runs — the module
+doesn't stop on the first failure (this matches cloud-init). To gate the rest on
+a step, handle the error inside that command. Exit code `1003` reboots the guest
+and resumes provisioning afterward.
 
-**Stage:** Final, Order -1 (runs before `ScriptsUser`). **Frequency:** per-instance.
+## Licensing
 
-Final-stage counterpart to `WriteFiles`. Picks up only the
-`write_files` entries flagged `defer: true` and writes them after
-users / groups / passwords have been processed. Cloud-init parity —
-matches `cc_write_files_deferred.py`.
+Activates Windows. It runs by default with safe behaviour: it installs the AVMA
+key for the guest's edition (a no-op on editions without one), and runs
+`slmgr /rearm` only when the active product is an evaluation. On Azure it skips
+activation — Windows activates against the Azure KMS automatically — but still
+rearms evaluation editions, which Azure does not handle.
+
+```yaml
+license:
+  product_key: AAAAA-BBBBB-CCCCC-DDDDD-EEEEE   # explicit; bypasses auto-detect
+  kms_host:    "kms.example.com:1688"
+  set_avma: true       # default true
+  set_kms:  false       # default false
+  activate: false       # default false
+  rearm:    true        # default true; only on evaluation editions
+  force:    false       # default false; run activation even on Azure
+```
+
+Priority is `product_key`, then AVMA, then KMS auto-detect. The key tables cover
+Server 2012 R2 through 2025.
+
+## WriteFilesDeferred
+
+Runs the `write_files` entries marked `defer: true`, in the Final stage, after
+users and groups exist.
 
 ```yaml
 write_files:
@@ -362,141 +267,31 @@ write_files:
     defer: true
 ```
 
-Use this when an entry depends on state earlier modules in the same
-run create — typically when the file must be owned by a user the
-`users` block created in the same run. Without `defer: true`, the
-write fires at Config order 3 and the owner principal may not yet
-exist; deferring to Final guarantees `UsersGroups` (Config order 0)
-has already created the principal.
+Defer an entry when its owner is a user created in the same run — at Config time
+that account may not exist yet. Everything else works as in `WriteFiles`.
 
-All other semantics (encoding, path translation, POSIX permissions)
-match `WriteFiles`.
+## ScriptsUser
 
----
+Stages every script (from multipart parts or a top-level shebang) under
+`%ProgramData%\eryph\provisioning\scripts\per-instance\` and runs it. The runner
+is chosen by filename extension — see
+[Run shell scripts](../howto/run-shell-scripts.md). Each script's output is
+written to a per-script log and reported to the host. Exit code `1003` reboots
+and resumes, as with `runcmd`.
 
-## `Runcmd`
+## PowerState
 
-**Stage:** Config, Order 4. **Frequency:** per-instance.
-
-Runs each entry in declaration order. String entries go through
-`cmd.exe`-style shell dispatch; list (argv) entries are executed
-verbatim.
-
-```yaml
-runcmd:
-  - powershell.exe -NoProfile -Command "Write-Host 'shell-style'"
-  - [powershell.exe, -NoProfile, -Command, "Write-Host 'argv-style'"]
-```
-
-**Failure contract:** commands run in declaration order. A non-zero
-exit (≠1003) is **logged as an error and execution continues with the
-next command** — the module does not abort on first failure. This is
-cloud-init parity; operators coming from "shell scripts stop on first
-error" need the heads-up. If you need a command to gate the rest, make
-it fail the script itself (e.g. a single multi-line entry with your own
-error handling).
-
-Exit code **1003** triggers reboot-and-continue (cloudbase-init
-convention; cloud-init does not honor this) — the module returns and
-the runner resumes after the reboot.
-
----
-
-## `Licensing`
-
-**Stage:** Config, Order 5. **Frequency:** per-instance.
-
-Activates Windows. Module is **always-on** with safe-by-default
-behaviour:
-
-- `set_avma` defaults to **true** — installs the AVMA key for the
-  guest's edition (silent no-op on non-Server SKUs or editions not in
-  our table).
-- `rearm` defaults to **true** — fires `slmgr /rearm` only when the
-  active product is an evaluation (`SoftwareLicensingProduct.IsEvaluation`).
-  Returns `RebootRequested` on success — rearm needs reboot to apply.
-- On Azure (active datasource = `Azure`), the activation path skips
-  itself: Windows on Azure activates against the Azure internal KMS
-  automatically. The rearm path still runs because Azure does NOT
-  manage evaluation grace periods.
-
-Operators can override any default:
-
-```yaml
-license:
-  # Explicit overrides (highest priority — auto-detect is bypassed):
-  product_key: AAAAA-BBBBB-CCCCC-DDDDD-EEEEE
-  kms_host:    "kms.example.com:1688"
-
-  # Auto-detect against the guest edition:
-  set_avma: true            # default true
-  set_kms:  false           # default false; when true, clears KMS host so DNS SRV takes over
-
-  # Extras:
-  activate: false           # default false — KMS clients self-activate
-  rearm:    true            # default true — only fires on evaluation editions
-  force:    false           # default false — apply activation path even on Azure
-```
-
-Resolution priority: `product_key` > AVMA > KMS auto. AVMA / KMS key
-tables are verified against the Microsoft Learn AVMA and KMS reference
-pages — covers Server 2012 R2 through 2025 (Datacenter / Standard /
-Solution / Datacenter:Azure Edition where applicable).
-
----
-
-## `ScriptsUser`
-
-**Stage:** Final, Order 0. **Frequency:** per-instance.
-
-Stages every script payload (collected from multipart MIME parts or a
-top-level shebang) under
-`%ProgramData%\eryph\provisioning\scripts\per-instance\` and runs them.
-
-Dispatch is filename-led — see
-[Run shell scripts](../howto/run-shell-scripts.md). Stdout
-and stderr are captured to per-script log files and emitted as a
-`ReportingEvent.Progress` per script.
-
-Exit code 1003 → reboot-and-continue, same as `Runcmd`.
-
----
-
-## `PowerState`
-
-**Stage:** Final, Order `int.MaxValue - 1` (runs LAST). **Frequency:** per-instance.
-
-Optional controlled reboot / poweroff / hibernate at the END of
-provisioning. Distinct from exit-1003 reboot-and-continue, which is
-mid-stage. Use this when the operator wants "finish everything, then
-reboot on my schedule."
+Reboots, powers off, or hibernates the guest at the end of provisioning — after
+every other module has run. This is the scheduled "finish, then reboot" case,
+distinct from the mid-run `1003` reboot.
 
 ```yaml
 power_state:
-  mode: reboot                 # reboot | poweroff | halt (default: reboot)
-  delay: now                   # now | +N (minutes) | HH:MM | integer (seconds)
-  message: 'Provisioning complete'
-  timeout: 30                  # accepted for cloud-init parity; no Windows mapping
-  condition: true              # bool or shell command (exit 0 = proceed)
+  mode: reboot          # reboot | poweroff | halt
+  delay: 30             # seconds
+  message: "Provisioning done"
+  condition: true       # optional; a command whose success gates the action
 ```
 
-`mode` notes:
-
-- `poweroff` accepts `shutdown` as a cbi-style alias.
-- `halt` has no clean Windows analogue; falls back to hibernate
-  (`shutdown.exe /h`) with a Warning logged.
-
-`delay` always honours a 5-second minimum so the StageRunner cleanup
-(per-instance semaphore + KVP "completed" event + datasource cleanup
-hook) has time to flush before Windows starts tearing the agent down.
-
-`condition`:
-
-- `null` / omitted → proceed.
-- `true` / `false` → literal proceed / skip.
-- string → run as a shell command (`cmd.exe /c <…>`); exit 0 proceeds,
-  anything else skips.
-
-The module returns `Completed`, not `RebootRequested` — per-instance
-semaphore stops the post-reboot run from re-entering and scheduling
-another shutdown (otherwise: infinite reboot loop).
+`mode: halt` hibernates, since Windows has no halt. `condition` may be a boolean
+or a command — the action runs only if the command succeeds.
