@@ -32,17 +32,15 @@ Modules, in run order: `Growpart`, `SetHostname`, `ApplyNetworkConfig`,
 `ScriptsUser`, `PowerState`. See [Modules](../reference/modules.md).
 
 Linux-only top-level keys (`apt`, `snap`, `packages`, `chef`, …) are
-accepted by the schema and logged at Info from a source-generated
-inventory, so cross-cloud cloud-config round-trips cleanly.
-`egs-service validate --target windows` surfaces the same per file.
+accepted and logged at Info, so a cross-cloud cloud-config passes through
+cleanly. `egs-service validate --target windows` lists them per file.
 
 The per-stage module list and the datasource list are both operator-
 configurable — see [Settings](../reference/settings.md).
 
 ## What's missing
 
-These are skipped (with a warning where noted) or fall through to
-`NoDataSource`.
+These are skipped, with a warning where noted:
 
 | Missing | Status |
 | --- | --- |

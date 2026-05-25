@@ -1,81 +1,55 @@
 # Coexistence with platform agents
 
-Most public clouds ship their own Windows guest agent. The provisioning
-agent's stance on each is summarised below.
+Most clouds ship their own Windows guest agent. Where the agent stands on each:
 
-## Azure — coexist with PA + WinGA (mandatory)
+## Azure
 
-Two Microsoft components own the Azure wireserver channel:
+Two Microsoft components own the Azure wireserver channel: the Provisioning
+Agent, which runs during OOBE — it applies the computer name, admin user, and
+RDP from `ovf-env.xml`, writes `C:\AzureData\CustomData.bin`, sends the first
+wireserver Ready signal, and exits — and the long-running Windows Guest Agent,
+which handles heartbeats, extensions, and telemetry. That channel is never idle
+on a Microsoft Windows image, and a second writer on it risks confusing the
+fabric.
 
-- **Provisioning Agent (PA)** — runs during `oobeSystem`, applies
-  ComputerName / admin user / RDP from `ovf-env.xml`, writes
-  `C:\AzureData\CustomData.bin`, **sends the first wireserver
-  `Ready`**, then exits.
-- **WinGA (`WindowsAzureGuestAgent.exe`)** — long-running service.
-  Heartbeats, extension installation, OSProfile cert sync, telemetry.
+So the agent stays off it completely: it never contacts the wireserver, never
+reports as a Microsoft component, and never re-applies the computer name, admin
+user, or RDP — the Provisioning Agent already did those. It reads
+`CustomData.bin`, queries instance metadata at `169.254.169.254`, applies the
+cloud-config, and deletes `CustomData.bin` on success.
 
-The wireserver channel is **never idle** on a Microsoft-Windows image.
-A second writer risks fabric confusion regardless of which MS component
-is "current".
+Run the agent on Azure *without* the Provisioning Agent and the fabric never
+sees its Ready signal, so the VM times out. The agent is a complement to the PA,
+not a replacement for it.
 
-**Hard rules for our agent:**
+## AWS
 
-- Never POST to the wireserver `/machine?comp=health` Ready endpoint.
-- Never call any other wireserver endpoint.
-- Never emit telemetry under a Microsoft agent name.
-- Never re-apply ComputerName / admin user / RDP — PA did them.
+EC2Launch v2 is convenience tooling, not a fabric requirement — AWS marks a VM
+healthy once its system and network checks pass. Replacing EC2Launch means
+taking over sysprep, volume initialization, and password handling. The last one
+is visible: without EC2Launch the console's "Get Password" stops working, so
+deliver keys through cloud-config instead. The EC2 datasource is a stub today.
 
-**What we do:** read `CustomData.bin` (raw bytes), query IMDS at
-`169.254.169.254` for live instance metadata, apply the cloud-config
-fodder.
+## GCP
 
-**Cleanup:** delete `CustomData.bin` after successful provisioning
-(mirrors cloudbase-init's `AzureCustomDataService.provisioning_completed`).
+GCP's guest agent isn't required, but OS Login, project-metadata SSH keys, and
+hostname propagation degrade without it. Keep the GCP guest agent in the image
+and let this agent handle user-data. The GCP datasource isn't implemented yet.
 
-## AWS — replace EC2Launch v2 by default
+## OpenStack
 
-EC2Launch v2 is convenience tooling, not a fabric requirement. AWS
-considers a VM healthy as soon as system + network checks pass —
-there's no equivalent to Azure's wireserver handshake.
+The agent takes the slot cloudbase-init held on OpenStack. The ConfigDrive
+datasource reads the `config-2` ISO that OpenStack produces.
 
-**What we absorb if we replace EC2Launch:** sysprep integration,
-volume initialization, password generation + console-surfacing. The
-last one is the one customers notice: without EC2Launch, the
-"Get Password" feature in the EC2 console stops working. For that,
-ship the keys via cloud-config.
+## Hyper-V (eryph)
 
-**Status:** stub. The EC2 datasource is registered but returns
-`NotApplicable`.
+No native agent — the agent is it. eryph-zero attaches a `config-2` drive and
+the agent reports back over Hyper-V KVP.
 
-## GCP — coexist with Guest Agent (soft)
+## An existing cloudbase-init
 
-GCP's guest agent isn't a fabric requirement but several features
-degrade without it (OS Login, project-metadata SSH keys, hostname
-propagation). Recommendation: keep the GCP Guest Agent in the image
-and let our agent handle user-data only. The GCP datasource is not
-yet implemented.
-
-## OpenStack — replace
-
-Our agent fills the slot historically owned by cloudbase-init on
-OpenStack. The `ConfigDrive` datasource reads the `config-2` ISO
-layout OpenStack produces.
-
-## Hyper-V (eryph) — no native agent
-
-`config-2` from eryph-zero, KVP for reporting. We're it.
-
-## Pre-existing cloudbase-init
-
-If a Windows image already has cloudbase-init installed and our agent
-is added alongside, both will probably attempt to consume the same
-datasource. **Don't do this.** Use one or the other:
-
-- On eryph: replace cbi with `egs-service`.
-- On other clouds: keep cbi for now, or replace it explicitly and
-  watch the [Windows cloud-init status](windows-cloud-init-status.md)
-  page for what's still missing.
-
-There's no in-tree mechanism for cbi-and-agent coexistence; the
-implicit assumption is that on any given guest, exactly one cloud-init
-runtime is active.
+Don't run the agent alongside cloudbase-init on the same guest — both would try
+to consume the same datasource. Pick one: replace cbi with `egs-service` on
+eryph, or keep cbi on other clouds until the gaps in
+[Windows cloud-init status](windows-cloud-init-status.md) are closed. Exactly one
+cloud-init runtime should be active on a guest.
