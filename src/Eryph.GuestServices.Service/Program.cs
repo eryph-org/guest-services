@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Cli;
@@ -92,6 +93,7 @@ internal static class Program
         });
 
         builder.Services.AddLogging();
+        builder.Services.AddSingleton<IServiceControlFlags, RegistryServiceControlFlags>();
         builder.Services.AddHostedService<SshServerService>();
         builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
         builder.Services.AddSingleton<IClientKeyProvider, ClientKeyProvider>();

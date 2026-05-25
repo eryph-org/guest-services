@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Stages;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,10 +18,18 @@ namespace Eryph.GuestServices.Provisioning.Hosting;
 internal sealed class ProvisioningHostedService(
     IStageRunner runner,
     IHostApplicationLifetime lifetime,
+    IServiceControlFlags controlFlags,
     ILogger<ProvisioningHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!controlFlags.IsProvisioningEnabled())
+        {
+            logger.LogInformation(
+                "Provisioning disabled via registry (HKLM\\SOFTWARE\\eryph\\guest-services\\ProvisioningEnabled=0); skipping first-boot provisioning.");
+            return;
+        }
+
         StageRunOutcome outcome;
         try
         {

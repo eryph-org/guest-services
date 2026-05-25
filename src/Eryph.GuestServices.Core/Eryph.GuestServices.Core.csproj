@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.Service.Tests" />
+  </ItemGroup>
+
 </Project>
