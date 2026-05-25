@@ -1,79 +1,54 @@
-# How to use multipart user-data
+# Multipart user-data
 
-Cloud-init's multipart MIME format lets one user-data payload carry
-several content types — a cloud-config plus one or more scripts plus
-optionally an `#include` URL. The agent recognises the same shape.
-
-## Anatomy
+A multipart MIME message carries several parts in one user-data payload — a
+cloud-config plus one or more scripts, or an `#include` URL. It's the same
+format cloud-init uses; `cloud-init devel make-mime` and the eryph fodder
+compiler produce it.
 
 ```
 Content-Type: multipart/mixed; boundary="==BOUNDARY=="
 MIME-Version: 1.0
 
 --==BOUNDARY==
-Content-Type: text/x-cloud-config; charset="us-ascii"
-MIME-Version: 1.0
+Content-Type: text/x-cloud-config
 Content-Disposition: attachment; filename="cloud-config.yaml"
 
 #cloud-config
 hostname: my-guest
-runcmd:
-  - powershell.exe -Command "echo 'first'"
 
 --==BOUNDARY==
-Content-Type: text/x-shellscript; charset="us-ascii"
-MIME-Version: 1.0
+Content-Type: text/x-shellscript
 Content-Disposition: attachment; filename="setup.ps1"
 
-Write-Host 'second'
+Write-Host 'hello from the script'
 
 --==BOUNDARY==--
 ```
 
-## Content-types we recognise
+Each part's `Content-Type` decides how the agent handles it:
 
-| Content-Type | Maps to |
+| Content-Type | Handling |
 | --- | --- |
-| `text/cloud-config`, `text/x-cloud-config` | Cloud-config fragment (merged into the final config). |
-| `text/x-shellscript` | Script payload (PowerShell or cmd; see below). |
-| `text/cloud-boothook` | Captured as a boothook but **not executed** in v1. |
-| `text/x-include-url`, `text/x-include-once-url` | Fetch URL(s) and recurse on the result. |
-| `multipart/mixed`, `multipart/*` | Nested multipart — recursed into. |
-| `application/octet-stream`, `text/plain`, missing | Sniffed from the body — same rules as the root user-data. |
+| `text/cloud-config`, `text/x-cloud-config` | Parsed as a cloud-config fragment; multiple fragments merge into one. |
+| `text/x-shellscript` | A script (PowerShell or cmd — see below). |
+| `text/x-include-url`, `text/x-include-once-url` | URLs to fetch; each result is processed as user-data. |
+| `text/cloud-boothook` | Stored, not run. |
+| `multipart/*` | Nested multipart, processed in turn. |
+| `text/plain`, `application/octet-stream`, none | Read and handled by content (`#cloud-config` header, `#ps1` line, …). |
 
-## Transfer encoding
+## Scripts
 
-`Content-Transfer-Encoding: base64` is decoded. `7bit`, `8bit`, and
-`binary` are passed through as-is. Quoted-printable is **not** decoded
-in v1.
+A script part runs by its filename extension: `.ps1` under PowerShell,
+`.cmd`/`.bat` under cmd. Set it with `Content-Disposition: attachment;
+filename="setup.ps1"`. No extension, or `.sh`, won't run on Windows.
 
-## Filename is load-bearing for scripts
+## Binary content
 
-The agent dispatches shell-script parts by **filename extension**, not
-by shebang — see [Run shell scripts](run-shell-scripts.md). Make sure
-every script part has a `Content-Disposition` with a `filename=` whose
-extension matches what you want to run (`.ps1`, `.cmd`/`.bat`). This is
-what eryph fodder genes already emit; the rule exists so we accept the
-same shape cloudbase-init does.
+Base64-encode non-text parts and set `Content-Transfer-Encoding: base64`.
+Text parts go as-is.
 
-## Close delimiter is required
-
-The MIME spec requires the multipart to end with `--boundary--`. The
-agent enforces this — a multipart that omits the closing line is
-rejected, so make sure your last part is followed by `--boundary--`. The
-example above ends with `--==BOUNDARY==--` for exactly this reason.
-
-## Sniffing the root
-
-A leading `From ` mbox envelope line or a `From:` header before the MIME
-headers is normal and common — the agent reads the multipart whether or
-not such a line precedes the headers. UTF-8 BOM at the start of the file
-is stripped too.
-
-## Validating
+## Validate
 
 ```powershell
 egs-service validate --user-data C:\Temp\multipart.mime
 ```
-
-reports whether each part was parseable and accepted.
