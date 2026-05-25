@@ -85,8 +85,7 @@ mirrors cloud-init's `datasource_list`:
   to all sources in `Priority` order, so a fully-typo'd list cannot
   silently disable provisioning.
 
-Per-source overrides are not exposed in v1. See
-[RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md).
+Per-source overrides are not exposed in v1.
 
 ## `scripts` — `ScriptsUser` module
 
@@ -146,8 +145,7 @@ modules run.
 Module names are case-insensitive and tolerate the `Module` suffix
 (`SetHostname` and `SetHostnameModule` both match). Stage membership and
 intra-stage order are fixed by the module attributes; these lists only
-add or remove. Unknown names are logged at Warning, never fatal. See
-[RFC 0009](../../rfcs/0009-module-list-split.md).
+add or remove. Unknown names are logged at Warning, never fatal.
 
 ## Service control (registry)
 

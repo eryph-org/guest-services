@@ -59,9 +59,6 @@ Windows path prefix:
 `<instance-id>` is sanitised against
 `Path.GetInvalidFileNameChars()` before being used in a path.
 
-Design notes: [RFC 0003](../../rfcs/0003-module-frequencies.md) +
-[RFC 0010](../../rfcs/0010-semaphore-design.md).
-
 ## Forcing a re-run
 
 | Goal | Command |

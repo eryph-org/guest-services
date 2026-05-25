@@ -77,8 +77,6 @@ letter (`C`, `"C:"`, `"D:\"`), or `all` (every growable volume; never
 extends system / reserved / recovery partitions). Drive letters with a
 colon **must be quoted** — `- C:` parses as a YAML mapping.
 
-Design: [RFC 0023](../../rfcs/0023-extend-volumes-module.md).
-
 ---
 
 ## `SetHostname`
@@ -120,8 +118,6 @@ addresses. Honors `nameservers.addresses` and `mtu`.
 Skipped silently when no network-config is present. Skipped per-entry
 (with a warning) when MAC is missing or doesn't match any adapter.
 
-Design: [RFC 0002](../../rfcs/0002-network-config-v1-v2-application.md).
-
 ---
 
 ## `NtpClient`
@@ -146,8 +142,6 @@ peer list (Windows doesn't distinguish). `enabled: false` stops
 w32time and sets its start mode to `Disabled`. Triggers are reset so
 the service follows network availability (cbi parity).
 
-Design: [RFC 0016](../../rfcs/0016-ntp-module.md).
-
 ---
 
 ## `Timezone`
@@ -165,8 +159,6 @@ timezone: Europe/Berlin
 
 Unknown identifiers (neither IANA nor Windows) return a clear failure
 instead of silently no-op'ing.
-
-Design: [RFC 0015](../../rfcs/0015-set-timezone-module.md).
 
 ---
 
@@ -190,8 +182,6 @@ leaves the UI in English) is fine. Changing the system locale
 (`Set-WinSystemLocale` — the non-Unicode ANSI codepage) requires reboot;
 the module returns `RebootRequested` only when that specific value
 changed.
-
-Design: [RFC 0027](../../rfcs/0027-set-locale-module.md).
 
 ---
 
@@ -271,7 +261,6 @@ and the top-level `password` shorthand.
 The cloud-init `cc_ssh` equivalent for the OS-level Win32-OpenSSH daemon
 under `C:\ProgramData\ssh\`. This is the host OS sshd — distinct from the
 egs-service Hyper-V-vsock remote-access transport `egs-tool` connects to.
-Design: [RFC 0018](../../rfcs/0018-ssh-module.md).
 
 ```yaml
 ssh_pwauth: false                 # PasswordAuthentication in the drop-in (omitted if unset)
@@ -454,8 +443,6 @@ tables are verified against the Microsoft Learn AVMA and KMS reference
 pages — covers Server 2012 R2 through 2025 (Datacenter / Standard /
 Solution / Datacenter:Azure Edition where applicable).
 
-Design: [RFC 0017](../../rfcs/0017-licensing-module.md).
-
 ---
 
 ## `ScriptsUser`
@@ -467,8 +454,7 @@ top-level shebang) under
 `%ProgramData%\eryph\provisioning\scripts\per-instance\` and runs them.
 
 Dispatch is filename-led — see
-[Run shell scripts](../howto/run-shell-scripts.md) and
-[RFC 0007](../../rfcs/0007-scripts-per-frequency-edge-cases.md). Stdout
+[Run shell scripts](../howto/run-shell-scripts.md). Stdout
 and stderr are captured to per-script log files and emitted as a
 `ReportingEvent.Progress` per script.
 
@@ -514,5 +500,3 @@ hook) has time to flush before Windows starts tearing the agent down.
 The module returns `Completed`, not `RebootRequested` — per-instance
 semaphore stops the post-reboot run from re-entering and scheduling
 another shutdown (otherwise: infinite reboot loop).
-
-Design: [RFC 0024](../../rfcs/0024-power-state-module.md).

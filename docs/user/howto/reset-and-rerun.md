@@ -18,7 +18,7 @@ last-seen-boot.json                                 # boot session marker
 
 A module that has a matching semaphore is skipped on the next run. See
 [Frequencies reference](../reference/frequencies.md) for what each scope
-means and [RFC 0010](../../rfcs/0010-semaphore-design.md) for the design.
+means.
 
 ## What `reset` does by default
 

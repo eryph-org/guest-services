@@ -5,7 +5,7 @@ Cloud-init defines four ways to ship a script in user-data:
 1. As a `runcmd:` entry inside `#cloud-config`.
 2. As a MIME part with `Content-Type: text/x-shellscript`.
 3. As the entire user-data with a `#ps1`, `#ps1_sysnative` or `#!` shebang.
-4. As `#cloud-boothook` (captured but **not executed** in v1 — see [RFC 0013](../../rfcs/0013-boothook-execution.md)).
+4. As `#cloud-boothook` (captured but **not executed** in v1).
 
 Routes 2 and 3 produce script *payloads* that the `ScriptsUser` module
 runs in the Final stage. Route 1 runs in the Config stage via the
@@ -27,8 +27,6 @@ shebang detection (`#ps1`, `#ps1_sysnative` → PowerShell). A POSIX
 shebang (`#!/...`) is skipped with a warning on Windows. As a last
 resort, `Content-Type: text/x-shellscript` is treated as PowerShell
 with a warning logged.
-
-See [RFC 0007](../../rfcs/0007-scripts-per-frequency-edge-cases.md) for the rationale.
 
 ## Where scripts are staged
 

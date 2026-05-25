@@ -10,10 +10,10 @@ of the cloud-init content types below.
 | `#cloud-config` | `text/x-cloud-config` | `CloudConfigPartHandler` | YAML cloud-config; multiple fragments are deep-merged. |
 | `#include` | `text/x-include-url` | `IncludeUrlHandler` | One URL per line. |
 | `#include-once` | `text/x-include-url` (with once semantics) | `IncludeUrlHandler` | Identical to `#include` in v1. |
-| `#cloud-boothook` | `text/cloud-boothook` | `BoothookPartHandler` | **Captured, not executed.** See [RFC 0013](../../rfcs/0013-boothook-execution.md). |
+| `#cloud-boothook` | `text/cloud-boothook` | `BoothookPartHandler` | **Captured, not executed.** |
 | `#ps1`, `#ps1_sysnative` | `text/x-shellscript` | (via `ScriptsUser`) | Single PowerShell script as the whole user-data. |
 | `#!` (`#!/...`) | `text/x-shellscript` | (via `ScriptsUser`) | POSIX shebang. Captured but resolved to "Other" on Windows (no POSIX shell); a warning is logged. |
-| `Content-Type: multipart/...` or `MIME-Version: 1.0` | `multipart/mixed` | `MultipartMimeHandler` | Hand-rolled RFC 2046 parser. |
+| `Content-Type: multipart/...` or `MIME-Version: 1.0` | `multipart/mixed` | `MultipartMimeHandler` | Hand-rolled MIME multipart parser. |
 
 Anything else falls back to `text/plain` and is dropped with a
 warning. **There is no fallback to `runcmd`.** A user-data file with
@@ -36,9 +36,8 @@ are pass-through. Quoted-printable is **not decoded** in v1.
 `Content-Disposition: attachment; filename="..."` is preserved and used
 for script dispatch (see below).
 
-The closing `--boundary--` delimiter is **optional** — when missing, the
-last open part is flushed. cloudbase-init may not tolerate the same
-shape.
+The closing `--boundary--` delimiter is **required** by the MIME spec. A
+multipart that omits it is rejected.
 
 ## Filename-led script dispatch
 
@@ -56,8 +55,7 @@ documented behavior):
 
 Filename wins because eryph gene fodder was crafted around two cbi bugs
 (filename mandatory, shebangs ignored), so the agent honors what cbi
-honors, not what cloud-init documents. Rationale:
-[RFC 0007](../../rfcs/0007-scripts-per-frequency-edge-cases.md).
+honors, not what cloud-init documents.
 
 ## Cloud-config merging
 

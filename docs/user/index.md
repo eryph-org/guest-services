@@ -61,7 +61,3 @@ module names, frequencies, and semaphore layout — adapted to Windows.
 - [Differences from cloudbase-init](explanation/differences-from-cloudbase-init.md)
 - [Coexistence with platform agents](explanation/coexistence.md)
 - [Windows cloud-init status](explanation/windows-cloud-init-status.md)
-
-Per-decision rationale and deferred work live in the
-[RFCs](../rfcs/README.md). The RFC index status column is the canonical
-source for implemented vs. drafted vs. deferred.

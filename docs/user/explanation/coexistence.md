@@ -1,10 +1,7 @@
 # Coexistence with platform agents
 
 Most public clouds ship their own Windows guest agent. The provisioning
-agent's stance on each is summarised below. The full rationale and
-per-platform inventory lives in
-[RFC 0008](../../rfcs/0008-platform-native-provisioner-coexistence.md)
-and [RFC 0014](../../rfcs/0014-azure-datasource.md).
+agent's stance on each is summarised below.
 
 ## Azure — coexist with PA + WinGA (mandatory)
 
