@@ -422,6 +422,134 @@ public class DataSourceLocatorTests
         await winner.Received(2).OnCompletedAsync(data!, Arg.Any<CancellationToken>());
     }
 
+    // ---- datasource_list (cloud-init parity) ----
+
+    private static DataSourceLocator NewLocatorWithList(
+        IEnumerable<IDataSource> sources,
+        IReadOnlyList<string>? dataSourceList,
+        ILogger<DataSourceLocator>? logger = null)
+    {
+        return new DataSourceLocator(
+            sources,
+            logger ?? NullLogger<DataSourceLocator>.Instance,
+            TimeSpan.FromMinutes(10),
+            DataSourceLocator.DefaultMinBackoff,
+            DataSourceLocator.DefaultMaxBackoff,
+            (_, _) => Task.CompletedTask,
+            dataSourceList);
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_DataSourceList_probes_only_the_named_source()
+    {
+        var noCloud = MakeSource("NoCloud", 10, new DataSourceProbeResult.Ready(MakeResult("NoCloud")));
+        var configDrive = MakeSource("ConfigDrive", 20, new DataSourceProbeResult.Ready(MakeResult("ConfigDrive")));
+
+        var locator = NewLocatorWithList([noCloud, configDrive], ["NoCloud"]);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("NoCloud");
+        // ConfigDrive is not in the configured list, so it must never be probed.
+        await configDrive.DidNotReceive().ProbeAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_DataSourceList_honours_listed_order_over_priority()
+    {
+        // ConfigDrive has the *lower* priority value (would normally lose to NoCloud),
+        // but the configured list puts it first, so it must win.
+        var noCloud = MakeSource("NoCloud", 10, new DataSourceProbeResult.Ready(MakeResult("NoCloud")));
+        var configDrive = MakeSource("ConfigDrive", 20, new DataSourceProbeResult.Ready(MakeResult("ConfigDrive")));
+
+        var locator = NewLocatorWithList([noCloud, configDrive], ["ConfigDrive", "NoCloud"]);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("ConfigDrive");
+        // ConfigDrive short-circuits the pass before NoCloud is reached.
+        await noCloud.DidNotReceive().ProbeAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_DataSourceList_matches_case_insensitively()
+    {
+        var noCloud = MakeSource("NoCloud", 10, new DataSourceProbeResult.Ready(MakeResult("NoCloud")));
+        var configDrive = MakeSource("ConfigDrive", 20, new DataSourceProbeResult.Ready(MakeResult("ConfigDrive")));
+
+        var locator = NewLocatorWithList([noCloud, configDrive], ["nocloud"]);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("NoCloud");
+        await configDrive.DidNotReceive().ProbeAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_DataSourceList_logs_warning_for_unknown_name_but_still_probes_known()
+    {
+        var captured = new List<(LogLevel level, string message)>();
+        var logger = new CapturingLogger(captured);
+
+        var noCloud = MakeSource("NoCloud", 10, new DataSourceProbeResult.Ready(MakeResult("NoCloud")));
+        var configDrive = MakeSource("ConfigDrive", 20, DataSourceProbeResult.NotApplicable.Instance);
+
+        var locator = NewLocatorWithList([noCloud, configDrive], ["NoCloud", "Bogus"], logger);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("NoCloud");
+        captured.Should().Contain(e =>
+            e.level == LogLevel.Warning && e.message.Contains("Bogus"));
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_only_unknown_names_falls_back_to_all_by_priority()
+    {
+        var captured = new List<(LogLevel level, string message)>();
+        var logger = new CapturingLogger(captured);
+
+        // Reversed registration order proves the fallback still sorts by Priority.
+        var lowPrio = MakeSource("LowPrio", 100, new DataSourceProbeResult.Ready(MakeResult("LowPrio")));
+        var highPrio = MakeSource("HighPrio", 10, new DataSourceProbeResult.Ready(MakeResult("HighPrio")));
+
+        var locator = NewLocatorWithList([lowPrio, highPrio], ["Nope", "AlsoNope"], logger);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        // Falls back to all-by-Priority, so the highest-priority source wins.
+        result!.SourceName.Should().Be("HighPrio");
+        captured.Should().Contain(e =>
+            e.level == LogLevel.Warning && e.message.Contains("falling back"));
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_null_DataSourceList_uses_all_sources_by_priority()
+    {
+        // Reversed registration order proves the default path still sorts by Priority.
+        var lowPrio = MakeSource("LowPrio", 100, new DataSourceProbeResult.Ready(MakeResult("LowPrio")));
+        var highPrio = MakeSource("HighPrio", 10, new DataSourceProbeResult.Ready(MakeResult("HighPrio")));
+
+        var locator = NewLocatorWithList([lowPrio, highPrio], dataSourceList: null);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("HighPrio");
+    }
+
+    [Fact]
+    public async Task LocateAsync_with_empty_DataSourceList_uses_all_sources_by_priority()
+    {
+        var lowPrio = MakeSource("LowPrio", 100, new DataSourceProbeResult.Ready(MakeResult("LowPrio")));
+        var highPrio = MakeSource("HighPrio", 10, new DataSourceProbeResult.Ready(MakeResult("HighPrio")));
+
+        var locator = NewLocatorWithList([lowPrio, highPrio], dataSourceList: []);
+
+        var result = await locator.LocateAsync(CancellationToken.None);
+
+        result!.SourceName.Should().Be("HighPrio");
+    }
+
     private sealed class CapturingLogger(List<(LogLevel level, string message)> sink)
         : ILogger<DataSourceLocator>
     {

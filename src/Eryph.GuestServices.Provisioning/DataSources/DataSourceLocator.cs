@@ -49,27 +49,76 @@ public sealed class DataSourceLocator : IDataSourceLocator
             TimeSpan.FromMinutes(Math.Max(1, settings.DataSources.ReadinessTimeoutMinutes)),
             TimeSpan.FromSeconds(Math.Max(0, settings.DataSources.MinBackoffSeconds)),
             TimeSpan.FromSeconds(Math.Max(1, settings.DataSources.MaxBackoffSeconds)),
-            Task.Delay)
+            Task.Delay,
+            settings.DataSources.DataSourceList)
     {
     }
 
     // Test seam: explicit timings + injectable delay. Used by both the locator's
     // own unit tests and by composition-root tests that don't want to pay real
-    // wall-clock waits.
+    // wall-clock waits. The optional dataSourceList mirrors cloud-init's
+    // datasource_list; when supplied it filters/reorders the probe set, otherwise
+    // all sources are probed in Priority order.
     internal DataSourceLocator(
         IEnumerable<IDataSource> dataSources,
         ILogger<DataSourceLocator> logger,
         TimeSpan readinessTimeout,
         TimeSpan minBackoff,
         TimeSpan maxBackoff,
-        Func<TimeSpan, CancellationToken, Task> delay)
+        Func<TimeSpan, CancellationToken, Task> delay,
+        IReadOnlyList<string>? dataSourceList = null)
     {
-        _dataSources = dataSources.OrderBy(d => d.Priority).ToArray();
         _logger = logger;
+        _dataSources = ResolveProbeOrder(dataSources, dataSourceList, logger);
         _readinessTimeout = readinessTimeout;
         _minBackoff = minBackoff;
         _maxBackoff = maxBackoff < minBackoff ? minBackoff : maxBackoff;
         _delay = delay;
+    }
+
+    // Builds the resolved probe order. When dataSourceList is null/empty we keep the
+    // historical behaviour: all registered sources, ordered by Priority. When it is
+    // set we honour cloud-init's datasource_list semantics: probe only the named
+    // sources, in the listed order, matching case-insensitively on IDataSource.Name.
+    // Unknown names are logged at Warning and skipped. If every name is unknown we
+    // fall back to all-by-Priority so a fully-typo'd list can't silently disable
+    // provisioning.
+    private static IReadOnlyList<IDataSource> ResolveProbeOrder(
+        IEnumerable<IDataSource> dataSources,
+        IReadOnlyList<string>? dataSourceList,
+        ILogger<DataSourceLocator> logger)
+    {
+        var registered = dataSources.ToArray();
+
+        if (dataSourceList is null || dataSourceList.Count == 0)
+            return registered.OrderBy(d => d.Priority).ToArray();
+
+        var resolved = new List<IDataSource>(dataSourceList.Count);
+        foreach (var name in dataSourceList)
+        {
+            var match = registered.FirstOrDefault(
+                d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                logger.LogWarning(
+                    "Configured datasource {Name} has no matching registered source; ignoring",
+                    name);
+                continue;
+            }
+
+            // Tolerate duplicate names in the configured list — probe each source once.
+            if (!resolved.Contains(match))
+                resolved.Add(match);
+        }
+
+        if (resolved.Count == 0)
+        {
+            logger.LogWarning(
+                "Configured datasource list matched no registered sources; falling back to all sources in priority order");
+            return registered.OrderBy(d => d.Priority).ToArray();
+        }
+
+        return resolved;
     }
 
     // Legacy single-cap convenience overload retained for tests that pre-date the

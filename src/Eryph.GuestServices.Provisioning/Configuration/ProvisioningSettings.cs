@@ -121,6 +121,17 @@ public sealed class DataSourceSettings
     /// minute even on a long deadline. Default 60s.
     /// </summary>
     public int MaxBackoffSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// Ordered list of datasource names to probe (e.g.
+    /// <c>["NoCloud","ConfigDrive","Azure"]</c>), mirroring cloud-init's
+    /// <c>datasource_list</c>. When null/empty, all registered sources are probed in
+    /// <see cref="DataSources.IDataSource.Priority"/> order (default). When set, only the
+    /// named sources are probed, <b>in the listed order</b>; names not matching a
+    /// registered source are logged at Warning and ignored. Matching is case-insensitive
+    /// on <see cref="DataSources.IDataSource.Name"/>.
+    /// </summary>
+    public List<string>? DataSourceList { get; init; }
 }
 
 /// <summary>

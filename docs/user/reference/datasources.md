@@ -17,6 +17,14 @@ with `NoDataSource` — no provisioning happens, no failure is reported.
 | `NoCloud` | 30 | no |
 | `ConfigDrive` | 40 | no |
 
+By default every registered source is probed in `Priority` order. The
+set and order are operator-configurable via the `dataSources.dataSourceList`
+[setting](settings.md#datasources--locator-tunables) — mirroring
+cloud-init's `datasource_list`. When it is set, only the named sources
+are probed, in the listed order (priority is ignored for selection);
+unknown names are logged at Warning and skipped. When unset, the
+priority order below applies.
+
 The `OverrideDataSource` used by `egs-service run --user-data` is
 synthetic and short-circuits discovery entirely.
 
