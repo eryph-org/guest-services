@@ -1,49 +1,40 @@
-# Provisioning agent — user documentation
+# Provisioning agent
 
-The provisioning agent is the cloud-config processor embedded in
-`egs-service` (the Windows guest binary that also serves SSH-over-Hyper-V).
-It consumes a cloud-init datasource on first boot, applies the user-data,
-network-config, and meta-data fields, and reports progress back to the
-host. Wherever sensible it behaves the way
-[cloud-init](https://docs.cloud-init.io/) does — same stages, same
-module names, same frequencies, same semaphore layout — adapted to a
-Windows guest.
+eryph guest-services ships two capabilities in one Windows binary
+(`egs-service`):
 
-## Pick your use case
+- **Remote access** — `egs-tool` reaches a guest over the Hyper-V vsock
+  for remote shell, command exec, file transfer, and pty. SSH is just
+  the transport; no network, no listener on a TCP port.
+- **Provisioning** — a cloud-init-style first-boot agent. It reads a
+  cloud-init datasource, applies the user-data, network-config, and
+  meta-data, and reports progress back to the host over Hyper-V KVP.
 
-The agent ships in three shapes. The docs below cover all three, but each
-page tells you when a section is specific to one of them.
+These docs cover provisioning. Where it makes sense the agent behaves
+the way [cloud-init](https://docs.cloud-init.io/) does — same stages,
+module names, frequencies, and semaphore layout — adapted to Windows.
 
-### (a) Hyper-V standalone — provisioning is optional
+## Where the agent runs
 
-`egs-service` provides userless SSH access to a plain Hyper-V VM. The
-provisioning agent is in the same binary but you never have to use it.
-If no cloud-init datasource is present, the agent logs *No data source
-available* once and exits cleanly. SSH-over-Hyper-V keeps working.
+- **Hyper-V standalone.** `egs-service` gives you remote access to a
+  plain Hyper-V VM. Provisioning is in the same binary but optional: no
+  datasource means the agent logs *No data source available* once and
+  exits. Remote access keeps working.
+- **eryph.** Every catlet boots with `egs-service`. It finds the
+  `config-2` ConfigDrive eryph-zero attaches and applies the cloud-config
+  fodder. State and reporting flow through Hyper-V KVP.
+- **Other clouds (work in progress).** A cloudbase-init replacement for
+  Hyper-V / OpenStack / Azure guests outside eryph. The Azure datasource
+  is implemented and verified; several cloud-init features are not yet
+  done. See [Windows cloud-init status](explanation/windows-cloud-init-status.md)
+  before relying on it outside eryph.
 
-### (b) Eryph — the standard path
+## Tutorials
 
-In every eryph catlet, `egs-service` runs on first boot, finds the
-cloud-init ConfigDrive (`config-2`) that eryph-zero attached to the VM,
-and applies the cloud-config fodder. State and reporting flow through
-Hyper-V KVP so the host can watch the run.
+- [Getting started](tutorial/getting-started.md) — install, dry-run, watch the stages.
+- [Your first catlet with cloud-config](tutorial/first-catlet-with-cloud-config.md) — the eryph workflow end to end.
 
-### (c) General-purpose Windows cloud-init — work in progress
-
-A drop-in cloudbase-init replacement for Hyper-V / OpenStack / Azure
-guests outside eryph. The core machinery is in place (see
-[the WIP status page](explanation/windows-cloud-init-status.md)) but
-several cloud-init features are not yet implemented. Not production-ready
-outside eryph today.
-
-## Documentation map (Diátaxis)
-
-### Tutorials — learn by doing
-
-- [Getting started](tutorial/getting-started.md) — install, dry-run, see the agent process a sample.
-- [Your first catlet with cloud-config](tutorial/first-catlet-with-cloud-config.md) — eryph workflow end-to-end.
-
-### How-to — task-oriented recipes
+## How-to
 
 - [Write a cloud-config](howto/write-a-cloud-config.md)
 - [Use multipart user-data](howto/use-multipart-user-data.md)
@@ -53,7 +44,7 @@ outside eryph today.
 - [Reset and re-run provisioning](howto/reset-and-rerun.md)
 - [Collect logs for support](howto/collect-logs-for-support.md)
 
-### Reference — flat, lookup-style
+## Reference
 
 - [Modules](reference/modules.md)
 - [Datasources](reference/datasources.md)
@@ -63,17 +54,14 @@ outside eryph today.
 - [Frequencies](reference/frequencies.md)
 - [Settings (`egs-provisioning.json`)](reference/settings.md)
 
-### Explanation — concepts and design
+## Explanation
 
 - [Architecture](explanation/architecture.md)
 - [Differences from cloud-init](explanation/differences-from-cloud-init.md)
 - [Differences from cloudbase-init](explanation/differences-from-cloudbase-init.md)
 - [Coexistence with platform agents](explanation/coexistence.md)
-- [Windows cloud-init status (WIP)](explanation/windows-cloud-init-status.md)
+- [Windows cloud-init status](explanation/windows-cloud-init-status.md)
 
-## Where to look for *why*
-
-This guide tells you *what* the agent does and *how* to use it. The
-*why* — every deferred design decision, every deliberate divergence from
-cloud-init — lives in the [RFCs](../rfcs/README.md). Each reference
-page links the relevant RFC.
+Per-decision rationale and deferred work live in the
+[RFCs](../rfcs/README.md). The RFC index status column is the canonical
+source for implemented vs. drafted vs. deferred.

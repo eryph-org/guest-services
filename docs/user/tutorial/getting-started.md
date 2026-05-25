@@ -1,8 +1,7 @@
 # Getting started
 
-A 5-minute introduction to the provisioning agent. You'll run it once
-against a local cloud-config file, in dry-run mode, and watch it walk
-through the stages.
+Run the agent once against a local cloud-config file in dry-run mode and
+see it work through the stages.
 
 ## Prerequisites
 
@@ -36,13 +35,13 @@ runcmd:
 egs-service run --dry-run --user-data C:\Temp\sample.yaml
 ```
 
-You should see, in order:
+Output, in order:
 
-- An override-datasource probe (no real datasource is consulted because
-  `--user-data` short-circuits discovery with a synthetic one).
-- The four stages — `Local`, `Network`, `Config`, `Final` — log a header
-  each, listing the modules they will run.
-- A green "DRY-RUN: …" line for each action a module would take.
+- An override-datasource probe — `--user-data` short-circuits discovery
+  with a synthetic source, so no real datasource is consulted.
+- A header per stage (`Local`, `Network`, `Config`, `Final`) listing the
+  modules it will run.
+- A "DRY-RUN: …" line for each action a module would take.
 - A final `Provisioning completed.` line.
 
 In dry-run no system state is changed: no user `alice` is created, no

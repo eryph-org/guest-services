@@ -5,7 +5,7 @@ locator probes every registered source, lowest `Priority` value first,
 and returns the first one that says `Ready`. If a source says
 `WaitForReady`, the locator backs off (1s → 60s, exponential) and tries
 again, sharing a global wall-clock budget with every other source
-(default 5 minutes). See [RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md).
+(default 15 minutes). See [RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md).
 
 If no source becomes ready within the budget, the run exits cleanly
 with `NoDataSource` — no provisioning happens, no failure is reported.
@@ -132,8 +132,7 @@ default user, merged with the cloud-config top-level `ssh_authorized_keys`.
 
 ## EC2
 
-A stub for future AWS use cases. Returns `NotApplicable` today. Out of
-scope for use case (b) eryph; tracked under
+A stub for future AWS use. Returns `NotApplicable` today. Tracked under
 [RFC 0008](../../rfcs/0008-platform-native-provisioner-coexistence.md).
 
 ---

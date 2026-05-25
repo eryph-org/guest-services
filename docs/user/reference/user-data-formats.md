@@ -54,12 +54,10 @@ documented behavior):
    back to PowerShell with a warning.
 4. **No signal** → skipped with a warning (never a silent drop).
 
-The reason filename wins is documented in
-[RFC 0007](../../rfcs/0007-scripts-per-frequency-edge-cases.md) and in
-the [cbi compatibility constraints memory note](../../../C:/Users/fwagner/.claude/projects/F--source-repos-eryph-guest-services/memory/project_cbi_compat_constraints.md).
-Short version: eryph gene fodder was crafted around two cbi bugs
-(filename mandatory, shebangs ignored) so we must honor what cbi
-honors, not what cloud-init documents.
+Filename wins because eryph gene fodder was crafted around two cbi bugs
+(filename mandatory, shebangs ignored), so the agent honors what cbi
+honors, not what cloud-init documents. Rationale:
+[RFC 0007](../../rfcs/0007-scripts-per-frequency-edge-cases.md).
 
 ## Cloud-config merging
 

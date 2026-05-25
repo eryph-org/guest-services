@@ -22,7 +22,11 @@ config:
         address: 10.0.0.10/24
         gateway: 10.0.0.1
         dns_nameservers: [10.0.0.53]
-        mtu: 1500
+        dns_search: [corp.example.com]
+        routes:
+          - network: 10.10.0.0/16
+            gateway: 10.0.0.254
+    mtu: 1500
   - type: physical
     name: eth1
     mac_address: 02:42:ac:11:00:03
@@ -38,43 +42,52 @@ ethernets:
   primary:
     match:
       macaddress: 02:42:ac:11:00:02
-    addresses: [10.0.0.10/24]
+    addresses: [10.0.0.10/24, "fd00::10/64"]
     gateway4: 10.0.0.1
+    gateway6: "fd00::1"
     nameservers:
       addresses: [10.0.0.53]
+      search: [corp.example.com]
+    routes:
+      - to: 10.10.0.0/16
+        via: 10.0.0.254
     mtu: 1500
   secondary:
     match:
       macaddress: 02:42:ac:11:00:03
     dhcp4: true
+    dhcp6: true
 ```
 
-Both schemas are accepted. Internally the v1 document is projected onto
-the v2-shape `Ethernets` dictionary; either way, the agent matches each
+Both schemas are accepted. The v1 document is projected onto the
+v2-shape `Ethernets` dictionary; either way, the agent matches each
 entry to a Windows adapter by MAC address.
 
 ## What gets applied
 
-For each matched adapter:
+For each matched adapter, per address family (v4 and v6 independently):
 
-- **DHCP-only** (`dhcp4: true` and no `addresses`): DHCP is enabled,
-  the IPv4 config is otherwise left alone.
-- **Static**: DHCP is disabled, the listed `addresses` become the
-  configured IPs, `gateway4` becomes the default gateway.
-- **DNS** (`nameservers.addresses`): applied with
-  `Set-DnsClientServerAddress` semantics.
+- **DHCP-only** (`dhcp4`/`dhcp6: true`, no addresses): DHCP is enabled,
+  that family is otherwise left alone.
+- **Static**: DHCP is disabled for that family, the listed `addresses`
+  become the configured IPs, `gateway4` / `gateway6` becomes the
+  default gateway.
+- **Routes**: per-interface static routes (`to`/`network`, `via`/`gateway`,
+  optional metric).
+- **DNS**: `nameservers.addresses` (servers) and `nameservers.search`
+  (search suffixes).
 - **MTU**: applied if `> 0`.
 
+A family with no directive is left untouched.
+
 If `mac_address` is empty/missing, the entry is **skipped with a
-warning** — Windows requires a MAC for adapter binding.
+warning** — Windows requires a MAC for adapter binding. If the MAC has
+no matching physical adapter, the entry is **skipped with a warning**
+and provisioning continues.
 
-If the listed MAC has no matching adapter in the guest, the entry is
-**skipped with a warning** (provisioning continues).
-
-## What is not supported (v1)
+## What is not supported
 
 - Bonds, bridges, VLANs (the schemas allow them; the applier doesn't).
-- IPv6 addresses, routes, gateways.
 - Wifi.
 
 ## Order vs hostname

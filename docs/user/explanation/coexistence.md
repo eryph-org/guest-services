@@ -47,8 +47,8 @@ last one is the one customers notice: without EC2Launch, the
 "Get Password" feature in the EC2 console stops working. For that,
 ship the keys via cloud-config.
 
-**v1 status:** stub. The EC2 datasource is registered but returns
-`NotApplicable`. Use case (c).
+**Status:** stub. The EC2 datasource is registered but returns
+`NotApplicable`.
 
 ## GCP — coexist with Guest Agent (soft)
 

@@ -1,8 +1,7 @@
 # Your first catlet with cloud-config
 
-Applies to use case (b) — eryph. You'll ship a minimal cloud-config
-fodder set with a catlet, boot it, and watch the provisioning agent
-process it.
+The eryph workflow: ship a minimal cloud-config fodder set with a
+catlet, boot it, and see the provisioning agent apply it.
 
 ## Prerequisites
 
