@@ -1,21 +1,20 @@
 # Modules
 
-Modules are the units of work the agent runs. Each declares the stage
-it belongs to and a frequency (per-instance / per-boot / per-once).
-
-This page lists every module that ships in v1, in the order they run.
+Modules are the units of work the agent runs. Each declares its stage
+and a frequency (per-instance / per-boot / per-once). They run in this
+order:
 
 | Module | Stage / Order | Frequency | Cloud-config keys |
 | --- | --- | --- | --- |
 | `Growpart` | Network / 0 | per-boot | `growpart` |
-| `SetHostname` | Network / 1 | per-instance | `hostname`, `fqdn`, `preserve_hostname` |
+| `SetHostname` | Network / 1 | per-instance | `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` |
 | `ApplyNetworkConfig` | Network / 2 | per-instance | (network-config document, not cloud-config) |
 | `NtpClient` | Network / 3 | per-instance | `ntp` |
 | `Timezone` | Network / 4 | per-instance | `timezone` |
 | `SetLocale` | Network / 5 | per-instance | `locale`, `keyboard` |
 | `UsersGroups` | Config / 0 | per-instance | `users`, `groups` |
 | `SetPasswords` | Config / 1 | per-instance | `chpasswd`, `password` |
-| `SshAuthorizedKeys` | Config / 2 | per-instance | `ssh_authorized_keys`, `users[].ssh_authorized_keys` |
+| `SshModule` | Config / 2 | per-instance | `ssh_authorized_keys`, `users[].ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `ssh_genkeytypes`, `disable_root`, `ssh` |
 | `WriteFiles` | Config / 3 | per-instance | `write_files` (entries with `defer: true` are skipped here) |
 | `Runcmd` | Config / 4 | per-instance | `runcmd` |
 | `Licensing` | Config / 5 | per-instance | `license` |
@@ -23,17 +22,20 @@ This page lists every module that ships in v1, in the order they run.
 | `ScriptsUser` | Final / 0 | per-instance | (script payloads from MIME / shebang) |
 | `PowerState` | Final / last | per-instance | `power_state` |
 
-There are no Local-stage modules in v1; the slot exists for future use.
+Stage membership and intra-stage order are fixed by the `[Stage]` /
+`[Order]` attributes, but which modules run in a stage is operator-
+configurable — see the `stages` block in [Settings](settings.md).
+
+There are no Local-stage modules; the slot exists for future use.
 
 ## Acknowledged-but-no-op keys
 
 Not a module — handled inside `CloudConfigSerializer` at deserialize
-time. Logs (at Info) every cloud-init top-level key that the agent
-accepts but does not act on. Mirrors cloud-init's "log-and-continue"
-approach for cross-cloud cloud-config YAML: an operator who pastes
-their Linux cloud-config with `apt: { sources: ... }` and
-`packages: [git, vim]` gets a clear "we saw this, it's a Linux concept,
-safely ignored" line instead of a Warning per key.
+time. Logs at Info every cloud-init top-level key the agent accepts but
+does not act on, mirroring cloud-init's log-and-continue handling of
+cross-cloud YAML. Paste a Linux cloud-config with `apt: { sources: ... }`
+and `packages: [git, vim]` and you get one "saw it, Linux concept,
+ignored" line per key instead of a Warning.
 
 The keys handled here are **schema fields** on the parsed CloudConfig
 (stored as `object?` for the polymorphic shapes) — the deserializer
@@ -251,14 +253,8 @@ password: TopLevelP!42    # shorthand; lands on the resolved default user
 it to `/dev/console`. Windows guests have no console channel reliably
 captured across the clouds eryph targets, so a generated password could
 never be retrieved — setting one would silently lock the operator out.
-`egs-tool validate` rejects these, and at runtime they are
+`egs-service validate` rejects these, and at runtime they are
 warn-and-skipped. Specify an explicit password instead.
-
-`chpasswd.expire` controls the "must change at next logon" flag. The
-cloud-init default is `true` — every changed password is flagged for
-change at first login. `expire: false` suppresses the flag. The default
-applies to all three input forms: `chpasswd.users`, `chpasswd.list`,
-and the top-level `password` shorthand.
 
 `chpasswd.expire` controls the "must change at next logon" flag. The
 cloud-init default is `true` — every changed password is flagged for
@@ -268,23 +264,51 @@ and the top-level `password` shorthand.
 
 ---
 
-## `SshAuthorizedKeys`
+## `SshModule`
 
 **Stage:** Config, Order 2. **Frequency:** per-instance.
 
-Writes the public keys into the OpenSSH-style
-`authorized_keys` location for each target user. Top-level
-`ssh_authorized_keys` lands on the first sudo-enabled user; if none
-exists, on `Administrator`.
+The cloud-init `cc_ssh` equivalent for the OS-level Win32-OpenSSH daemon
+under `C:\ProgramData\ssh\`. This is the host OS sshd — distinct from the
+egs-service Hyper-V-vsock remote-access transport `egs-tool` connects to.
+Design: [RFC 0018](../../rfcs/0018-ssh-module.md).
 
 ```yaml
+ssh_pwauth: false                 # PasswordAuthentication in the drop-in (omitted if unset)
+disable_root: true                # DenyUsers the built-in Administrator (resolved by RID-500 SID)
 ssh_authorized_keys:
   - ssh-ed25519 AAAA... fleet
 users:
   - name: alice
     ssh_authorized_keys:
       - ssh-ed25519 AAAA... alice
+ssh:
+  install_openssh: true           # install the Win32-OpenSSH server if absent
 ```
+
+What it does:
+
+- **authorized_keys.** Top-level `ssh_authorized_keys` (merged with any
+  datasource-supplied public keys) land on the resolved default user;
+  per-user `users[].ssh_authorized_keys` land on each named user. Keys
+  are **merged** into the existing `authorized_keys`, not overwritten.
+- **Host keys.** Generates host keys (`ed25519`, `ecdsa`, `rsa` by
+  default; override with `ssh_genkeytypes`) on the first instance boot,
+  or writes operator-supplied `ssh_keys` verbatim. DSA is skipped
+  (removed in OpenSSH 9.8).
+- **sshd_config drop-in.** Writes
+  `C:\ProgramData\ssh\sshd_config.d\50-eryph.conf`:
+  `PasswordAuthentication` from `ssh_pwauth` (omitted when unset),
+  always `PubkeyAuthentication yes`, and `DenyUsers <Administrator>` when
+  `disable_root: true`.
+- **Install.** `ssh.install_openssh: true` installs the Win32-OpenSSH
+  server when no sshd is present. Without it, the module just writes
+  `authorized_keys` (sshd reads them per-connection once one exists) and
+  skips host-key / config / restart work.
+- **Fingerprints.** Regenerated host-key fingerprints are reported
+  unless `ssh.emit_keys_to_console: false`.
+
+The daemon restarts only when host keys or the drop-in actually changed.
 
 ---
 
@@ -321,10 +345,10 @@ suspicious entry).
 
 POSIX `permissions` is mapped onto NTFS ACLs the same way cloudbase-init
 does (owner / group→Users / others→Everyone; SYSTEM and Administrators
-always retain FullControl). **Note:** in v1 the module currently logs a
-warning and skips the ACL translation — the wrapper exists in
-`WindowsOs.SetPosixPermissionsAsync` but the module hasn't been wired
-to call it. Track this as a known gap.
+always retain FullControl) via `WindowsOs.SetPosixPermissionsAsync`,
+which also applies `owner`. When only `owner` is set, the existing ACL is
+left alone and just the owner changes. An ACL failure logs a warning and
+the entry's content write still stands.
 
 Entries flagged `defer: true` are skipped by this Config-stage module
 and handled by `WriteFilesDeferred` at Final — see below.

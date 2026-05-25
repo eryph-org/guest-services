@@ -46,9 +46,8 @@ dispatcher**. They run in the same process, in the order below.
   locator continues with the rest.
 
 When all sources have been dropped or the budget is exhausted, the run
-exits cleanly with `NoDataSource` — that's the "this is not a
-provisioning environment" path. Use cases (a) Hyper-V standalone and
-(c) WIP cloud-init fall through here when no fodder is attached.
+exits cleanly with `NoDataSource` — the "this is not a provisioning
+environment" path. A Hyper-V VM with no fodder attached lands here.
 
 See [datasources reference](../reference/datasources.md) and
 [RFC 0004](../../rfcs/0004-datasource-readiness-timeout.md) /

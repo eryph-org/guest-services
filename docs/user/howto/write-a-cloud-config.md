@@ -26,12 +26,21 @@ every sub-field.
 
 | Key | Module | Notes |
 | --- | --- | --- |
-| `hostname`, `fqdn`, `preserve_hostname` | `SetHostname` | Sets Windows ComputerName. Reboots if needed. |
-| `users`, `groups` | `UsersGroups` | Creates local users and groups; honors `sudo: true` -> Administrators. |
-| `chpasswd`, `password` | `SetPasswords` | `RANDOM` type generates a 16-char password (never logged). |
-| `ssh_authorized_keys` (top level), `users[].ssh_authorized_keys` | `SshAuthorizedKeys` | Top-level keys go to the first sudo-enabled user, else `Administrator`. |
-| `write_files` | `WriteFiles` | Supports `b64`, `gz`, `gz+b64` encodings. POSIX `permissions` octal mapped onto NTFS ACLs. |
+| `growpart` | `Growpart` | Extends the OS partition into free space. |
+| `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` | `SetHostname` | Sets Windows ComputerName. Reboots if needed. |
+| `ntp` | `NtpClient` | Windows Time service: servers/pools, enable/disable. |
+| `timezone` | `Timezone` | IANA or Windows timezone name. |
+| `locale`, `keyboard` | `SetLocale` | Display language / culture / keyboard layout. |
+| `users`, `groups` | `UsersGroups` | Creates local users and groups; `sudo: true` -> Administrators. |
+| `chpasswd`, `password` | `SetPasswords` | Explicit passwords only; `RANDOM` is rejected (see below). |
+| `ssh_authorized_keys` (top level), `users[].ssh_authorized_keys`, `ssh_pwauth`, `disable_root`, `ssh_keys`, `ssh` | `SshModule` | OS OpenSSH: keys, host keys, `sshd_config.d` drop-in. |
+| `write_files` | `WriteFiles` | `b64`, `gz`, `gz+b64` encodings; POSIX `permissions` mapped onto NTFS ACLs. `defer: true` runs in Final. |
 | `runcmd` | `Runcmd` | Runs in declaration order; exit code 1003 = reboot-and-continue. |
+| `license` | `Licensing` | Windows activation (AVMA / KMS auto-detect, eval rearm). |
+| `power_state` | `PowerState` | Controlled reboot / poweroff at the end of the run. |
+
+(Network configuration is a separate document, not cloud-config — see
+[Configure networking](configure-networking.md).)
 
 The script-style cloud-config keys (`scripts/per-instance`, etc.) are
 delivered as MIME parts, not as cloud-config keys. See
@@ -79,19 +88,26 @@ users:
 chpasswd:
   users:
     - name: alice
-      type: RANDOM        # 16 char random; not logged
+      password: AliceP!42
     - name: bob
       password: BobP!42
   list: |
     carol:CarolP!42
     dave:DaveP!42
-password: TopLevelP!42    # shorthand: applied to the first user, else Administrator
+  expire: false           # default true: must change at next logon
+password: TopLevelP!42    # shorthand: lands on the resolved default user
 ```
 
 `SetPasswords` runs *after* `UsersGroups`, so a `chpasswd` entry
 overrides the password the user record set.
 
-## SSH authorized keys (`SshAuthorizedKeys`)
+**Random passwords are not supported.** cloud-init's `type: RANDOM`, the
+`chpasswd.list` `R`/`RANDOM` tokens, and password-less entries deliver
+the generated value via `/dev/console`, which has no reliable Windows
+analogue — a random password could never be retrieved. `validate`
+rejects these and the runtime warn-skips them. Set an explicit password.
+
+## SSH authorized keys (`SshModule`)
 
 ```yaml
 ssh_authorized_keys:
@@ -102,9 +118,13 @@ users:
       - ssh-ed25519 AAAA... alice@laptop
 ```
 
-The top-level list lands on the first sudo-enabled user, or on
-`Administrator` if none exist. Per-user lists land on their respective
-users.
+Top-level keys land on the resolved default user (the first sudo-enabled
+user in `users:`, a datasource-supplied name, `defaultUser.name` from
+settings, or `Administrator`). Per-user lists land on their users. Keys
+are merged into any existing `authorized_keys`, not overwritten. The
+module also handles OS host keys and the `sshd_config.d` drop-in — see
+[Modules](../reference/modules.md). This is the OS OpenSSH daemon, not
+the egs-tool remote-access transport.
 
 ## Write files (`WriteFiles`)
 

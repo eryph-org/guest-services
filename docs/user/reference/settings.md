@@ -24,7 +24,7 @@ re-run.
     "fetchMaxBytes": 10485760
   },
   "dataSources": {
-    "readinessTimeoutMinutes": 5,
+    "readinessTimeoutMinutes": 15,
     "minBackoffSeconds": 1,
     "maxBackoffSeconds": 60,
     "dataSourceList": ["NoCloud", "ConfigDrive", "Azure"]
@@ -36,6 +36,15 @@ re-run.
   "reboot": {
     "maxPerModule": 3,
     "maxPerScript": 2
+  },
+  "defaultUser": {
+    "name": "Administrator",
+    "groups": ["Administrators"],
+    "createIfMissing": false
+  },
+  "stages": {
+    "Config": { "disabledModules": ["Licensing"] },
+    "Final":  { "enabledModules": ["ScriptsUser"] }
   }
 }
 ```
@@ -57,7 +66,7 @@ are allowed.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `readinessTimeoutMinutes` | `5` | Total wall-clock budget for `LocateAsync` across **all** sources. When exhausted, the run exits with `NoDataSource`. |
+| `readinessTimeoutMinutes` | `15` | Total wall-clock budget for `LocateAsync` across **all** sources. When exhausted, the run exits with `NoDataSource`. |
 | `minBackoffSeconds` | `1` | Floor for the `WaitForReady` backoff. |
 | `maxBackoffSeconds` | `60` | Cap on exponential growth between retries. |
 | `dataSourceList` | _(unset)_ | Ordered list of datasource names to probe (e.g. `["NoCloud","ConfigDrive","Azure"]`), mirroring cloud-init's `datasource_list`. See below. |
@@ -105,6 +114,41 @@ individual script has hit `maxPerScript` (e.g. three different scripts
 each reboot once) still trips the outer cap. Keep `maxPerScript` ≤
 `maxPerModule`.
 
+## `defaultUser` — image-baked default admin
+
+The cloud-init `system_info.default_user` analogue. Top-level credential
+shorthands (`ssh_authorized_keys`, `password`, `chpasswd`) target the
+*resolved* default user, picked in this order:
+
+1. The first sudo-enabled user in the cloud-config `users:` block.
+2. A datasource-supplied default user name.
+3. `defaultUser.name` from these settings.
+4. `Administrator`.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `name` | _(unset)_ | Image-baked default admin name. Unset → the `Administrator` fallback. |
+| `groups` | `["Administrators"]` | Groups for the default user when it has to be created. |
+| `createIfMissing` | `false` | Auto-create the default user (and apply the top-level credentials to it) when no `users:` entry declares one. |
+
+## `stages` — per-stage module allow/deny
+
+Mirrors cloud-init's `cloud_init_modules` / `cloud_config_modules` /
+`cloud_final_modules`. Keys are stage names (`Local`, `Network`,
+`Config`, `Final`; case-insensitive). When a stage is absent, all its
+modules run.
+
+| Key | Meaning |
+| --- | --- |
+| `enabledModules` | When set, only the named modules run in this stage. |
+| `disabledModules` | Named modules are removed (applied after `enabledModules` when both are set). |
+
+Module names are case-insensitive and tolerate the `Module` suffix
+(`SetHostname` and `SetHostnameModule` both match). Stage membership and
+intra-stage order are fixed by the module attributes; these lists only
+add or remove. Unknown names are logged at Warning, never fatal. See
+[RFC 0009](../../rfcs/0009-module-list-split.md).
+
 ## Service control (registry)
 
 Two operator on/off switches turn the top-level guest-services capabilities
@@ -138,11 +182,7 @@ Set the value back to `1` (or delete it) to re-enable. The flags are read at
 service start, so restart the `eryph guest services` service after changing
 them.
 
-## What's not in v1
+## Not configurable
 
 - Per-datasource overrides (e.g. `dataSources.azure.timeoutMinutes`).
 - Jinja2 / vendor-data merge knobs.
-
-> Per-stage module allow/deny lists (`stages.<Stage>.enabledModules` /
-> `disabledModules`) **are** supported — see
-> [RFC 0009](../../rfcs/0009-module-list-split.md).

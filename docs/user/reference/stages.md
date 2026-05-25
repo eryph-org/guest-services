@@ -3,12 +3,12 @@
 The agent runs four stages, in order: `Local`, `Network`, `Config`,
 `Final`. Names and intent mirror cloud-init.
 
-| Stage | Modules (v1) | Purpose |
+| Stage | Modules | Purpose |
 | --- | --- | --- |
 | `Local` | (none) | Platform setup before networking is available. Reserved for future use (`disk_setup`, etc.). |
-| `Network` | `SetHostname` (1), `ApplyNetworkConfig` (2) | Identity + IP. Done before stuff that talks over the wire. |
-| `Config` | `UsersGroups` (0), `SetPasswords` (1), `SshAuthorizedKeys` (2), `WriteFiles` (3), `Runcmd` (4) | Host configuration. The bulk of the cloud-config schema lives here. |
-| `Final` | `ScriptsUser` (0) | User-supplied scripts; runs after everything else has settled. |
+| `Network` | `Growpart` (0), `SetHostname` (1), `ApplyNetworkConfig` (2), `NtpClient` (3), `Timezone` (4), `SetLocale` (5) | Identity + IP. Done before anything that talks over the wire. |
+| `Config` | `UsersGroups` (0), `SetPasswords` (1), `SshModule` (2), `WriteFiles` (3), `Runcmd` (4), `Licensing` (5) | Host configuration. The bulk of the cloud-config schema lives here. |
+| `Final` | `WriteFilesDeferred` (-1), `ScriptsUser` (0), `PowerState` (last) | Deferred writes, user scripts, optional controlled reboot — runs after everything else has settled. |
 
 Modules declare their stage and order via the `[Stage(...)]` attribute.
 Order within a stage is the integer from the attribute, ties broken by
@@ -69,8 +69,8 @@ one.
 | `modules:final` | `Final` |
 
 The four-stage shape and the names match by intent. Cloud-init's
-explicit `cloud_init_modules` / `cloud_config_modules` /
-`cloud_final_modules` config-driven module lists are not exposed in
-v1 — the agent's module set is fixed. See
-[RFC 0009](../../rfcs/0009-module-list-split.md) for the deferred
-mechanism.
+`cloud_init_modules` / `cloud_config_modules` / `cloud_final_modules`
+selection maps to the per-stage `enabledModules` / `disabledModules`
+allow/deny lists in [Settings](settings.md) — stage membership and
+intra-stage order stay fixed by the `[Stage]` / `[Order]` attributes.
+See [RFC 0009](../../rfcs/0009-module-list-split.md).
