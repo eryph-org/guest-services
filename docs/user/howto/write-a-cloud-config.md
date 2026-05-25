@@ -1,180 +1,61 @@
-# How to write a cloud-config
+# Write a cloud-config
 
-A cloud-config is a YAML document whose first non-empty line is
-`#cloud-config`. The agent parses it, then runs the modules that match
-the keys you used.
+A cloud-config is a YAML document whose first line is `#cloud-config`. The agent
+parses it and runs the modules whose keys you used.
 
 ```yaml
 #cloud-config
-hostname: my-guest
+hostname: web01
 users:
   - name: alice
     plain_text_passwd: ChangeMe!42
     groups: [Administrators]
+    sudo: true
+ssh_authorized_keys:
+  - ssh-ed25519 AAAA... alice@laptop
 write_files:
   - path: C:\demo\hello.txt
-    content: "hello"
+    content: hello
 runcmd:
   - powershell.exe -NoProfile -Command "Write-Host 'hi'"
 ```
 
-## Supported top-level keys
+Each top-level key maps to a module:
 
-The agent recognises one key per module. The
-[modules reference](../reference/modules.md) is the canonical list with
-every sub-field.
+| Key | Module |
+| --- | --- |
+| `growpart` | Growpart |
+| `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` | SetHostname |
+| `ntp` | NtpClient |
+| `timezone` | Timezone |
+| `locale`, `keyboard` | SetLocale |
+| `users`, `groups` | UsersGroups |
+| `chpasswd`, `password` | SetPasswords |
+| `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` | SshModule |
+| `write_files` | WriteFiles |
+| `runcmd` | Runcmd |
+| `license` | Licensing |
+| `power_state` | PowerState |
 
-| Key | Module | Notes |
-| --- | --- | --- |
-| `growpart` | `Growpart` | Extends the OS partition into free space. |
-| `hostname`, `fqdn`, `preserve_hostname`, `prefer_fqdn_over_hostname` | `SetHostname` | Sets Windows ComputerName. Reboots if needed. |
-| `ntp` | `NtpClient` | Windows Time service: servers/pools, enable/disable. |
-| `timezone` | `Timezone` | IANA or Windows timezone name. |
-| `locale`, `keyboard` | `SetLocale` | Display language / culture / keyboard layout. |
-| `users`, `groups` | `UsersGroups` | Creates local users and groups; `sudo: true` -> Administrators. |
-| `chpasswd`, `password` | `SetPasswords` | Explicit passwords only; `RANDOM` is rejected (see below). |
-| `ssh_authorized_keys` (top level), `users[].ssh_authorized_keys`, `ssh_pwauth`, `disable_root`, `ssh_keys`, `ssh` | `SshModule` | OS OpenSSH: keys, host keys, `sshd_config.d` drop-in. |
-| `write_files` | `WriteFiles` | `b64`, `gz`, `gz+b64` encodings; POSIX `permissions` mapped onto NTFS ACLs. `defer: true` runs in Final. |
-| `runcmd` | `Runcmd` | Runs in declaration order; exit code 1003 = reboot-and-continue. |
-| `license` | `Licensing` | Windows activation (AVMA / KMS auto-detect, eval rearm). |
-| `power_state` | `PowerState` | Controlled reboot / poweroff at the end of the run. |
+The [modules reference](../reference/modules.md) documents each key's
+sub-fields. A few things that aren't obvious on Windows:
 
-(Network configuration is a separate document, not cloud-config — see
-[Configure networking](configure-networking.md).)
+- Passwords are plaintext (`passwd` and `plain_text_passwd` are the same here),
+  and `sudo` with any value other than `false` adds the user to Administrators.
+  Random passwords aren't supported — set an explicit one.
+- `ssh_authorized_keys` at the top level go to the default user; per-user keys
+  go to their users. Both are merged into any existing keys.
+- `write_files` paths written as POSIX (`/etc/...`) are translated under `C:\`;
+  `permissions` is mapped to an NTFS ACL.
+- A `runcmd` entry that exits `1003` reboots the guest and resumes the run.
 
-The script-style cloud-config keys (`scripts/per-instance`, etc.) are
-delivered as MIME parts, not as cloud-config keys. See
+Network configuration is a separate document, not part of cloud-config — see
+[Configure networking](configure-networking.md). Scripts are delivered as
+multipart parts, not cloud-config keys — see
 [Run shell scripts](run-shell-scripts.md).
 
-## Hostname (`SetHostname`)
-
-```yaml
-hostname: web01
-# fqdn: web01.example.com    # alternative; first label becomes the NetBIOS name
-# preserve_hostname: true    # explicitly do nothing
-```
-
-The Windows ComputerName cap is 15 chars; the agent doesn't truncate.
-A name change requests a reboot, which the agent honors via the
-reboot-and-continue path.
-
-## Users and groups (`UsersGroups`)
-
-```yaml
-groups:
-  - name: ops
-    members: [alice]
-users:
-  - name: alice
-    plain_text_passwd: SuperSecret!1
-    lock_passwd: false
-    groups: [Administrators]
-    sudo: true        # any non-"false" string -> Administrators
-  - name: bob
-    passwd: AlsoSecret!1
-    groups: [Users]
-```
-
-- `plain_text_passwd` and `passwd` are both treated as plaintext on
-  Windows (no hashes). If both are set, `plain_text_passwd` wins —
-  matches cloud-init.
-- `sudo` semantics: any non-`false` value adds the user to
-  `Administrators`. The richer Linux sudoers entries are ignored.
-- Listed `groups[]` that don't exist are created automatically.
-
-## Passwords (`SetPasswords`)
-
-```yaml
-chpasswd:
-  users:
-    - name: alice
-      password: AliceP!42
-    - name: bob
-      password: BobP!42
-  list: |
-    carol:CarolP!42
-    dave:DaveP!42
-  expire: false           # default true: must change at next logon
-password: TopLevelP!42    # shorthand: lands on the resolved default user
-```
-
-`SetPasswords` runs *after* `UsersGroups`, so a `chpasswd` entry
-overrides the password the user record set.
-
-**Random passwords are not supported.** cloud-init's `type: RANDOM`, the
-`chpasswd.list` `R`/`RANDOM` tokens, and password-less entries deliver
-the generated value via `/dev/console`, which has no reliable Windows
-analogue — a random password could never be retrieved. `validate`
-rejects these and the runtime warn-skips them. Set an explicit password.
-
-## SSH authorized keys (`SshModule`)
-
-```yaml
-ssh_authorized_keys:
-  - ssh-ed25519 AAAA... fleet
-users:
-  - name: alice
-    ssh_authorized_keys:
-      - ssh-ed25519 AAAA... alice@laptop
-```
-
-Top-level keys land on the resolved default user (the first sudo-enabled
-user in `users:`, a datasource-supplied name, `defaultUser.name` from
-settings, or `Administrator`). Per-user lists land on their users. Keys
-are merged into any existing `authorized_keys`, not overwritten. The
-module also handles OS host keys and the `sshd_config.d` drop-in — see
-[Modules](../reference/modules.md). This is the OS OpenSSH daemon, not
-the egs-tool remote-access transport.
-
-## Write files (`WriteFiles`)
-
-```yaml
-write_files:
-  - path: C:\demo\hello.txt
-    content: "hello"
-  - path: C:\demo\config.json
-    encoding: b64
-    content: eyJrIjogInYifQ==
-  - path: C:\demo\bundle.tar
-    encoding: gz+b64
-    content: H4sIAA...
-  - path: C:\demo\restricted.txt
-    content: "secret"
-    permissions: "0640"
-    owner: alice
-```
-
-- POSIX paths (`/etc/...`) are translated to Windows (`C:\etc\...`) and
-  rejected if they try to escape the C:\ root via `..`.
-- `permissions` is a POSIX octal; the agent maps the three triplets onto
-  NTFS ACLs (owner, group->Users, others->Everyone) the same way
-  cloudbase-init does. SYSTEM and Administrators always keep
-  FullControl.
-- `append: true` opens for append; the default overwrites.
-
-## Run commands (`Runcmd`)
-
-```yaml
-runcmd:
-  - powershell.exe -NoProfile -Command "Write-Host 'shell-style string'"
-  - [powershell.exe, -NoProfile, -Command, "Write-Host 'argv-style list'"]
-```
-
-String entries are dispatched to the shell (`cmd.exe /c …`); list
-entries become argv exactly as written. Non-zero exits log an error and
-continue with the next entry; exit code **1003** triggers a
-reboot-and-continue (the run resumes after the reboot).
-
-## Network configuration
-
-Network-config is not part of cloud-config — it's a separate document
-the datasource ships alongside user-data. See
-[Configure networking](configure-networking.md).
-
-## Validate before shipping
+Check a file before you ship it:
 
 ```powershell
 egs-service validate --user-data C:\Temp\sample.yaml
 ```
-
-Exit codes: 0 = valid, 1 = schema rejected, 2 = couldn't parse.

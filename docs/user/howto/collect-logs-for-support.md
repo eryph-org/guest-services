@@ -18,7 +18,7 @@ The command never prompts and overwrites the output file if it exists.
 | `state.json` | `%ProgramData%\eryph\provisioning\state.json` | The agent's view of what ran. Look here first. |
 | `logs/<script>.log` | `%ProgramData%\eryph\provisioning\logs\` | Per-script stdout/stderr + exit code from `ScriptsUser` and any other module that writes there. |
 | `scripts/<ordinal>-<filename>` | The staged user-data scripts directory | The scripts as the agent actually ran them — handy for diffing against the fodder. |
-| `version.txt` | Live | Assembly name, file version, informational version, collection timestamp. |
+| `version.txt` | generated | The agent version and the time the bundle was made. |
 
 Files the agent couldn't open (locked log files etc.) are skipped
 silently; the bundle is best-effort.

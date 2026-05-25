@@ -1,10 +1,7 @@
-# How to use `#include` URLs
+# Use `#include` URLs
 
-`#include` lets one user-data payload reference others by URL. The
-agent fetches each URL, sniffs its content type, and feeds the result
-back into the pipeline.
-
-## Shape
+`#include` lets one user-data payload pull in others by URL. The agent fetches
+each URL and processes the result as if it were user-data.
 
 ```
 #include
@@ -13,49 +10,28 @@ https://example.com/fodder/scripts.mime
 # comment lines are skipped
 ```
 
-Every non-empty, non-`#` line is treated as a URL. Empty payloads are
-skipped with a warning.
+Every non-empty line that isn't a comment is a URL. `#include-once` behaves the
+same — each URL is fetched once regardless; the variant exists for cloud-init
+compatibility.
 
-## `#include-once`
+## Fetching
 
-```
-#include-once
-https://example.com/fodder/base.yaml
-```
+The agent does a plain anonymous HTTP GET. There's no authentication, so URLs
+must be reachable without credentials (a transparent proxy is fine). The timeout,
+retries, and maximum response size come from [settings](../reference/settings.md)
+(`userData.fetchTimeoutSeconds`, `fetchMaxAttempts`, `fetchInitialBackoffSeconds`,
+`fetchMaxBytes`).
 
-Semantically identical: each URL is fetched exactly once anyway. The
-header exists for cloud-init compatibility.
+Each fetched body is handled by its content, the same as the top-level
+user-data: gzip is decompressed, and the first line decides whether it's a
+cloud-config, another `#include`, a multipart message, or a script. A body with
+no recognised marker is skipped with a warning.
 
-## What the agent fetches
+## Loops and limits
 
-The pipeline calls `IUrlHelper.FetchAsync(url)`. The default
-implementation does a plain HTTP GET with the timeout and retry policy
-from [settings](../reference/settings.md):
+Fetched payloads can reference more URLs, up to `userData.maxRecursionDepth`
+(default 10). A URL that's already been fetched is skipped, so a cycle can't loop.
 
-- `userData.fetchTimeoutSeconds` (default `30`) — per-attempt timeout
-- `userData.fetchMaxAttempts` (default `4`) — total attempts
-- `userData.fetchInitialBackoffSeconds` (default `1`) — doubles up to 4s
-
-Authentication is not supported — URLs must be reachable anonymously
-(or via a transparent corporate proxy).
-
-## Content sniffing on the fetched payload
-
-The fetched body is sniffed the same way the root user-data is:
-gzipped bodies are decompressed; the first line decides the content type
-(`#cloud-config`, `#include`, multipart MIME headers, `#ps1`, etc.).
-Payloads that don't match any marker are skipped with a warning.
-
-## Cycle protection
-
-Each visited URL is recorded. If a fetched payload references a URL
-already visited (directly or transitively), the agent logs a warning
-and skips it. Maximum recursion depth is governed by
-`userData.maxRecursionDepth` (default `10`).
-
-## Failure tolerance
-
-Cloud-init's `#include` is best-effort — a single URL failure doesn't
-fail the whole run. The agent matches that: each failing fetch logs a
-warning and the next URL is tried. Use [`validate`](../reference/cli.md)
-to catch typos before shipping.
+A single URL that fails to fetch is logged and skipped — the rest still run, as
+in cloud-init. Run [`validate`](../reference/cli.md) to catch typos before you
+ship.

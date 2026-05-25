@@ -1,64 +1,49 @@
-# How to run shell scripts
+# Run shell scripts
 
-Cloud-init defines four ways to ship a script in user-data:
+There are three ways to run a script from user-data (a fourth, `#cloud-boothook`,
+is stored but not run):
 
-1. As a `runcmd:` entry inside `#cloud-config`.
-2. As a MIME part with `Content-Type: text/x-shellscript`.
-3. As the entire user-data with a `#ps1`, `#ps1_sysnative` or `#!` shebang.
-4. As `#cloud-boothook` (captured but **not executed** in v1).
+1. A `runcmd:` entry in `#cloud-config` — runs in the Config stage.
+2. A multipart part with `Content-Type: text/x-shellscript` — runs in the Final
+   stage.
+3. The whole user-data with a `#ps1`, `#ps1_sysnative`, or `#!` first line — also
+   Final stage.
 
-Routes 2 and 3 produce script *payloads* that the `ScriptsUser` module
-runs in the Final stage. Route 1 runs in the Config stage via the
-`Runcmd` module. See [Modules reference](../reference/modules.md).
+## How the runner is chosen
 
-## Filename-led dispatch
+A script runs by its filename extension first, then its shebang, then its
+content type:
 
-The agent decides how to run a script payload by **filename extension
-first** (matching cloudbase-init), then shebang, then content-type:
+| Filename ends in | Runs as |
+| --- | --- |
+| `.ps1` | `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <path>` |
+| `.cmd`, `.bat` | `cmd.exe /c <path>` |
+| `.sh` | skipped — no POSIX shell on Windows |
 
-| Filename ends in | Runner | Notes |
-| --- | --- | --- |
-| `.ps1` | `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <path>` | |
-| `.cmd`, `.bat` | `cmd.exe /c <path>` | |
-| `.sh` | (skipped) | No POSIX shell on Windows; a warning is logged. |
+With no usable extension, a `#ps1`/`#ps1_sysnative` shebang runs under
+PowerShell and a `#!/...` shebang is skipped. As a last resort, a part typed
+`text/x-shellscript` runs under PowerShell. A script the agent can't classify is
+skipped with a warning, never run blindly.
 
-If no usable filename extension is present, the agent falls back to
-shebang detection (`#ps1`, `#ps1_sysnative` → PowerShell). A POSIX
-shebang (`#!/...`) is skipped with a warning on Windows. As a last
-resort, `Content-Type: text/x-shellscript` is treated as PowerShell
-with a warning logged.
+## Where scripts go
 
-## Where scripts are staged
+Scripts are staged under
+`%ProgramData%\eryph\provisioning\scripts\per-instance\` as
+`<order>-<filename>` (a part named `enable_rd.ps1` becomes `001-enable_rd.ps1`).
+Each script's output goes to
+`%ProgramData%\eryph\provisioning\logs\<order>-<filename>.log` with the exit code
+and full stdout and stderr.
 
-`%ProgramData%\eryph\provisioning\scripts\per-instance\<ordinal>-<filename>`
-— ordinal is the declaration order, filename is preserved verbatim
-(invalid path chars sanitized to `_`). So a part shipped as
-`enable_rd.ps1` ends up on disk as e.g. `001-enable_rd.ps1`.
+## Reboots and failures
 
-Per-script logs land in
-`%ProgramData%\eryph\provisioning\logs\<ordinal>-<filename>.log`
-with the script path, exit code, and full stdout/stderr.
+A script that exits `1003` reboots the guest and resumes provisioning afterward —
+the script that asked for the reboot isn't re-run. This is a cloudbase-init
+convention; on cloud-init you'd use `power_state`.
 
-## Reboot-and-continue (exit 1003)
+Any other non-zero exit is logged and the next script still runs. The exit code
+is in the per-script log.
 
-A script that exits with **1003** signals "reboot now, then resume
-provisioning". The agent:
-
-1. Marks the module's semaphore so the rest of the modules in this stage
-   re-evaluate after the reboot.
-2. Calls `shutdown.exe /r /t 5`.
-3. On boot the agent re-runs; the reboot-requesting module sees the
-   semaphore and resumes from there.
-
-This is a cloudbase-init convention. Cloud-init does not honor it; on
-cloud-init you'd use `power_state` instead.
-
-## Non-zero exit (≠ 1003)
-
-Logged as an error; provisioning continues with the next script. The
-exit code lands in the per-script log and in `state.json` for that run.
-
-## Path to a Final-stage script via MIME multipart
+## Example: a script in a multipart payload
 
 ```
 Content-Type: multipart/mixed; boundary="=B="
@@ -68,13 +53,13 @@ MIME-Version: 1.0
 Content-Type: text/x-shellscript
 Content-Disposition: attachment; filename="install.ps1"
 
-Write-Host 'installing'
 Install-WindowsFeature Web-Server -IncludeManagementTools
 
 --=B=--
 ```
 
 After provisioning:
+
 ```powershell
 Get-Content C:\ProgramData\eryph\provisioning\logs\001-install.ps1.log
 ```

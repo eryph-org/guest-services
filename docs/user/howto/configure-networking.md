@@ -1,15 +1,15 @@
-# How to configure networking
+# Configure networking
 
-Network configuration travels in a separate cloud-init document called
-**network-config** (not part of `#cloud-config`). The datasource
-exposes it; the `ApplyNetworkConfig` module reads it in the Network
-stage.
+Network configuration travels in a separate cloud-init document, network-config,
+not in `#cloud-config`. The datasource supplies it and the `ApplyNetworkConfig`
+module applies it during the Network stage. On eryph it's written into the
+`config-2` ConfigDrive; on a NoCloud setup, put a `network-config` file next to
+`meta-data` and `user-data`.
 
-On Hyper-V / eryph, eryph-zero writes the network-config into the
-`config-2` ConfigDrive. On NoCloud setups, place a `network-config`
-file next to `meta-data` / `user-data` on the cidata ISO.
+Both the v1 and v2 schemas are accepted, and adapters are matched to the config
+by MAC address.
 
-## v1 schema (`version: 1`)
+## v1
 
 ```yaml
 version: 1
@@ -34,7 +34,7 @@ config:
       - type: dhcp4
 ```
 
-## v2 schema (`version: 2`)
+## v2
 
 ```yaml
 version: 2
@@ -59,46 +59,23 @@ ethernets:
     dhcp6: true
 ```
 
-Both schemas are accepted. The v1 document is projected onto the
-v2-shape `Ethernets` dictionary; either way, the agent matches each
-entry to a Windows adapter by MAC address.
+## What's applied
 
-## What gets applied
+IPv4 and IPv6 are handled independently. For a family set to DHCP, the agent
+enables DHCP and leaves the rest of that family alone. For static addresses, it
+disables DHCP for that family and sets the listed addresses and the gateway.
+Per-interface routes, DNS servers, DNS search suffixes, and MTU are applied when
+present. A family with no directive is left as-is.
 
-For each matched adapter, per address family (v4 and v6 independently):
+An entry with no MAC address is skipped with a warning — Windows needs a MAC to
+bind to an adapter — as is an entry whose MAC matches no adapter.
 
-- **DHCP-only** (`dhcp4`/`dhcp6: true`, no addresses): DHCP is enabled,
-  that family is otherwise left alone.
-- **Static**: DHCP is disabled for that family, the listed `addresses`
-  become the configured IPs, `gateway4` / `gateway6` becomes the
-  default gateway.
-- **Routes**: per-interface static routes (`to`/`network`, `via`/`gateway`,
-  optional metric).
-- **DNS**: `nameservers.addresses` (servers) and `nameservers.search`
-  (search suffixes).
-- **MTU**: applied if `> 0`.
+Bonds, bridges, VLANs, and wifi aren't applied, even though the schemas allow
+them.
 
-A family with no directive is left untouched.
-
-If `mac_address` is empty/missing, the entry is **skipped with a
-warning** — Windows requires a MAC for adapter binding. If the MAC has
-no matching physical adapter, the entry is **skipped with a warning**
-and provisioning continues.
-
-## What is not supported
-
-- Bonds, bridges, VLANs (the schemas allow them; the applier doesn't).
-- Wifi.
-
-## Order vs hostname
-
-`ApplyNetworkConfig` is `Stage.Network`, `Order = 2`. The hostname module
-runs at `Order = 1` before it so an IP swap doesn't disconnect SSH
-mid-rename. See [Stages reference](../reference/stages.md).
-
-## Frequency
-
-`per-instance`. To re-apply on a running guest:
+`ApplyNetworkConfig` runs after `SetHostname`, so a hostname change isn't
+disrupted by an address change in the same run. It's per-instance; to re-apply on
+a running guest:
 
 ```powershell
 egs-service reset
