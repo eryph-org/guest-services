@@ -27,11 +27,11 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0011](0011-jinja2-templating.md) | Jinja2 templating in user-data | Draft |
 | [0012](0012-part-handler.md) | Part-handler (custom code in user-data) | Draft |
 | [0013](0013-boothook-execution.md) | Boothook execution | Draft |
-| [0014](0014-azure-datasource.md) | Azure datasource (probe + CustomData.bin + IMDS + ovf-env) | Draft |
+| [0014](0014-azure-datasource.md) | Azure datasource (probe + CustomData.bin + IMDS + ovf-env) | Implemented |
 | [0015](0015-set-timezone-module.md) | `timezone` cloud-config module on Windows | Implemented |
 | [0016](0016-ntp-module.md) | `ntp` cloud-config module on Windows | Implemented |
 | [0017](0017-licensing-module.md) | `license` cloud-config module (slmgr / AVMA / KMS / rearm) | Implemented |
-| [0018](0018-ssh-module.md) | Windows OpenSSH daemon configuration (`SshModule`) | Accepted |
+| [0018](0018-ssh-module.md) | Windows OpenSSH daemon configuration (`SshModule`) | Implemented |
 | [0019](0019-windows-update-module.md) | `windows_update` cloud-config module | Draft |
 | [0020](0020-winget-module.md) | `winget` cloud-config module | Draft |
 | [0021](0021-chocolatey-module.md) | `chocolatey` cloud-config module | Draft |

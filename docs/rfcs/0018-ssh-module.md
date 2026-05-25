@@ -1,6 +1,6 @@
 # RFC 0018 — Windows OpenSSH daemon configuration (`SshModule`)
 
-Status: Accepted
+Status: Implemented (`SshModule` — host keys, sshd_config.d drop-in, disable_root→RID-500, install opt-in, fingerprint reporting; merging authorized_keys; `DefaultUserResolver`)
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # RFC 0014 — Azure datasource
 
-Status: Draft
+Status: Implemented (verified on Azure — probe + CustomData.bin + IMDS + ovf-env, with PA-readiness gating)
 
 ## Problem
 
