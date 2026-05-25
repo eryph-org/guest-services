@@ -41,12 +41,16 @@ public sealed class MultipartMimeHandlerTests
         ctx.NestedParts[1].Filename.Should().Be("boot.ps1");
     }
 
-    // A multipart message missing the RFC 2046 `--boundary--` close delimiter
-    // is malformed: the trailing part is unterminated. The parser dispatches
-    // the parts it could fully delimit and drops the dangling one (with a
-    // warning) rather than guessing where it ends.
+    // eryph-zero's config drive is produced by Dbosoft.CloudInit.ConfigDrive's
+    // UserDataSerializer, which never emits the RFC 2046 `--boundary--` close
+    // delimiter — every part simply ends at EOF. cloud-init's email-based
+    // parser tolerates this, so we must too: dropping the trailing part would
+    // discard the entire cloud-config whenever the payload is a single part
+    // (the common eryph case). This regression guards that behaviour — see
+    // also ProcessAsync_ParsesEryphZeroConfigDriveShape below for the exact
+    // producer framing.
     [Fact]
-    public async Task ProcessAsync_DropsUnterminatedTrailingPartWithoutCloseDelimiter()
+    public async Task ProcessAsync_FlushesTrailingPartWhenCloseDelimiterMissing()
     {
         // Note the absence of "--BOUNDARY--" terminator at the end.
         const string raw =
@@ -68,8 +72,43 @@ public sealed class MultipartMimeHandlerTests
 
         await handler.ProcessAsync(part, ctx, CancellationToken.None);
 
-        ctx.NestedParts.Should().HaveCount(1, "the unterminated trailing part is dropped");
+        ctx.NestedParts.Should().HaveCount(2, "the trailing part ends at EOF, not a dropped fragment");
         Encoding.UTF8.GetString(ctx.NestedParts[0].Body).Should().Contain("hostname: first");
+        Encoding.UTF8.GetString(ctx.NestedParts[1].Body).Should().Contain("hostname: last");
+    }
+
+    // Real-world fixture: the exact byte framing emitted by
+    // Dbosoft.CloudInit.ConfigDrive.UserDataSerializer (the producer eryph-zero
+    // uses). Distinctive quirks, all of which the parser must absorb:
+    //   - mbox "From nobody ..." envelope line (space, not colon) as preamble
+    //   - boundary token "==BOUNDARY==" declared with quotes
+    //   - LF-only line endings (no CR)
+    //   - a single cloud-config part and NO "--==BOUNDARY==--" close delimiter
+    // This is the shape that produced the empty-config e2e failure; the part
+    // must be dispatched, not dropped.
+    [Fact]
+    public async Task ProcessAsync_ParsesEryphZeroConfigDriveShape()
+    {
+        const string raw =
+            "From nobody Fri Jan  11 07:00:00 1980\n" +
+            "Content-Type: multipart/mixed; boundary=\"==BOUNDARY==\"\n" +
+            "MIME-Version: 1.0\n" +
+            "--==BOUNDARY==\n" +
+            "MIME-Version: 1.0\n" +
+            "Content-Type: text/cloud-config; charset=\"us-ascii\"\n" +
+            "Content-Disposition: attachment; filename=\"eryph-config\"\n" +
+            "#cloud-config\nhostname: egs-prov-e2e\n";
+
+        var handler = new MultipartMimeHandler(NullLogger<MultipartMimeHandler>.Instance);
+        var part = new UserDataPart("multipart/mixed", Encoding.ASCII.GetBytes(raw), null);
+        var ctx = new TestResolutionContext();
+
+        await handler.ProcessAsync(part, ctx, CancellationToken.None);
+
+        ctx.NestedParts.Should().ContainSingle();
+        ctx.NestedParts[0].ContentType.Should().Be("text/x-cloud-config");
+        ctx.NestedParts[0].Filename.Should().Be("eryph-config");
+        Encoding.UTF8.GetString(ctx.NestedParts[0].Body).Should().Contain("hostname: egs-prov-e2e");
     }
 
     [Fact]

@@ -150,6 +150,20 @@ BeforeAll {
 }
 
 AfterAll {
+  . $PSScriptRoot/Helpers.ps1
+
+  # Collect agent logs + datasource contents while the catlet is still alive,
+  # so a failed run leaves a diagnosable artifact set without a manual SSH dig.
+  if ($catlet) {
+    try {
+      Save-GuestDiagnostics -CatletId $catlet.Id `
+        -OutputDir (Join-Path $PSScriptRoot "diagnostics/$($catlet.Name)")
+    }
+    catch {
+      Write-Host "Guest diagnostics collection failed (non-fatal): $_"
+    }
+  }
+
   if ($env:EGS_E2E_KEEP_VM) {
     Write-Host "EGS_E2E_KEEP_VM set — leaving catlet $($catlet.Name) for inspection."
     return

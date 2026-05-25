@@ -223,15 +223,20 @@ internal sealed class MultipartMimeHandler(ILogger<MultipartMimeHandler> logger)
                 idx = lineEnd + 1;
             }
 
-            // A well-formed multipart ends with the `--boundary--` close
-            // delimiter, which flushes the final part above. If we reach EOF
-            // still inside a part, the message is missing its close delimiter
-            // (RFC 2046 §5.1.1 requires it) — the trailing part is malformed
-            // and dropped rather than guessed at.
+            // RFC 2046 §5.1.1 mandates a `--boundary--` close delimiter, but
+            // the producer eryph-zero uses — Dbosoft.CloudInit.ConfigDrive's
+            // UserDataSerializer — never emits one: its parts simply end at
+            // EOF. cloud-init's own email-based parser tolerates this, so we
+            // flush the final open part at EOF rather than dropping it.
+            // Dropping it loses the entire cloud-config when the payload is a
+            // single part. See the EryphZero close-delimiter regression test.
             if (inPart)
-                logger.LogWarning(
-                    "Multipart user-data is missing its closing '--{Boundary}--' delimiter; "
-                    + "dropping the unterminated trailing part.", boundary);
+            {
+                logger.LogDebug(
+                    "Multipart user-data has no '--{Boundary}--' close delimiter; "
+                    + "flushing the trailing part at EOF.", boundary);
+                FlushChild(children, raw, collectingStart, collectingEnd);
+            }
 
             return children;
 

@@ -597,3 +597,82 @@ function Invoke-EgsShellProbe {
   # Pester's NUnit3 XML serializer (ESC = 0x1B is invalid in XML 1.0).
   return $raw -replace "`e\[[0-?]*[ -/]*[@-~]", '' -replace "`e\][^`a]*`a", ''
 }
+
+function Save-GuestDiagnostics {
+  <#
+    .SYNOPSIS
+      Pulls the provisioning agent's logs and the datasource contents off a
+      running catlet into a local directory, so a failed (or passing) e2e run
+      leaves a diagnosable artifact set instead of needing a manual SSH session.
+
+    .DESCRIPTION
+      Best-effort and non-throwing: diagnostics collection must never turn a
+      real test failure into a cleanup error. Each probe is captured to its own
+      file; a probe that fails records the error and the rest still run.
+
+      Probe scripts use single quotes only so they survive the
+      `ssh.exe "powershell -Command \"...\""` wrapping without escaping issues.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)] $CatletId,
+    [Parameter(Mandatory)][string] $OutputDir
+  )
+
+  # The guest's eryph.alt alias is keyed on the catlet id (NOT the Hyper-V
+  # VmId) — the same name the test's SSH probes connect to.
+  $hostName = "$CatletId.eryph.alt"
+  try { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null } catch { }
+  Write-Host "Collecting guest diagnostics to $OutputDir ..."
+
+  $probes = [ordered]@{
+    'state.json' =
+      'Get-Content -Raw -LiteralPath C:\ProgramData\eryph\provisioning\state.json'
+    'provisioning-tree.txt' =
+      'Get-ChildItem -Recurse -Path C:\ProgramData\eryph\provisioning -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName'
+    'script-logs.txt' =
+      'Get-ChildItem -Path C:\ProgramData\eryph\provisioning\logs -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName }'
+    'eventlog.txt' =
+      'Get-WinEvent -LogName Application -MaxEvents 300 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match ''eryph|egs'' -or $_.Message -match ''provisioning|egs-service'' } | Sort-Object TimeCreated | Format-List TimeCreated, LevelDisplayName, ProviderName, Message | Out-String'
+    'configdrive-tree.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } else { ''config-2 volume not found'' }'
+    'configdrive-user-data.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter user_data -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+    'configdrive-meta-data.txt' =
+      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter meta_data.json -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+  }
+
+  # ssh.exe non-zero exits must not abort the loop.
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    foreach ($name in $probes.Keys) {
+      $dest = Join-Path $OutputDir $name
+      try {
+        $script = $probes[$name]
+        $out = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=10 $hostName `
+          "powershell -NoProfile -Command `"$script`"" 2>&1
+        Set-Content -LiteralPath $dest -Value ($out | Out-String)
+      }
+      catch {
+        Set-Content -LiteralPath $dest -Value "diagnostic collection failed: $_"
+      }
+    }
+
+    # Also pull the egs-service collect-logs bundle (state + per-script logs).
+    try {
+      $bundleCmd = "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-bundle.zip"
+      ssh.exe -o StrictHostKeyChecking=no $hostName `
+        "powershell -NoProfile -Command `"$bundleCmd`"" 2>&1 | Out-Null
+      scp.exe -o StrictHostKeyChecking=no `
+        "${hostName}:C:/Windows/Temp/egs-bundle.zip" (Join-Path $OutputDir 'egs-bundle.zip') 2>&1 | Out-Null
+    }
+    catch {
+      Write-Host "collect-logs bundle pull failed (non-fatal): $_"
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+  Write-Host "Guest diagnostics saved to $OutputDir"
+}

@@ -106,13 +106,13 @@ public sealed class MultipartBinaryFidelityTests
     }
 
     [Fact]
-    public async Task MissingCloseBoundary_DropsUnterminatedTrailingPart()
+    public async Task MissingCloseBoundary_FlushesTrailingPartAtEof()
     {
-        // RFC 2046 requires the `--boundary--` close delimiter. Without it the
-        // trailing part is unterminated and malformed; the parser dispatches
-        // the parts it could fully delimit and drops the dangling one rather
-        // than guessing where it ends. The first part (closed by the second
-        // boundary line) is still dispatched.
+        // RFC 2046 calls for a `--boundary--` close delimiter, but the producer
+        // eryph-zero uses (Dbosoft.CloudInit.ConfigDrive) never emits one — the
+        // last part ends at EOF. cloud-init tolerates this and so must we, or a
+        // single-part eryph payload loses its entire cloud-config. Both parts
+        // here must be dispatched.
         const string raw =
             "MIME-Version: 1.0\n" +
             "Content-Type: multipart/mixed; boundary=\"BOUNDARY\"\n" +
@@ -128,8 +128,9 @@ public sealed class MultipartBinaryFidelityTests
 
         var ctx = await DispatchAsync(Encoding.UTF8.GetBytes(raw));
 
-        ctx.NestedParts.Should().HaveCount(1);
+        ctx.NestedParts.Should().HaveCount(2);
         Encoding.UTF8.GetString(ctx.NestedParts[0].Body).Should().Contain("hostname: first");
+        Encoding.UTF8.GetString(ctx.NestedParts[1].Body).Should().Contain("hostname: last");
     }
 
     [Fact]
