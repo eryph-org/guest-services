@@ -40,10 +40,14 @@ internal sealed class OpenStackMetadataClient : IDisposable
     private readonly ILogger _logger;
 
     /// <summary>Production constructor: builds its own handler against the
-    /// link-local endpoint.</summary>
+    /// link-local endpoint. Proxy use is disabled — the metadata service lives on
+    /// the link-local address 169.254.169.254, which must be reached directly; a
+    /// system/WPAD proxy would break reachability and could leak metadata requests
+    /// to an outbound proxy. Mirrors cloud-init / cloudbase-init, which bypass the
+    /// proxy for IMDS.</summary>
     public OpenStackMetadataClient(ILogger logger)
         : this(
-            new HttpClientHandler(),
+            new HttpClientHandler { UseProxy = false, Proxy = null },
             disposeHandler: true,
             DefaultBaseUrl,
             DefaultTimeout,

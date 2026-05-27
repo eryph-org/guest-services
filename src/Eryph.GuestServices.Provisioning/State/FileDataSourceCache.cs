@@ -41,33 +41,82 @@ public sealed class FileDataSourceCache(ILogger<FileDataSourceCache> logger) : I
                 .ConfigureAwait(false);
             return dto is null ? null : ToResult(dto);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            logger.LogWarning(ex, "Datasource cache at {Path} is corrupt; treating as absent", CachePath);
+            // The cache is an optimization; a corrupt or unreadable file (incl.
+            // transient sharing/permission errors) must not abort provisioning —
+            // treat it as absent and let the run fall back to a fresh locate.
+            logger.LogWarning(ex, "Datasource cache at {Path} is unreadable; treating as absent", CachePath);
             return null;
         }
     }
 
     public async Task SaveAsync(DataSourceResult data, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(_directory);
         var tempPath = CachePath + ".tmp";
-        await using (var stream = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+        try
         {
-            await JsonSerializer
-                .SerializeAsync(stream, ToDto(data), DataSourceCacheJsonContext.Default.CachedDataSource, cancellationToken)
-                .ConfigureAwait(false);
-            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-        }
+            Directory.CreateDirectory(_directory);
+            await using (var stream = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await JsonSerializer
+                    .SerializeAsync(stream, ToDto(data), DataSourceCacheJsonContext.Default.CachedDataSource, cancellationToken)
+                    .ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
 
-        File.Move(tempPath, CachePath, overwrite: true);
+            // The atomic replace can transiently fail with UnauthorizedAccessException
+            // / IOException when antivirus scans the just-written file or a reader
+            // briefly holds the destination — retry before giving up.
+            await ReplaceWithRetryAsync(tempPath, CachePath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort: a cache write failure must not fail the run. The next
+            // boot simply re-locates the datasource instead of restoring.
+            logger.LogWarning(ex, "Failed to persist datasource cache to {Path}; continuing without it", CachePath);
+            TryDelete(tempPath);
+        }
     }
 
     public Task ResetAsync(CancellationToken cancellationToken)
     {
-        if (File.Exists(CachePath))
-            File.Delete(CachePath);
+        TryDelete(CachePath);
         return Task.CompletedTask;
+    }
+
+    private async Task ReplaceWithRetryAsync(string source, string destination, CancellationToken cancellationToken)
+    {
+        var delay = TimeSpan.FromMilliseconds(50);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(source, destination, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 6)
+            {
+                logger.LogDebug(
+                    ex, "Replacing {Destination} failed (attempt {Attempt}); retrying in {Delay}ms",
+                    destination, attempt, (int)delay.TotalMilliseconds);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 1000));
+            }
+        }
+    }
+
+    private void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning(ex, "Failed to delete {Path}", path);
+        }
     }
 
     private static CachedDataSource ToDto(DataSourceResult d) => new()

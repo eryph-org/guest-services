@@ -78,6 +78,39 @@ public sealed class FileDataSourceCacheTests : IDisposable
         (await cache.LoadAsync(CancellationToken.None)).Should().BeNull();
     }
 
+    [Fact]
+    public async Task Load_returns_null_instead_of_throwing_when_file_is_locked()
+    {
+        // The cache is an optimization; an unreadable file (here: held exclusively)
+        // must be treated as absent, not abort provisioning.
+        var cache = NewCache();
+        await cache.SaveAsync(
+            new DataSourceResult { SourceName = "s", InstanceId = "i" }, CancellationToken.None);
+        var cachePath = Path.Combine(_dir, "datasource.json");
+
+        using var exclusive = File.Open(cachePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var act = async () => await cache.LoadAsync(CancellationToken.None);
+        (await act.Should().NotThrowAsync()).Which.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Save_does_not_throw_when_destination_is_locked()
+    {
+        // A persistent replace failure must not fail the run — SaveAsync is
+        // best-effort and swallows it after exhausting retries.
+        var cache = NewCache();
+        await cache.SaveAsync(
+            new DataSourceResult { SourceName = "s", InstanceId = "i" }, CancellationToken.None);
+        var cachePath = Path.Combine(_dir, "datasource.json");
+
+        using var exclusive = File.Open(cachePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var act = async () => await cache.SaveAsync(
+            new DataSourceResult { SourceName = "s", InstanceId = "i2" }, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_dir, recursive: true); } catch { /* best effort */ }
