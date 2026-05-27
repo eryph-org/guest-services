@@ -29,7 +29,15 @@ listener.Start();
 Console.WriteLine($"OpenStack metadata sim: serving '{root}' on '{prefix}'");
 
 using var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+Console.CancelKeyPress += (_, e) =>
+{
+    e.Cancel = true;
+    cts.Cancel();
+    // GetContextAsync blocks until the next request; stopping the listener
+    // unblocks it (throwing below) so shutdown is prompt rather than waiting
+    // for one more HTTP request to arrive.
+    try { listener.Stop(); } catch { /* already stopping */ }
+};
 
 try
 {
@@ -39,12 +47,12 @@ try
         _ = Task.Run(() => HandleAsync(context, responder));
     }
 }
-catch (Exception) when (cts.IsCancellationRequested)
+catch (Exception ex) when (cts.IsCancellationRequested
+                           && ex is HttpListenerException or ObjectDisposedException or InvalidOperationException)
 {
-    // shutting down
+    // listener stopped during shutdown — expected
 }
 
-listener.Stop();
 return 0;
 
 static async Task HandleAsync(HttpListenerContext context, MetadataResponder responder)

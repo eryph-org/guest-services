@@ -369,12 +369,23 @@ public sealed class StageRunner(
         if (existing.CompletedStages.Contains(Stage.Final.ToString()))
             return null;
 
+        // Only short-circuit the probe when a reboot-resume is actually in
+        // progress — the one case the cache exists for (a module, e.g.
+        // SetHostname, asked for a reboot and we must continue afterwards even if
+        // the network datasource is momentarily unreachable). Both markers are set
+        // when a reboot is requested. Outside that case (e.g. a clone or rollback
+        // mid-provisioning), re-probe so a changed instance-id is still detected by
+        // LoadOrResetStateAsync rather than masked by a stale cache.
+        var rebootResumeInProgress = existing.RebootCount > 0 || existing.PendingHandlers.Count > 0;
+        if (!rebootResumeInProgress)
+            return null;
+
         var cached = await dataSourceCache.LoadAsync(cancellationToken).ConfigureAwait(false);
         if (cached is null || !string.Equals(cached.InstanceId, existing.InstanceId, StringComparison.Ordinal))
             return null;
 
         logger.LogInformation(
-            "Restoring cached datasource for in-progress instance {InstanceId}; skipping re-probe",
+            "Restoring cached datasource for reboot-resume of instance {InstanceId}; skipping re-probe",
             cached.InstanceId);
         return cached;
     }

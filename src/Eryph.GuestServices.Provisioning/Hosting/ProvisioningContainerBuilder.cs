@@ -63,10 +63,11 @@ internal static class ProvisioningContainerBuilder
         if (container.Options.DefaultScopedLifestyle is null)
             container.Options.DefaultScopedLifestyle = new AsyncScopedLifestyle();
 
-        // Settings: loaded from disk if present, otherwise defaults. Modules and
-        // helpers depend on ProvisioningSettings directly; tunables that were
-        // previously public constants live here so they're operator-configurable.
-        container.RegisterInstance(ProvisioningSettings.LoadOrDefault());
+        // Settings: caller-provided (tests), else loaded from disk if present,
+        // otherwise defaults. Modules and helpers depend on ProvisioningSettings
+        // directly; tunables that were previously public constants live here so
+        // they're operator-configurable.
+        container.RegisterInstance(options.Settings ?? ProvisioningSettings.LoadOrDefault());
 
         // Operator on/off flags (HKLM\SOFTWARE\eryph\guest-services). Injected so
         // ProvisioningHostedService can gate the first-boot run. Opt-out: ON
@@ -209,4 +210,12 @@ internal sealed class ProvisioningContainerOptions
     /// from the CLI. Prepended ahead of the discovery chain.
     /// </summary>
     public IDataSource? OverrideDataSource { get; init; }
+
+    /// <summary>
+    /// Optional pre-resolved settings. When null the container loads them from
+    /// disk (<see cref="ProvisioningSettings.LoadOrDefault"/>). Lets callers
+    /// (and tests) supply settings without depending on the on-disk
+    /// egs-provisioning.json next to the binary.
+    /// </summary>
+    public ProvisioningSettings? Settings { get; init; }
 }
