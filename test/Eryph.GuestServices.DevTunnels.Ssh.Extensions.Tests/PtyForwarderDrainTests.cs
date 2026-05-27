@@ -11,8 +11,12 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests;
 /// </summary>
 public class PtyForwarderDrainTests
 {
-    private static readonly TimeSpan FastBudget = TimeSpan.FromMilliseconds(20);
-    private static readonly TimeSpan FastTimeout = TimeSpan.FromMilliseconds(100);
+    // The fault/EOF/cancel/shutdown cases resolve from already-completed tasks
+    // and don't depend on these values; only the stalled-pump case waits out
+    // the drain timeout. Kept comfortably above CI timer resolution so that
+    // test isn't flaky on slow/loaded runners.
+    private static readonly TimeSpan FastBudget = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan FastTimeout = TimeSpan.FromMilliseconds(500);
 
     [Fact]
     public async Task ClosesChannel_WhenOutputPumpFaultsWithIoException_AsOnLinuxPtyEio()
