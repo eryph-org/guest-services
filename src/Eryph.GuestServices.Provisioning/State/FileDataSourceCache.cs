@@ -26,7 +26,7 @@ public sealed class FileDataSourceCache(ILogger<FileDataSourceCache> logger) : I
         _directory = directory;
     }
 
-    private string CachePath => Path.Combine(_directory, Cli.ProvisioningPaths.DataSourceCacheFileName);
+    private string CachePath => Path.Combine(_directory, ProvisioningPaths.DataSourceCacheFileName);
 
     public async Task<DataSourceResult?> LoadAsync(CancellationToken cancellationToken)
     {
