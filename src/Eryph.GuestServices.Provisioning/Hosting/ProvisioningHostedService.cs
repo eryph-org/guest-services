@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Eryph.GuestServices.Core;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,6 +21,7 @@ internal sealed class ProvisioningHostedService(
     IStageRunner runner,
     IHostApplicationLifetime lifetime,
     IServiceControlFlags controlFlags,
+    IReportingDispatcher reporter,
     ILogger<ProvisioningHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -43,6 +46,24 @@ internal sealed class ProvisioningHostedService(
         {
             logger.LogError(ex, "Unhandled exception in provisioning stage runner");
             Environment.ExitCode = 1;
+            // Surface the failure so KVP reports `failed` rather than staying
+            // `running` forever. A swallowed crash here (e.g. a state-save replace
+            // denied by AV) previously left provisioning indistinguishable from a
+            // hung run. Reporting must not itself throw out of the catch — report
+            // on a non-cancellable token and swallow any reporting error.
+            try
+            {
+                await reporter.EmitAsync(
+                    new ReportingEvent.ProvisioningFailed($"Unhandled exception: {ex.Message}", ex)
+                    {
+                        Origin = "provisioning-host",
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception reportEx)
+            {
+                logger.LogError(reportEx, "Failed to report provisioning failure state");
+            }
             // Do NOT stop the host: egs-service keeps running its other
             // responsibilities (SSH server, host channel) even when provisioning
             // failed.

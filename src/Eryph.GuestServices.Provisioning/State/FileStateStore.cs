@@ -47,7 +47,7 @@ public sealed class FileStateStore(ILogger<FileStateStore> logger) : IStateStore
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        File.Move(tempPath, _statePath, overwrite: true);
+        await AtomicFile.ReplaceWithRetryAsync(tempPath, _statePath, logger, cancellationToken).ConfigureAwait(false);
     }
 
     public Task ResetAsync(CancellationToken cancellationToken)

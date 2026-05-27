@@ -90,7 +90,7 @@ public sealed class FileSemaphoreStore : ISemaphoreStore
         // file is correctly treated as "not yet completed".
         var tempPath = path + ".tmp";
         await File.WriteAllTextAsync(tempPath, json, cancellationToken).ConfigureAwait(false);
-        File.Move(tempPath, path, overwrite: true);
+        await State.AtomicFile.ReplaceWithRetryAsync(tempPath, path, _logger, cancellationToken).ConfigureAwait(false);
 
         _logger.LogDebug(
             "Wrote semaphore {Path} (module={Module} frequency={Frequency} outcome={Outcome})",
