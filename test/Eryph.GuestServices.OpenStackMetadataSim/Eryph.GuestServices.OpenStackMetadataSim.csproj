@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Eryph.GuestServices.OpenStackMetadataSim</RootNamespace>
+    <AssemblyName>egs-openstack-sim</AssemblyName>
+    <!-- Test/e2e tooling only — never shipped in the guest binary set. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

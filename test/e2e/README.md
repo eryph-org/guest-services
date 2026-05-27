@@ -9,6 +9,11 @@ Two suites:
   catlet (no fodder), mounts its VHD BEFORE first start, bakes our egs-service
   binary in, disables cloudbase-init, and asserts the embedded provisioning
   lifecycle runs cleanly at first boot via KVP and state.json.
+- `OpenStack.E2E.Tests.ps1` — OpenStack metadata-service (HTTP) datasource
+  tests; deploys an Ubuntu simulator (`egs-openstack-sim`) pinned to
+  169.254.169.254 serving the captured config-2 fixture, prepares a Windows
+  guest offline (sets the SMBIOS chassis asset tag + pins the datasource list),
+  and asserts it provisions from the HTTP metadata service. REQUIRES ADMIN.
 
 The two suites have different goals so they're separate runners:
 
@@ -17,6 +22,7 @@ pwsh ./Run-E2ETests.ps1                       # Shell suite, winsrv2022
 pwsh ./Run-E2ETests.ps1 -OSVersion winsrv2025
 pwsh ./Run-E2ETests.ps1 -SkipBuild            # reuse existing publish output
 pwsh ./Run-ProvisioningE2ETests.ps1           # Provisioning suite — REQUIRES ADMIN
+pwsh ./Run-OpenStackE2ETests.ps1              # OpenStack HTTP datasource — REQUIRES ADMIN
 ```
 
 ## Shell suite
@@ -154,6 +160,64 @@ discovers a datasource, runs the stages, reports via KVP. Testing it
 meaningfully requires the new binary to be the one Windows starts during its
 very first SCM cycle. VHD-mount + offline service registration achieves
 that without touching the host's running services or any post-OOBE state.
+
+## OpenStack suite
+
+End-to-end test for the OpenStack metadata-service (HTTP) datasource
+(`OpenStackMetadataDataSource`) against **real captured nova metadata**.
+
+> **Status: "technically working", NOT production-ready.** This exercises the
+> datasource against captured fixtures + a faithful-shape simulator on
+> eryph/Hyper-V. It has never run against a real OpenStack deployment, where
+> link-local reachability and dynamic IMDS behavior differ. See the datasource's
+> `DESIGN.md` ("Maturity") for the full caveat list.
+
+Topology — two overlay networks from `openstack-sim-network.yaml`; the guest
+sits on `default`, the simulator on `metadata`. eryph's virtual router connects
+them, but `169.254.169.254` is link-local so a Windows guest treats it as on-link
+and never routes it — the harness installs an onstart task in the guest that adds
+the explicit `/32`-via-gateway route (see step 4). (On *real* OpenStack this is
+handled by the neutron metadata agent / DHCP option 121, not a manual route.)
+
+1. Applies the network config: `default` (guest) + `metadata` (single-IP pool
+   pinning the simulator to `169.254.169.254`).
+2. Deploys the **simulator** catlet (Ubuntu). The harness uploads
+   `egs-openstack-sim` + the captured fixture tree
+   (`test/fixtures/configdrive-openstack`) via egs and runs the sim as a systemd
+   service on port 80. `egs-openstack-sim` serves the OpenStack contract:
+   `GET /openstack` → version listing, then `openstack/<version>/…` files.
+3. Creates the **guest** catlet (Windows) and prepares it offline before first
+   boot: `Update-EgsServiceBinariesOffline` (bake in egs-service + disable cbi),
+   `Set-CatletChassisAssetTag` → `"OpenStack Nova"` (Hyper-V can't set
+   system-product-name, but the asset tag trips the same `ds_detect` gate), and
+   `Set-OfflineProvisioningSettings` to pin `dataSources.dataSourceList` to
+   `["OpenStack"]` (so the locator probes ONLY the metadata service — eryph's own
+   config-2 drive, ConfigDrive priority 40, would otherwise win over OpenStack 50).
+4. Starts the guest, then `Install-GuestMetadataRoute` registers an onstart
+   scheduled task (re-runs across the SetHostnameModule reboot) that adds the
+   active `169.254.169.254/32` route. egs-service comes up independently and its
+   OpenStack datasource WaitForReady-loops until the route lands.
+5. egs-service detects OpenStack via the asset tag, fetches `meta_data.json` +
+   `user_data` over HTTP from `169.254.169.254`, and provisions.
+
+Assertions prove the data came from the HTTP service: KVP
+`eryph.provisioning.instance` equals the simulator's sanitized uuid
+(`facade00-…`, which eryph's own drive would never carry), `state.json` reached
+`Final`, the `user_data` `write_files` marker
+(`C:\eryph-openstack-e2e\hello.txt = from-userdata`) was written, and — the
+discriminating "usable VM" check — the `user_data` `users:` block provisioned a
+login account (`osadmin`, Administrator, enabled, password authenticates via
+`ValidateCredentials`). `vendor_data` is covered by unit tests, not here.
+
+```powershell
+pwsh ./Run-OpenStackE2ETests.ps1               # default winsrv2022
+pwsh ./Run-OpenStackE2ETests.ps1 -OSVersion winsrv2025
+pwsh ./Run-OpenStackE2ETests.ps1 -SkipBuild
+```
+
+**Requires Administrator** (Mount-VHD, offline reg load, Hyper-V WMI for the
+chassis asset tag) and an Ubuntu 22.04 starter gene in addition to the Windows
+parent. The harness publishes `egs-openstack-sim` for linux-x64 self-contained.
 
 ## Troubleshooting
 

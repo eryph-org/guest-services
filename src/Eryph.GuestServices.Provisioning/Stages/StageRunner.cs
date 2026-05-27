@@ -14,6 +14,7 @@ namespace Eryph.GuestServices.Provisioning.Stages;
 
 public sealed class StageRunner(
     IDataSourceLocator dataSourceLocator,
+    IDataSourceCache dataSourceCache,
     IUserDataPipeline userDataPipeline,
     IStateStore stateStore,
     ISemaphoreStore semaphoreStore,
@@ -55,12 +56,23 @@ public sealed class StageRunner(
         IReadOnlyList<Stage> stagesToRun,
         CancellationToken cancellationToken)
     {
-        // Pre-step: discover the datasource before any stage runs.
-        var data = await dataSourceLocator.LocateAsync(cancellationToken).ConfigureAwait(false);
+        // Pre-step: discover the datasource before any stage runs. Cloud-init
+        // local-cache parity (restore_from_cache): if a previous run for this
+        // still-in-progress instance cached its datasource, restore it instead of
+        // re-probing. A module-requested reboot (e.g. SetHostname) must be able to
+        // resume even when a network datasource — the OpenStack metadata service —
+        // is momentarily unreachable; the data was already fetched on first boot.
+        var data = await TryRestoreCachedDataSourceAsync(cancellationToken).ConfigureAwait(false);
         if (data is null)
         {
-            logger.LogWarning("No data source available; nothing to provision");
-            return StageRunOutcome.NoDataSource.Instance;
+            data = await dataSourceLocator.LocateAsync(cancellationToken).ConfigureAwait(false);
+            if (data is null)
+            {
+                logger.LogWarning("No data source available; nothing to provision");
+                return StageRunOutcome.NoDataSource.Instance;
+            }
+
+            await dataSourceCache.SaveAsync(data, cancellationToken).ConfigureAwait(false);
         }
 
         // Per-boot semaphores must be cleared at the start of every new boot.
@@ -110,9 +122,18 @@ public sealed class StageRunner(
             {
                 try
                 {
-                    resolvedUserData = await userDataPipeline
+                    var resolvedUser = await userDataPipeline
                         .ResolveAsync(data.GetUserDataBytes(), cancellationToken)
                         .ConfigureAwait(false);
+                    // Vendor-data is a lower-priority user-data source (cloud-init
+                    // semantics): resolve it through the same pipeline and merge so
+                    // user-data wins on conflict and vendor scripts run first. For
+                    // most datasources GetVendorDataBytes() is empty and this is a
+                    // no-op; OpenStack supplies it via vendor_data.json.
+                    var resolvedVendor = await userDataPipeline
+                        .ResolveAsync(data.GetVendorDataBytes(), cancellationToken)
+                        .ConfigureAwait(false);
+                    resolvedUserData = ResolvedUserData.Combine(resolvedVendor, resolvedUser);
                 }
                 catch (Exception ex)
                 {
@@ -331,6 +352,54 @@ public sealed class StageRunner(
         }
 
         return StageRunOutcome.Success.Instance;
+    }
+
+    /// <summary>
+    /// Restores the cached datasource when resuming a still-in-progress instance,
+    /// so a reboot-and-continue does not have to re-reach the (possibly network)
+    /// datasource. Returns null — forcing a fresh locate — on the first boot, once
+    /// provisioning has fully completed (so a genuinely new instance is detected),
+    /// when no reboot-resume is in progress, or when the cache is absent / belongs
+    /// to a different instance.
+    /// <para>
+    /// Deliberate trade-off: when a reboot-resume IS in progress we trust the
+    /// cached instance-id and skip the probe, because the network datasource may
+    /// be unreachable on the resume boot — that is the whole reason the cache
+    /// exists. The consequence is that copying a mid-reboot-resume state
+    /// (state.json + datasource.json with RebootCount &gt; 0) onto a *different*
+    /// instance would resume as the cached instance instead of re-detecting the
+    /// new instance-id. That is out of scope: eryph templates are created from
+    /// generalized, shut-down images, never from a VM captured mid-provisioning.
+    /// `egs-service reset` clears both files for an intentional re-provision.
+    /// </para>
+    /// </summary>
+    private async Task<DataSourceResult?> TryRestoreCachedDataSourceAsync(CancellationToken cancellationToken)
+    {
+        var existing = await stateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+            return null;
+        if (existing.CompletedStages.Contains(Stage.Final.ToString()))
+            return null;
+
+        // Only short-circuit the probe when a reboot-resume is actually in
+        // progress — the one case the cache exists for (a module, e.g.
+        // SetHostname, asked for a reboot and we must continue afterwards even if
+        // the network datasource is momentarily unreachable). Both markers are set
+        // when a reboot is requested. Outside that case (e.g. a clone or rollback
+        // mid-provisioning), re-probe so a changed instance-id is still detected by
+        // LoadOrResetStateAsync rather than masked by a stale cache.
+        var rebootResumeInProgress = existing.RebootCount > 0 || existing.PendingHandlers.Count > 0;
+        if (!rebootResumeInProgress)
+            return null;
+
+        var cached = await dataSourceCache.LoadAsync(cancellationToken).ConfigureAwait(false);
+        if (cached is null || !string.Equals(cached.InstanceId, existing.InstanceId, StringComparison.Ordinal))
+            return null;
+
+        logger.LogInformation(
+            "Restoring cached datasource for reboot-resume of instance {InstanceId}; skipping re-probe",
+            cached.InstanceId);
+        return cached;
     }
 
     private async Task<ProvisioningState> LoadOrResetStateAsync(string instanceId, CancellationToken cancellationToken)

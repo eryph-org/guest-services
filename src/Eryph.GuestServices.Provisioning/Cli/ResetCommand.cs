@@ -57,6 +57,7 @@ public sealed class ResetCommand : AsyncCommand<ResetCommand.Settings>
         var items = new List<(string Path, string Description)>
         {
             (ProvisioningPaths.StateFile, "state file"),
+            (ProvisioningPaths.DataSourceCacheFile, "datasource cache"),
             (ProvisioningPaths.InstanceRoot, "per-instance semaphores + cache"),
             (ProvisioningPaths.LastSeenBootFile, "boot session marker"),
         };

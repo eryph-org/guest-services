@@ -520,6 +520,110 @@ function Set-OfflineServiceStartType {
   }
 }
 
+function Install-GuestMetadataRoute {
+  <#
+  .SYNOPSIS
+    Installs a per-boot scheduled task inside a running guest that adds an active
+    host route to the OpenStack metadata IP via the overlay default gateway, and
+    runs it once immediately.
+
+  .DESCRIPTION
+    The metadata IP (169.254.169.254) is link-local. Windows treats 169.254/16
+    as on-link (APIPA) and never sends it to a gateway, so eryph's virtual router
+    — which connects the guest's `default` overlay to the simulator's `metadata`
+    overlay — is never consulted. The Linux probe (probe-catlet.yaml) only reached
+    the sim because it added a `/32 via $GW` route itself; the Windows guest needs
+    the same.
+
+    A PERSISTENT route written offline does NOT work: Windows processes persistent
+    routes early in boot before DHCP brings the NIC up, the link-local /32 then
+    can't be installed (gateway not yet on-link), and it is never retried — so the
+    route stays in the registry but never reaches the active table.
+
+    The reliable mechanism is an ONSTART scheduled task (SYSTEM) that waits for the
+    default gateway to appear, then adds the ACTIVE route. It re-runs on every boot
+    so the route survives the SetHostnameModule reboot mid-provisioning. egs-service
+    comes up independently and its OpenStack datasource WaitForReady-loops (up to
+    DataSourceSettings.ReadinessTimeoutMinutes) until the route lands, so installing
+    the task shortly after boot is well within the window.
+
+    Requires the guest's egs SSH to be reachable (the task is registered via
+    egs-tool/ssh, which lets Task Scheduler compute the task hash — avoiding the
+    fragile offline TaskCache registry surgery).
+
+  .PARAMETER MetadataIp
+    The link-local metadata IP to route. Defaults to 169.254.169.254.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] $CatletId,
+    [Parameter()] [string] $MetadataIp = '169.254.169.254'
+  )
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Write-Verbose "Waiting for egs-service before installing the metadata-route task ..."
+    Wait-Assert -Timeout (New-TimeSpan -Minutes 6) -Interval (New-TimeSpan -Seconds 5) {
+      $status = egs-tool get-status $VmId
+      if ($status -ne 'available') { throw "guest services not available yet: $status" }
+    }
+    egs-tool update-ssh-config | Out-Null
+    egs-tool add-ssh-config $VmId | Out-Null
+    $hostName = "$CatletId.eryph.alt"
+
+    # Route script: wait for the overlay default gateway (DHCP), then add the
+    # ACTIVE /32 route to the metadata IP via it. Idempotent — re-runs each boot.
+    $routeScript = @"
+`$ErrorActionPreference = 'SilentlyContinue'
+`$meta = '$MetadataIp'
+`$gw = `$null
+for (`$i = 0; `$i -lt 60; `$i++) {
+  `$gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+          Where-Object { `$_.NextHop -and `$_.NextHop -ne '0.0.0.0' } |
+          Sort-Object RouteMetric | Select-Object -First 1).NextHop
+  if (`$gw) { break }
+  Start-Sleep -Seconds 2
+}
+if (`$gw) {
+  & route.exe delete `$meta 2>`$null | Out-Null
+  & route.exe add `$meta mask 255.255.255.255 `$gw metric 1 | Out-Null
+}
+"@
+    # Register + run-now script. schtasks computes the task hash for us.
+    $registerScript = @'
+schtasks.exe /create /tn EgsMetadataRoute /sc onstart /ru SYSTEM /rl HIGHEST /f /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\egs-metaroute.ps1"
+schtasks.exe /run /tn EgsMetadataRoute
+'@
+
+    foreach ($f in @(
+      @{ Local = $routeScript;    Remote = 'C:\Windows\Temp\egs-metaroute.ps1' },
+      @{ Local = $registerScript; Remote = 'C:\Windows\Temp\egs-register-metaroute.ps1' }
+    )) {
+      $tmp = [System.IO.Path]::GetTempFileName()
+      [System.IO.File]::WriteAllText($tmp, ($f.Local -replace "`r`n", "`n"))
+      try { egs-tool upload-file $VmId $tmp $f.Remote --overwrite | Out-Null }
+      finally { Remove-Item -LiteralPath $tmp -Force }
+    }
+
+    Write-Verbose "Registering + running the EgsMetadataRoute task ..."
+    ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=20 $hostName `
+      'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Windows\Temp\egs-register-metaroute.ps1' | Out-Null
+
+    # Confirm the route is active before we hand back to the provisioning wait.
+    Wait-Assert -Timeout (New-TimeSpan -Minutes 2) -Interval (New-TimeSpan -Seconds 5) {
+      $r = ssh.exe -o StrictHostKeyChecking=no $hostName "curl.exe -sS --max-time 8 http://$MetadataIp/openstack"
+      if ($LASTEXITCODE -ne 0 -or "$r" -notmatch '\d{4}-\d{2}-\d{2}') {
+        throw "metadata service not reachable from guest yet (out=$r)"
+      }
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
 function Wait-ForProvisioningComplete {
   <#
   .SYNOPSIS
@@ -675,4 +779,101 @@ function Save-GuestDiagnostics {
     $PSNativeCommandUseErrorActionPreference = $savedPref
   }
   Write-Host "Guest diagnostics saved to $OutputDir"
+}
+
+function Set-CatletChassisAssetTag {
+  <#
+  .SYNOPSIS
+    Sets the SMBIOS chassis asset tag on a (stopped) catlet's Hyper-V VM.
+
+  .DESCRIPTION
+    eryph exposes no property for SMBIOS strings, and Hyper-V cannot set the
+    system-product-name at all — but the chassis asset tag IS settable via
+    Msvm_VirtualSystemSettingData.ChassisAssetTag + the management service's
+    ModifySystemSettings. The egs OpenStack datasource's ds_detect accepts
+    chassis-asset-tag == "OpenStack Nova" (a VALID_DMI_ASSET_TAGS value), so
+    this is how an eryph/Hyper-V guest is made to trip the real detection gate.
+    The guest reads it back as Win32_SystemEnclosure.SMBIOSAssetTag.
+
+    Requires administrator + Hyper-V. The VM should be Off when applied.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $AssetTag
+  )
+
+  $ns = 'root\virtualization\v2'
+  $vm = Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem -Filter "Name = '$VmId'"
+  if (-not $vm) { throw "Hyper-V VM $VmId not found in $ns" }
+
+  # The realized settings instance (snapshots also associate; pick Realized).
+  $settings = Get-CimAssociatedInstance -InputObject $vm `
+    -ResultClassName 'Msvm_VirtualSystemSettingData' `
+    -Association 'Msvm_SettingsDefineState'
+  $vssd = $settings |
+    Where-Object { $_.VirtualSystemType -eq 'Microsoft:Hyper-V:System:Realized' } |
+    Select-Object -First 1
+  if (-not $vssd) { $vssd = $settings | Select-Object -First 1 }
+  if (-not $vssd) { throw "No Msvm_VirtualSystemSettingData for VM $VmId" }
+
+  $vssd.ChassisAssetTag = $AssetTag
+
+  $mgmt = Get-CimInstance -Namespace $ns -ClassName Msvm_VirtualSystemManagementService
+  $serializer = [Microsoft.Management.Infrastructure.Serialization.CimSerializer]::Create()
+  $bytes = $serializer.Serialize($vssd, [Microsoft.Management.Infrastructure.Serialization.InstanceSerializationOptions]::None)
+  $embedded = [System.Text.Encoding]::Unicode.GetString($bytes)
+
+  $result = Invoke-CimMethod -InputObject $mgmt -MethodName 'ModifySystemSettings' `
+    -Arguments @{ SystemSettings = $embedded }
+  if ($result.ReturnValue -ne 0) {
+    throw "ModifySystemSettings(ChassisAssetTag='$AssetTag') returned $($result.ReturnValue)"
+  }
+  Write-Verbose "Set ChassisAssetTag='$AssetTag' on VM $VmId"
+}
+
+function Set-OfflineProvisioningSettings {
+  <#
+  .SYNOPSIS
+    Writes egs-provisioning.json into a stopped catlet's egs-service bin dir,
+    via an offline VHD mount, so the agent reads it on first boot.
+
+  .DESCRIPTION
+    egs-service loads settings from egs-provisioning.json next to the binary
+    (AppContext.BaseDirectory) — see ProvisioningSettings.CandidatePaths. The
+    OpenStack e2e uses this to pin dataSources.dataSourceList to ["OpenStack"]
+    so the locator probes only the metadata service and not eryph's own
+    config-2 drive (ConfigDrive priority 40 would otherwise win over OpenStack
+    priority 50).
+
+  .PARAMETER Settings
+    A hashtable serialized to JSON verbatim — must match the camelCase
+    ProvisioningSettings shape, e.g.
+      @{ dataSources = @{ dataSourceList = @('OpenStack') } }
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [hashtable] $Settings
+  )
+
+  $status = (Get-VM -Id $VmId).State
+  if ($status -eq 'Running' -or $status -eq 'Saved') {
+    throw "Catlet must be Stopped (current: $status) before mounting its VHD."
+  }
+
+  $mount = Mount-CatletVhd -VmId $VmId
+  try {
+    $binDir = Join-Path $mount.VolumeRoot 'Program Files\eryph\guest-services\bin'
+    if (-not (Test-Path -LiteralPath $binDir)) {
+      throw "egs-service bin dir missing at $binDir; cannot write egs-provisioning.json."
+    }
+    $json = $Settings | ConvertTo-Json -Depth 10
+    $target = Join-Path $binDir 'egs-provisioning.json'
+    Write-Verbose "Writing offline provisioning settings to $target`n$json"
+    Set-Content -LiteralPath $target -Value $json -Encoding utf8
+  }
+  finally {
+    Dismount-CatletVhd -VhdPath $mount.VhdPath
+  }
 }

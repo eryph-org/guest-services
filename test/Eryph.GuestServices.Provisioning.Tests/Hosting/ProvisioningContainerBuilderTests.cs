@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
 using AwesomeAssertions;
+using Eryph.GuestServices.Provisioning.Configuration;
+using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.State;
@@ -79,5 +81,32 @@ public sealed class ProvisioningContainerBuilderTests
         container.GetInstance<ISemaphoreStore>().Should().BeOfType<FileSemaphoreStore>();
         container.GetInstance<IBootSessionDetector>().Should().BeOfType<BootSessionDetector>();
         container.GetInstance<IBootClock>().Should().BeOfType<Win32BootClock>();
+    }
+
+    // Regression: pinning the datasource list (as the OpenStack e2e does) must not
+    // break container verification. egs-service Verify()s its container at startup;
+    // building the IDataSource collection constructs NoCloudDataSource -> UrlHelper,
+    // whose ctor reads settings.UserData — so a settings instance with a populated
+    // DataSourceList must still verify. Settings are injected via the container
+    // options (no shared on-disk egs-provisioning.json), keeping the test isolated
+    // from parallel tests that read ProvisioningSettings.LoadOrDefault().
+    // (The partial-file deserialization that produced null sub-settings is covered
+    // separately by ProvisioningSettingsDeserializationTests.)
+    [Fact]
+    public void Container_verifies_with_pinned_datasource_list()
+    {
+        var settings = new ProvisioningSettings
+        {
+            DataSources = new DataSourceSettings { DataSourceList = ["OpenStack"] },
+        };
+
+        using var container = new Container();
+        container.Options.ResolveUnregisteredConcreteTypes = true;
+        ProvisioningContainerBuilder.RegisterInto(
+            container, new ProvisioningContainerOptions { Settings = settings });
+        container.Register(typeof(ILogger<>), typeof(NullLogger<>), Lifestyle.Singleton);
+
+        container.Invoking(c => c.Verify()).Should().NotThrow();
+        container.GetInstance<IDataSourceLocator>().Should().NotBeNull();
     }
 }

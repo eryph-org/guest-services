@@ -38,6 +38,9 @@ internal sealed class SetPasswordsModule(
         // three input forms (users[], list, top-level password shorthand)
         // so cross-cloud cloud-config behaves consistently.
         var expire = config.Chpasswd?.Expire ?? true;
+        logger.LogInformation(
+            "SetPasswords resolved expire={Expire} (Chpasswd null={ChpasswdNull}, Chpasswd.Expire={RawExpire}).",
+            expire, config.Chpasswd is null, config.Chpasswd?.Expire);
 
         await ProcessChpasswdUsersAsync(config, context, expire, cancellationToken).ConfigureAwait(false);
         await ProcessChpasswdListAsync(config, context, expire, cancellationToken).ConfigureAwait(false);

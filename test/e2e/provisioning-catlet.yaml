@@ -32,15 +32,40 @@ fodder:
       hostname: egs-prov-e2e
       ssh_authorized_keys:
         - "{{ sshPublicKey }}"
+      # Two users exercise BOTH password-expiry outcomes. Setting a password must
+      # NEVER expire the ACCOUNT: an earlier bug wrote the "must change at next
+      # logon" flag through info level 1017 — which is actually usri_acct_expires
+      # (the ACCOUNT expiry) — expiring the account at the 1970 epoch and locking
+      # the user out. The agent now uses level 4 / usri4_password_expired and
+      # leaves acct_expires alone, so BOTH users below must stay non-expired.
+      #
+      # NOTE: Windows complexity policy rejects passwords that contain three or
+      # more consecutive characters of the account name (case-insensitive). Both
+      # names contain "test"/"user", so keep those substrings out of the password
+      # or Windows refuses with NERR_PasswordTooShort (2245).
       users:
-        # NOTE: Windows complexity policy rejects passwords that contain three
-        # or more consecutive characters of the account name (case-insensitive).
-        # `prov_test_user` contains "test", so do NOT use "Test"/"prov" in the
-        # password — Windows will refuse with NERR_PasswordTooShort (2245).
+        # NON-EXPIRED password: set via the users: block, which never forces a
+        # change. This password is final and must be usable as-is.
         - name: prov_test_user
           passwd: 'XyzqW3lc0me!2!'
           groups:
             - Administrators
+        # EXPIRED password: gets a normal password here, then chpasswd below
+        # (expire:true) flips it to "must change at next logon".
+        - name: prov_expire_user
+          passwd: 'XyzqW3lc0me!2!'
+          groups:
+            - Administrators
+      # chpasswd.expire is the global "expire on first login" flag; it governs the
+      # chpasswd entries below (NOT the users: block). With expire:true,
+      # prov_expire_user gets a must-change-at-next-logon password — while its
+      # ACCOUNT must still NOT be expired (that is the level-1017 regression).
+      chpasswd:
+        expire: true
+        users:
+          - name: prov_expire_user
+            type: text
+            password: 'XyzqW3lc0me!2!'
       write_files:
         - path: /ProgramData/eryph-e2e/marker-plain.txt
           content: marker-plain

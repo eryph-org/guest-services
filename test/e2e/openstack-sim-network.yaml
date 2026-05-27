@@ -1,0 +1,29 @@
+# Project network for the OpenStack-simulator e2e (OpenStack.E2E.Tests.ps1).
+# Two overlay networks: the guest-under-test sits on `default` (ordinary
+# pool-assigned IP); the simulator sits on `metadata`, whose single-IP pool
+# pins it to the magic OpenStack metadata address 169.254.169.254. eryph's
+# virtual router connects the two. The Windows guest treats 169.254/16 as
+# on-link, so the harness adds an explicit /32 route to reach the simulator
+# (Install-GuestMetadataRoute); on a real OpenStack this is handled by the
+# neutron metadata agent / DHCP option 121 instead.
+version: 1.0
+networks:
+  - name: default
+    address: 10.0.0.0/20
+    subnets:
+      - name: default
+        ip_pools:
+          - name: default
+            first_ip: 10.0.0.100
+            last_ip: 10.0.0.240
+        dns_servers:
+          - 9.9.9.9
+
+  - name: metadata
+    address: 169.254.169.0/24
+    subnets:
+      - name: default
+        ip_pools:
+          - name: default
+            first_ip: 169.254.169.254
+            last_ip: 169.254.169.254

@@ -230,6 +230,7 @@ public sealed class StageRunnerModuleListSplitTests
 
         return new StageRunner(
             locator,
+            new NullDataSourceCache(),
             pipeline,
             stateStore,
             semaphoreStore,

@@ -114,6 +114,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
 
         var runner = new StageRunner(
             locator,
+            new NullDataSourceCache(),
             pipeline,
             stateStore,
             semaphoreStore,

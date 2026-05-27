@@ -102,13 +102,73 @@ internal static class NetUserHelpers
                 $"NetUserSetInfo(1003) failed for '{userName}' with code {status}, param {parmErr}.");
     }
 
+    /// <summary>
+    /// Sets ("user must change password at next logon") via usri4_password_expired.
+    /// There is no dedicated 10xx info level for this flag, so we read the whole
+    /// level-4 record, flip the one field, and write it back. We deliberately do
+    /// NOT touch usri4_acct_expires — the account expiry stays whatever NetUserAdd
+    /// defaulted it to (TIMEQ_FOREVER / never). The previous implementation used
+    /// level 1017 here, which is acct_expires, and expired the account at the epoch.
+    /// </summary>
     public static void SetPasswordExpired(string userName, bool expired)
     {
-        var info = new NetApi32.USER_INFO_1017 { usri1017_password_expired = expired ? 1u : 0u };
-        var status = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_1017, ref info, out var parmErr);
+        var status = NetApi32.NetUserGetInfo(null, userName, NetApi32.USER_INFO_LEVEL_4, out var buffer);
         if (status != NetApi32.NERR_Success)
-            throw new Win32Exception(status,
-                $"NetUserSetInfo(1017) failed for '{userName}' with code {status}, param {parmErr}.");
+            throw new Win32Exception(status, $"NetUserGetInfo(4) failed for '{userName}' with code {status}.");
+
+        NetApi32.USER_INFO_4 info;
+        try
+        {
+            info = Marshal.PtrToStructure<NetApi32.USER_INFO_4>(buffer);
+        }
+        finally
+        {
+            NetApi32.NetApiBufferFree(buffer);
+        }
+
+        // The LPWSTR members were copied into managed strings by PtrToStructure and
+        // will be re-marshalled into fresh native strings on the way back, so they
+        // survive freeing the buffer. The two raw pointers did NOT — they point into
+        // the freed buffer. NetUserSetInfo ignores the SID, and a NULL logon_hours
+        // means "leave the logon schedule unchanged", so null both before writing.
+        info.usri4_user_sid = IntPtr.Zero;
+        info.usri4_logon_hours = IntPtr.Zero;
+        info.usri4_password_expired = expired ? 1u : 0u;
+
+        // "Must change at next logon" and "password never expires" are mutually
+        // exclusive: with UF_DONT_EXPIRE_PASSWD set, Windows silently ignores a
+        // usri4_password_expired = 1 write (NetUserSetInfo still returns success).
+        // AddUser sets UF_DONT_EXPIRE_PASSWD on every account, so the flag must be
+        // cleared in this same write for the must-change request to take effect.
+        // When clearing the flag (expired == false) we leave it as-is.
+        if (expired)
+            info.usri4_flags &= ~NetApi32.UF_DONT_EXPIRE_PASSWD;
+
+        var setStatus = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_4, ref info, out var parmErr);
+        if (setStatus != NetApi32.NERR_Success)
+            throw new Win32Exception(setStatus,
+                $"NetUserSetInfo(4) failed for '{userName}' with code {setStatus}, param {parmErr}.");
+    }
+
+    /// <summary>
+    /// Reads back (usri4_password_expired, usri4_acct_expires) for diagnostics.
+    /// password_expired is normalised to 0/1 by NetUserGetInfo.
+    /// </summary>
+    public static (uint passwordExpired, uint acctExpires) GetPasswordState(string userName)
+    {
+        var status = NetApi32.NetUserGetInfo(null, userName, NetApi32.USER_INFO_LEVEL_4, out var buffer);
+        if (status != NetApi32.NERR_Success)
+            throw new Win32Exception(status, $"NetUserGetInfo(4) failed for '{userName}' with code {status}.");
+
+        try
+        {
+            var info = Marshal.PtrToStructure<NetApi32.USER_INFO_4>(buffer);
+            return (info.usri4_password_expired, info.usri4_acct_expires);
+        }
+        finally
+        {
+            NetApi32.NetApiBufferFree(buffer);
+        }
     }
 
     public static void SetFlags(string userName, uint flags)
@@ -131,11 +191,14 @@ internal static class NetUserHelpers
 
     public static void SetComment(string userName, string? comment)
     {
-        var info = new NetApi32.USER_INFO_1052 { usri1052_comment = comment };
-        var status = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_1052, ref info, out var parmErr);
+        // Level 1007 is the comment. Level 1052 (used previously) is the user's
+        // PROFILE PATH — setting the comment through it silently rewrote the
+        // profile path instead.
+        var info = new NetApi32.USER_INFO_1007 { usri1007_comment = comment };
+        var status = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_1007, ref info, out var parmErr);
         if (status != NetApi32.NERR_Success)
             throw new Win32Exception(status,
-                $"NetUserSetInfo(1052) failed for '{userName}' with code {status}, param {parmErr}.");
+                $"NetUserSetInfo(1007) failed for '{userName}' with code {status}, param {parmErr}.");
     }
 
     public static void SetHomeDir(string userName, string? homeDir)

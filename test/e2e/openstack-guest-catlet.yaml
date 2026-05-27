@@ -1,0 +1,44 @@
+# Windows guest-under-test for the OpenStack metadata-service e2e. Sits on the
+# `default` network from sim-network.yaml and reaches the simulator at
+# 169.254.169.254 (eryph's virtual router connects the two overlays).
+#
+# The harness, before first boot, (1) replaces egs-service with the local build,
+# disables cloudbase-init, (2) sets the SMBIOS chassis asset tag to
+# "OpenStack Nova" so the OpenStack ds_detect gate fires, and (3) pins
+# dataSources.dataSourceList to ["OpenStack"] via egs-provisioning.json so the
+# locator probes ONLY the metadata service (eryph still attaches its own
+# config-2 drive, and ConfigDrive (40) would otherwise win over OpenStack (50)).
+#
+# The fodder here is intentionally minimal and is NEVER applied — with the
+# datasource pinned to OpenStack and cloudbase-init disabled, the eryph
+# config-2 drive is ignored. All provisioning input comes from the simulator's
+# meta_data.json / user_data, which is what the test asserts.
+name: openstack-guest-e2e
+parent: <<PARENT>>
+
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+networks:
+  - name: default
+    adapter_name: eth0
+    subnet_v4:
+      name: default
+      ip_pool: default
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: placeholder
+    type: cloud-config
+    content: |
+      #cloud-config
+      # Deliberately does not set hostname or write_files: those come from the
+      # OpenStack simulator so the assertions can attribute them to the HTTP
+      # metadata service. Only an ssh key, as a non-egs fallback path.
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"

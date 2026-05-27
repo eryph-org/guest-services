@@ -185,6 +185,7 @@ public sealed class StageRunnerFrequencyTests : IDisposable
             .Returns(Task.FromResult(ResolvedUserData.Empty(new CloudConfigModel())));
         return new StageRunner(
             locator,
+            new NullDataSourceCache(),
             pipeline,
             stateStore ?? new InMemoryStateStore(),
             semaphoreStore,
