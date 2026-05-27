@@ -117,7 +117,7 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         {
             await outputTask.WaitAsync(drainTimeout ?? TimeSpan.FromSeconds(2), cancellation);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             // The session/forwarder is shutting down; closing is pointless.
             return;
@@ -131,7 +131,8 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         }
         catch
         {
-            // Pump ended via EOF or EIO — expected, best-effort drain.
+            // Pump ended via EOF, EIO, or the drain-budget cancellation
+            // (outputDrainCts) — all expected; close the channel regardless.
         }
 
         await closeAsync(cancellation);
