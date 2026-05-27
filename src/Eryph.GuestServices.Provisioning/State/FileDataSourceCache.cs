@@ -26,7 +26,7 @@ public sealed class FileDataSourceCache(ILogger<FileDataSourceCache> logger) : I
         _directory = directory;
     }
 
-    private string CachePath => Path.Combine(_directory, "datasource.json");
+    private string CachePath => Path.Combine(_directory, Cli.ProvisioningPaths.DataSourceCacheFileName);
 
     public async Task<DataSourceResult?> LoadAsync(CancellationToken cancellationToken)
     {
@@ -95,7 +95,7 @@ public sealed class FileDataSourceCache(ILogger<FileDataSourceCache> logger) : I
                 File.Move(source, destination, overwrite: true);
                 return;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 6)
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < 6)
             {
                 logger.LogDebug(
                     ex, "Replacing {Destination} failed (attempt {Attempt}); retrying in {Delay}ms",

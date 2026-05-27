@@ -3,10 +3,11 @@
 Unlike the hand-authored `test/fixtures/configdrive/` tree (a *representative*
 config-2 layout), this fixture is a **real config-2 drive emitted by nova**,
 captured from a single-node DevStack (`stable/2025.1`) booting an instance with
-`FORCE_CONFIG_DRIVE=True` / `config_drive_format = iso9660`. The capture
-procedure lives in `test/openstack/` (`devstack-catlet.yaml`,
-`scripts/grab-full.sh`). It is consumed by `RealWorldOpenStackConfigDriveTests`
-in `test/Eryph.GuestServices.Provisioning.Tests/`.
+`FORCE_CONFIG_DRIVE=True` / `config_drive_format = iso9660`. The capture was a
+one-off, out-of-tree procedure (the raw capture is intentionally not committed —
+it contained the sensitive values stripped below). This sanitized tree is the
+checked-in artifact; it is consumed by `RealWorldOpenStackConfigDriveTests` in
+`test/Eryph.GuestServices.Provisioning.Tests/`.
 
 The point of pinning real nova output (not synthetic JSON) is to lock
 `ConfigDriveDataSource` against the exact field set, nesting and types a real

@@ -359,7 +359,19 @@ public sealed class StageRunner(
     /// so a reboot-and-continue does not have to re-reach the (possibly network)
     /// datasource. Returns null — forcing a fresh locate — on the first boot, once
     /// provisioning has fully completed (so a genuinely new instance is detected),
-    /// or when the cache is absent / belongs to a different instance.
+    /// when no reboot-resume is in progress, or when the cache is absent / belongs
+    /// to a different instance.
+    /// <para>
+    /// Deliberate trade-off: when a reboot-resume IS in progress we trust the
+    /// cached instance-id and skip the probe, because the network datasource may
+    /// be unreachable on the resume boot — that is the whole reason the cache
+    /// exists. The consequence is that copying a mid-reboot-resume state
+    /// (state.json + datasource.json with RebootCount &gt; 0) onto a *different*
+    /// instance would resume as the cached instance instead of re-detecting the
+    /// new instance-id. That is out of scope: eryph templates are created from
+    /// generalized, shut-down images, never from a VM captured mid-provisioning.
+    /// `egs-service reset` clears both files for an intentional re-provision.
+    /// </para>
     /// </summary>
     private async Task<DataSourceResult?> TryRestoreCachedDataSourceAsync(CancellationToken cancellationToken)
     {
