@@ -98,7 +98,7 @@ public sealed class BootSessionDetector : IBootSessionDetector
         var payload = JsonSerializer.Serialize(new BootMarker(current, DateTimeOffset.UtcNow), BootSessionDetectorJsonContext.Default.BootMarker);
         var tempPath = _markerPath + ".tmp";
         await File.WriteAllTextAsync(tempPath, payload, cancellationToken).ConfigureAwait(false);
-        File.Move(tempPath, _markerPath, overwrite: true);
+        await State.AtomicFile.ReplaceWithRetryAsync(tempPath, _markerPath, _logger, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "New boot detected: previous={Previous} current={Current}",
