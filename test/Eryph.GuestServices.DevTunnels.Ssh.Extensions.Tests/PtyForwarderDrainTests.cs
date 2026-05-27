@@ -52,6 +52,28 @@ public class PtyForwarderDrainTests
     }
 
     [Fact]
+    public async Task ClosesChannel_WhenOutputPumpCanceledByDrainBudget_NotSession()
+    {
+        // The normal drain path cancels the pump via outputDrainCts.CancelAfter,
+        // surfacing as an OperationCanceledException. The session token is NOT
+        // canceled, so the channel must still be closed — otherwise the logout
+        // hang returns on the common (e.g. Windows ConPTY) path.
+        var outputTask = Task.FromCanceled(new CancellationToken(canceled: true));
+        var closed = false;
+
+        using var drainCts = new CancellationTokenSource();
+        await PtyForwarder.DrainAndCloseAsync(
+            outputTask,
+            drainCts,
+            _ => { closed = true; return Task.CompletedTask; },
+            CancellationToken.None,
+            FastBudget,
+            FastTimeout);
+
+        closed.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task ClosesChannel_WhenOutputPumpStallsBeyondDrainTimeout()
     {
         // A read that never returns and ignores cancellation must not wedge the
