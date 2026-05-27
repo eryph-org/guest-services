@@ -243,6 +243,79 @@ Describe 'Embedded provisioning at first boot' {
       $r.Output | Should -Match 'prov_test_user'
     }
 
+    # --- NON-EXPIRED password (prov_test_user, users: block) -------------------
+
+    It 'created prov_test_user with a WORKING password (can authenticate)' {
+      # The whole point of user creation: the provisioned password must actually
+      # log the user in. ValidateCredentials returns true only when the password
+      # matches AND the account is enabled, not locked, and NOT expired — so this
+      # also guards the level-1017/acct_expires regression end-to-end.
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "Add-Type -AssemblyName System.DirectoryServices.AccountManagement; (New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine')).ValidateCredentials('prov_test_user','XyzqW3lc0me!2!')"
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Be 'True'
+    }
+
+    It 'did NOT force a password change for prov_test_user (users: block)' {
+      # The users: block never forces a change, so usri4_password_expired must be
+      # 0. WinNT's PasswordExpired exposes that flag; read .Value, because the raw
+      # property accessor does not reliably surface the integer.
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "([ADSI]'WinNT://./prov_test_user,user').PasswordExpired.Value"
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Be '0'
+    }
+
+    It 'left prov_test_user enabled' {
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-LocalUser prov_test_user).Enabled'
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Be 'True'
+    }
+
+    It 'did NOT expire prov_test_user''s account' {
+      # Get-LocalUser reports a never-expiring account as $null/empty.
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-LocalUser prov_test_user).AccountExpires'
+      $r.ExitCode | Should -Be 0
+      $r.Output | Should -BeNullOrEmpty
+    }
+
+    # --- EXPIRED password (prov_expire_user, chpasswd.expire: true) ------------
+
+    It 'forced prov_expire_user to change password at next logon (chpasswd.expire: true)' {
+      # chpasswd.expire:true sets usri4_password_expired = 1 via level 4. This is
+      # the correct field; the old code wrote level 1017 (acct_expires) here and
+      # expired the whole account instead.
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "([ADSI]'WinNT://./prov_expire_user,user').PasswordExpired.Value"
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Be '1'
+    }
+
+    It 'did NOT expire prov_expire_user''s ACCOUNT (must-change is not account expiry)' {
+      # The crux of the bug: forcing a password change must NOT expire the
+      # account. Even with must-change set, AccountExpires must stay "never".
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-LocalUser prov_expire_user).AccountExpires'
+      $r.ExitCode | Should -Be 0
+      $r.Output | Should -BeNullOrEmpty
+    }
+
+    It 'left prov_expire_user enabled' {
+      $hostName = "$($catlet.Id).eryph.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script '(Get-LocalUser prov_expire_user).Enabled'
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Be 'True'
+    }
+
     It 'WriteFilesModule produced the plain marker file' {
       $hostName = "$($catlet.Id).eryph.alt"
       $r = Invoke-GuestPS -HostName $hostName `

@@ -43,21 +43,51 @@ public sealed class ProvisioningSettings
             if (!File.Exists(candidate))
                 continue;
 
-            try
-            {
-                var json = File.ReadAllText(candidate);
-                return JsonSerializer.Deserialize(json, SettingsSerializerContext.Default.ProvisioningSettings)
-                       ?? new ProvisioningSettings();
-            }
-            catch (Exception)
-            {
-                // Ignore malformed settings files; defaults are safer than failing the run.
-                // The host operator can inspect the file and fix it; we log via DI logger
-                // once the host is up, but at construction time we have no logger.
-                return new ProvisioningSettings();
-            }
+            return LoadFromFileOrDefault(candidate);
         }
         return new ProvisioningSettings();
+    }
+
+    /// <summary>
+    /// Loads and normalizes settings from a single file. A partial file (e.g.
+    /// one that pins only <c>dataSources.dataSourceList</c>) deserializes with
+    /// its absent sibling sections left <c>null</c>: System.Text.Json source
+    /// generation does NOT apply the C# property initializers
+    /// (<c>UserData { get; init; } = new();</c>) for properties missing from the
+    /// JSON. A consumer that dereferences such a section (e.g. <c>UrlHelper</c>
+    /// reading <c>settings.UserData.FetchMaxAttempts</c>) would then throw
+    /// <see cref="NullReferenceException"/> — which previously surfaced as a
+    /// container <c>Verify()</c> failure that crash-looped egs-service on boot.
+    /// We rebuild the instance here so every section is guaranteed non-null,
+    /// regardless of which keys the file supplied.
+    /// </summary>
+    internal static ProvisioningSettings LoadFromFileOrDefault(string path)
+    {
+        try
+        {
+            var json = File.ReadAllText(path);
+            var loaded = JsonSerializer.Deserialize(
+                json, SettingsSerializerContext.Default.ProvisioningSettings);
+            if (loaded is null)
+                return new ProvisioningSettings();
+
+            return new ProvisioningSettings
+            {
+                UserData = loaded.UserData ?? new UserDataSettings(),
+                DataSources = loaded.DataSources ?? new DataSourceSettings(),
+                Scripts = loaded.Scripts ?? new ScriptSettings(),
+                Reboot = loaded.Reboot ?? new RebootSettings(),
+                DefaultUser = loaded.DefaultUser ?? new DefaultUserSettings(),
+                Stages = loaded.Stages,
+            };
+        }
+        catch (Exception)
+        {
+            // Ignore malformed settings files; defaults are safer than failing the run.
+            // The host operator can inspect the file and fix it; we log via DI logger
+            // once the host is up, but at construction time we have no logger.
+            return new ProvisioningSettings();
+        }
     }
 
     private static IEnumerable<string> CandidatePaths()

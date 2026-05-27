@@ -113,8 +113,26 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
     }
 
     [Fact]
-    public async Task ReadAsync_carries_vendor_data_when_present()
+    public async Task ReadAsync_extracts_vendor_data_cloud_init_payload()
     {
+        // vendor_data.json follows cloud-init convert_vendordata: a "cloud-init"
+        // key supplies the runnable payload.
+        const string payload = "#cloud-config\npackages: [vim]\n";
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
+            "{\"uuid\":\"u\"}");
+        await File.WriteAllTextAsync(Path.Combine(_openstackDir, "vendor_data.json"),
+            "{\"cloud-init\":" + System.Text.Json.JsonSerializer.Serialize(payload) + "}");
+
+        var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
+
+        System.Text.Encoding.UTF8.GetString(result!.VendorData!).Should().Be(payload);
+    }
+
+    [Fact]
+    public async Task ReadAsync_treats_arbitrary_vendor_data_object_as_no_payload()
+    {
+        // An arbitrary metadata object (no "cloud-init" key) carries nothing
+        // runnable — convert_vendordata yields null.
         await File.WriteAllTextAsync(Path.Combine(_openstackDir, "meta_data.json"),
             "{\"uuid\":\"u\"}");
         await File.WriteAllTextAsync(Path.Combine(_openstackDir, "vendor_data.json"),
@@ -122,7 +140,7 @@ public sealed class ConfigDriveDataSourceTests : IDisposable
 
         var result = await ConfigDriveDataSource.ReadAsync(_root, CancellationToken.None);
 
-        System.Text.Encoding.UTF8.GetString(result!.VendorData!).Should().Be("{\"some\":\"thing\"}");
+        result!.VendorData.Should().BeNull();
     }
 
     [Fact]

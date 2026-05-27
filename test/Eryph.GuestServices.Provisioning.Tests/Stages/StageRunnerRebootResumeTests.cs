@@ -67,6 +67,39 @@ public sealed class StageRunnerRebootResumeTests
     }
 
     [Fact]
+    public async Task Resume_after_reboot_uses_cached_datasource_without_re_probing()
+    {
+        // cloud-init local-cache parity: once the datasource is located on the
+        // first boot, a module-requested reboot must resume from the cache — even
+        // if the (network) datasource is no longer reachable. Regression for the
+        // OpenStack metadata-service case: SetHostname reboots, and the link-local
+        // endpoint may be momentarily unreachable on the resume boot.
+        var data = MakeData("i-1");
+        var stateStore = new InMemoryStateStore();
+        var semaphoreStore = new InMemorySemaphoreStore();
+        var cache = new InMemoryDataSourceCache();
+        var module = new RebootOnceThenCompleteModule("needs-reboot");
+
+        // The locator yields data on the first probe, then "nothing reachable"
+        // afterwards — proving resume must NOT depend on re-probing.
+        var locator = Substitute.For<IDataSourceLocator>();
+        locator.LocateAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<DataSourceResult?>(data), Task.FromResult<DataSourceResult?>(null));
+
+        var runner = BuildRunner(locator, stateStore, semaphoreStore, [module], dataSourceCache: cache);
+
+        var first = await runner.RunAsync(CancellationToken.None);   // locate + cache + reboot
+        var second = await runner.RunAsync(CancellationToken.None);  // resume from cache
+
+        first.Should().BeOfType<StageRunOutcome.RebootRequested>();
+        second.Should().BeOfType<StageRunOutcome.Success>();
+        module.CallCount.Should().Be(2);
+        await locator.Received(1).LocateAsync(Arg.Any<CancellationToken>());
+        cache.Cached.Should().NotBeNull();
+        cache.Cached!.InstanceId.Should().Be("i-1");
+    }
+
+    [Fact]
     public async Task State_json_distinguishes_PendingHandlers_from_CompletedHandlers()
     {
         var data = MakeData("i-1");
@@ -214,7 +247,8 @@ public sealed class StageRunnerRebootResumeTests
         IStateStore stateStore,
         ISemaphoreStore semaphoreStore,
         IModule[] modules,
-        ProvisioningSettings? settings = null)
+        ProvisioningSettings? settings = null,
+        IDataSourceCache? dataSourceCache = null)
     {
         var pipeline = Substitute.For<IUserDataPipeline>();
         pipeline.ResolveAsync(Arg.Any<byte[]?>(), Arg.Any<CancellationToken>())
@@ -225,6 +259,7 @@ public sealed class StageRunnerRebootResumeTests
 
         return new StageRunner(
             locator,
+            dataSourceCache ?? new NullDataSourceCache(),
             pipeline,
             stateStore,
             semaphoreStore,
@@ -234,6 +269,26 @@ public sealed class StageRunnerRebootResumeTests
             Substitute.For<IWindowsOs>(),
             settings ?? new ProvisioningSettings(),
             NullLogger<StageRunner>.Instance);
+    }
+
+    internal sealed class InMemoryDataSourceCache : IDataSourceCache
+    {
+        public DataSourceResult? Cached { get; set; }
+
+        public Task<DataSourceResult?> LoadAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(Cached);
+
+        public Task SaveAsync(DataSourceResult data, CancellationToken cancellationToken)
+        {
+            Cached = data;
+            return Task.CompletedTask;
+        }
+
+        public Task ResetAsync(CancellationToken cancellationToken)
+        {
+            Cached = null;
+            return Task.CompletedTask;
+        }
     }
 
     // In-memory implementations that mirror FileSemaphoreStore/FileStateStore

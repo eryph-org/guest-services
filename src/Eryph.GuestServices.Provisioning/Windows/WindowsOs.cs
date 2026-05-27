@@ -113,6 +113,14 @@ internal sealed class WindowsOs : IWindowsOs
         {
             NetUserHelpers.SetPassword(name, password);
             NetUserHelpers.SetPasswordExpired(name, mustChangeAtNextLogon);
+
+            // Read back so a future "locked out after provisioning" report is one
+            // log line away: password_expired must match mustChange, and
+            // acct_expires must stay TIMEQ_FOREVER (0xFFFFFFFF) — never the epoch.
+            var state = NetUserHelpers.GetPasswordState(name);
+            logger.LogInformation(
+                "Set password for '{User}': mustChangeAtNextLogon={MustChange}, password_expired={PasswordExpired}, acct_expires=0x{AcctExpires:X8}.",
+                name, mustChangeAtNextLogon, state.passwordExpired, state.acctExpires);
         }, cancellationToken);
     }
 

@@ -64,6 +64,13 @@
     <None Include="..\fixtures\configdrive\**\*" Link="fixtures\configdrive\%(RecursiveDir)%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Real-world ConfigDrive fixture: an actual config-2 tree emitted by
+         nova (DevStack), hand-stripped of secrets. Pins ConfigDriveDataSource
+         against real OpenStack producer output. Recursive to preserve the
+         openstack/<version>/ layout at runtime. -->
+    <None Include="..\fixtures\configdrive-openstack\**\*" Link="fixtures\configdrive-openstack\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

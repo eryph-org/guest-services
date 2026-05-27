@@ -68,7 +68,9 @@ When `dataSourceList` is unset, every source is probed in priority order (see
 [Datasources](datasources.md)). When set, only the named sources are probed, in
 the order given. Matching is case-insensitive; a name that matches no source is
 logged and skipped, and if every name is unknown the agent falls back to probing
-all sources so a typo can't disable provisioning.
+all sources so a typo can't disable provisioning. Valid names: `Azure`, `EC2`,
+`NoCloud`, `ConfigDrive`, `OpenStack` (the last is experimental — see
+[Datasources](datasources.md)).
 
 ## scripts
 

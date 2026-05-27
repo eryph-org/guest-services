@@ -1,0 +1,16 @@
+#cloud-config
+hostname: capture-probe
+# A login user delivered via the OpenStack user-data. UsersGroupsModule creates
+# it; SetPasswordsModule sets a working (non-expiring) password. The e2e asserts
+# the account exists, is enabled, is an admin, and the password authenticates —
+# proving a usable login was provisioned from the metadata service, not just files.
+# NOTE: Windows complexity policy rejects passwords containing 3+ consecutive
+# characters of the account name, so keep "osadmin" out of the password.
+users:
+  - name: osadmin
+    passwd: 'XyzqW3lc0me!2!'
+    groups:
+      - Administrators
+write_files:
+  - path: C:\eryph-openstack-e2e\hello.txt
+    content: from-userdata

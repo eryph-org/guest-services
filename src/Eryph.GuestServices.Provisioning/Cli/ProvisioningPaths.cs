@@ -22,6 +22,12 @@ internal static class ProvisioningPaths
 
     public static string StateFile => Path.Combine(Root, "state.json");
 
+    /// <summary>
+    /// Local cache of the located datasource (cloud-init <c>obj.pkl</c> analogue).
+    /// Cleared on reset so the next run re-crawls the datasource.
+    /// </summary>
+    public static string DataSourceCacheFile => Path.Combine(Root, "datasource.json");
+
     public static string LogsDirectory => Path.Combine(Root, "logs");
 
     /// <summary>

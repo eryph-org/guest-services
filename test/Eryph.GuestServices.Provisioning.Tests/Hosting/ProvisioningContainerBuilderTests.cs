@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
 using AwesomeAssertions;
+using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.State;
@@ -79,5 +80,45 @@ public sealed class ProvisioningContainerBuilderTests
         container.GetInstance<ISemaphoreStore>().Should().BeOfType<FileSemaphoreStore>();
         container.GetInstance<IBootSessionDetector>().Should().BeOfType<BootSessionDetector>();
         container.GetInstance<IBootClock>().Should().BeOfType<Win32BootClock>();
+    }
+
+    // Regression: a partial egs-provisioning.json that pins only
+    // dataSources.dataSourceList (as the OpenStack e2e does) must not break
+    // container verification. The bug: the partial file deserialized with
+    // UserData == null, and building the IDataSource collection during Verify()
+    // constructed NoCloudDataSource -> UrlHelper, whose ctor dereferences
+    // settings.UserData -> NullReferenceException. egs-service Verify()s its
+    // container at startup, so this crash-looped the service on every boot and
+    // the agent never came up. The unit suite never built the container with a
+    // pinned datasource list, so it stayed green while the integrated binary
+    // died. ProvisioningContainerBuilder.RegisterInto reads
+    // ProvisioningSettings.LoadOrDefault() from AppContext.BaseDirectory, so we
+    // drop the pin file there for the duration of the test.
+    [Fact]
+    public void Container_verifies_with_partial_pinned_datasource_list()
+    {
+        var pinPath = Path.Combine(AppContext.BaseDirectory, "egs-provisioning.json");
+        var hadFile = File.Exists(pinPath);
+        var backup = hadFile ? File.ReadAllText(pinPath) : null;
+        File.WriteAllText(pinPath, """{ "dataSources": { "dataSourceList": ["OpenStack"] } }""");
+        try
+        {
+            using var container = new Container();
+            container.Options.ResolveUnregisteredConcreteTypes = true;
+            ProvisioningContainerBuilder.RegisterInto(container);
+            container.Register(typeof(ILogger<>), typeof(NullLogger<>), Lifestyle.Singleton);
+
+            // Before the fix this threw SimpleInjector.ActivationException wrapping
+            // a NullReferenceException from UrlHelper's ctor.
+            container.Invoking(c => c.Verify()).Should().NotThrow();
+            container.GetInstance<IDataSourceLocator>().Should().NotBeNull();
+        }
+        finally
+        {
+            if (backup is not null)
+                File.WriteAllText(pinPath, backup);
+            else
+                File.Delete(pinPath);
+        }
     }
 }

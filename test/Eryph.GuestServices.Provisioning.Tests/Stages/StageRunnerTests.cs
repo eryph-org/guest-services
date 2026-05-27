@@ -396,6 +396,7 @@ public sealed class StageRunnerTests
 
         return new StageRunner(
             locator,
+            new NullDataSourceCache(),
             pipeline,
             stateStore,
             semaphoreStore,

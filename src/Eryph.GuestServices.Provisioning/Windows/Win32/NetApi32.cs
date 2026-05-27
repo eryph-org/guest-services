@@ -34,15 +34,23 @@ internal static class NetApi32
     public const uint UF_DONT_EXPIRE_PASSWD = 0x10000;
     public const uint UF_PASSWORD_EXPIRED = 0x800000;
 
+    // TIMEQ_FOREVER (-1 as a DWORD) in usri*_acct_expires means "never expires".
+    public const uint TIMEQ_FOREVER = 0xFFFFFFFF;
+
     public const int USER_INFO_LEVEL_1 = 1;
     public const int USER_INFO_LEVEL_2 = 2;
+    // Level 4 supersedes level 3 on Windows XP+. We use it for the read-
+    // modify-write that flips usri4_password_expired ("user must change
+    // password at next logon"); there is no dedicated 10xx level for that
+    // field. NOTE: level 1017 is acct_expires (the ACCOUNT expiry date), NOT
+    // a password flag — writing it to force a password change expires the
+    // whole account at the epoch. That mistake is the reason this level exists.
     public const int USER_INFO_LEVEL_4 = 4;
     public const int USER_INFO_LEVEL_1003 = 1003; // password
     public const int USER_INFO_LEVEL_1008 = 1008; // flags
     public const int USER_INFO_LEVEL_1011 = 1011; // full name
-    public const int USER_INFO_LEVEL_1052 = 1052; // comment
+    public const int USER_INFO_LEVEL_1007 = 1007; // comment
     public const int USER_INFO_LEVEL_1006 = 1006; // home dir
-    public const int USER_INFO_LEVEL_1017 = 1017; // password expired
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct USER_INFO_1
@@ -108,9 +116,9 @@ internal static class NetApi32
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    public struct USER_INFO_1052
+    public struct USER_INFO_1007
     {
-        [MarshalAs(UnmanagedType.LPWStr)] public string? usri1052_comment;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri1007_comment;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -119,10 +127,44 @@ internal static class NetApi32
         [MarshalAs(UnmanagedType.LPWStr)] public string? usri1006_home_dir;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    public struct USER_INFO_1017
+    // Full level-4 record. We only ever change usri4_password_expired and feed
+    // every other field straight back (read-modify-write); fields the docs say
+    // NetUserSetInfo ignores (name, password, sid, auth_flags, statistics) are
+    // still marshalled so the round-trip is faithful. usri4_logon_hours and
+    // usri4_user_sid are raw pointers that belong to the NetUserGetInfo buffer —
+    // they MUST be nulled before the buffer is freed and the struct written back.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct USER_INFO_4
     {
-        public uint usri1017_password_expired;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_name;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_password;
+        public uint usri4_password_age;
+        public uint usri4_priv;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_home_dir;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_comment;
+        public uint usri4_flags;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_script_path;
+        public uint usri4_auth_flags;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_full_name;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_usr_comment;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_parms;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_workstations;
+        public uint usri4_last_logon;
+        public uint usri4_last_logoff;
+        public uint usri4_acct_expires;
+        public uint usri4_max_storage;
+        public uint usri4_units_per_week;
+        public IntPtr usri4_logon_hours;
+        public uint usri4_bad_pw_count;
+        public uint usri4_num_logons;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_logon_server;
+        public uint usri4_country_code;
+        public uint usri4_code_page;
+        public IntPtr usri4_user_sid;
+        public uint usri4_primary_group_id;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_profile;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? usri4_home_dir_drive;
+        public uint usri4_password_expired;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -186,7 +228,7 @@ internal static class NetApi32
         string? servername,
         string username,
         int level,
-        ref USER_INFO_1052 buf,
+        ref USER_INFO_1007 buf,
         out uint parm_err);
 
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode, SetLastError = false)]
@@ -202,7 +244,7 @@ internal static class NetApi32
         string? servername,
         string username,
         int level,
-        ref USER_INFO_1017 buf,
+        ref USER_INFO_4 buf,
         out uint parm_err);
 
     [DllImport("netapi32.dll", CharSet = CharSet.Unicode, SetLastError = false)]

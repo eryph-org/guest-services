@@ -1,0 +1,41 @@
+# Metadata-service simulator for the OpenStack e2e. Sits on the `metadata`
+# network from sim-network.yaml, whose single-IP pool pins it to
+# 169.254.169.254. The harness uploads the egs-openstack-sim binary + the
+# captured config-2 fixture tree via egs and runs it as a systemd service on
+# port 80, so the Windows guest-under-test reaches the real OpenStack metadata
+# contract at http://169.254.169.254/openstack/...
+#
+# Reachability (default -> metadata via eryph's virtual router) is already
+# proven by probe-catlet.yaml; eryph owns the routing.
+name: openstack-sim
+parent: dbosoft/ubuntu-22.04/starter
+
+cpu:
+  count: 1
+memory:
+  startup: 1024
+
+networks:
+  - name: metadata
+    adapter_name: eth0
+    subnet_v4:
+      name: default
+      ip_pool: default
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: sim-base
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: openstack-sim
+      users:
+        - name: admin
+          groups: [sudo]
+          sudo: "ALL=(ALL) NOPASSWD:ALL"
+          shell: /bin/bash
+          ssh_authorized_keys:
+            - "{{ sshPublicKey }}"

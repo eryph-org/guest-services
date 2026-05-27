@@ -74,7 +74,8 @@ internal static class ProvisioningContainerBuilder
         container.Register<IServiceControlFlags, RegistryServiceControlFlags>(Lifestyle.Singleton);
 
         // Data sources. The locator orders by IDataSource.Priority, not registration
-        // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40).
+        // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40) ->
+        // OpenStack metadata service(50).
         container.Register<IVolumeProbe, DriveInfoVolumeProbe>(Lifestyle.Singleton);
 
         // Azure detection probe (registry VmId + chassis asset tag). Injected so
@@ -101,6 +102,9 @@ internal static class ProvisioningContainerBuilder
         // resolves the dependency regardless of registration order.
         container.Collection.Append<IDataSource, NoCloudDataSource>(Lifestyle.Singleton);
         container.Collection.Append<IDataSource, ConfigDriveDataSource>(Lifestyle.Singleton);
+        // OpenStack metadata service (HTTP) — same openstack/<v>/ format as
+        // ConfigDrive, fetched over the link-local endpoint instead of a disk.
+        container.Collection.Append<IDataSource, OpenStackMetadataDataSource>(Lifestyle.Singleton);
         container.Register<IDataSourceLocator, DataSourceLocator>(Lifestyle.Singleton);
 
         // State. FileStateStore exposes a second public constructor for tests
@@ -111,11 +115,17 @@ internal static class ProvisioningContainerBuilder
             container.Register<IStateStore, NullStateStore>(Lifestyle.Singleton);
             container.Register<ISemaphoreStore, NullSemaphoreStore>(Lifestyle.Singleton);
             container.Register<IScriptCheckpointStore, NullScriptCheckpointStore>(Lifestyle.Singleton);
+            container.Register<IDataSourceCache, NullDataSourceCache>(Lifestyle.Singleton);
         }
         else
         {
             container.Register<IStateStore>(
                 () => new FileStateStore(container.GetInstance<ILogger<FileStateStore>>()),
+                Lifestyle.Singleton);
+            // FileDataSourceCache has a test-only secondary constructor; pin the DI
+            // constructor via a factory (same pattern as FileStateStore).
+            container.Register<IDataSourceCache>(
+                () => new FileDataSourceCache(container.GetInstance<ILogger<FileDataSourceCache>>()),
                 Lifestyle.Singleton);
             // Same FileSemaphoreStore secondary constructor issue — pin the DI
             // constructor explicitly via a factory.

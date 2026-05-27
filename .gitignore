@@ -268,8 +268,15 @@ src/Eryph.GuestServices.Tool/Properties/PublishProfiles/FolderProfile.pubxml
 test/e2e/TEST-pesterResults.xml
 test/e2e/TEST-*.xml
 test/e2e/TEST-*.log
+test/e2e/diagnostics/
 test/azure-extension/TEST-*.xml
 packaging/azure-extension/dist/
+
+# OpenStack datasource exploration scratch (captured VM data, ad-hoc probe/sim
+# catlets, pulled artifacts). The committed OpenStack e2e lives under test/e2e/
+# (OpenStack.E2E.Tests.ps1 + openstack-*.yaml) and the simulator under
+# test/Eryph.GuestServices.OpenStackMetadataSim/. This dir is local-only.
+test/openstack/
 
 # The global [Bb]in/ rule above also matches our Azure VM Extension handler
 # directory. Force-track its source files (Handler.ps1 + HandlerLib.psm1).
