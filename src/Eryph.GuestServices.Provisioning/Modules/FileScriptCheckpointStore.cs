@@ -64,7 +64,7 @@ public sealed class FileScriptCheckpointStore : IScriptCheckpointStore
                 cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
-        File.Move(tempPath, path, overwrite: true);
+        await State.AtomicFile.ReplaceWithRetryAsync(tempPath, path, _logger, cancellationToken).ConfigureAwait(false);
     }
 
     public Task ResetAsync(string instanceId, CancellationToken cancellationToken)

@@ -1,5 +1,7 @@
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Hosting;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,12 +35,35 @@ public class ProvisioningHostedServiceGateTests
         await runner.Received(1).RunAsync(Arg.Any<CancellationToken>());
     }
 
-    private static ProvisioningHostedService CreateService(IStageRunner runner, bool provisioningEnabled)
+    [Fact]
+    public async Task ExecuteAsync_StageRunnerThrows_ReportsFailedState()
+    {
+        // Regression: a state-save replace denied by AV threw out of the stage
+        // runner and was swallowed, leaving KVP stuck on `running`. The crash must
+        // now surface as a `failed` reporting event so the host reports it.
+        var runner = Substitute.For<IStageRunner>();
+        // Return a faulted task (the real async failure mode — exception observed
+        // when awaited), not a synchronous throw at invocation.
+        runner.RunAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<StageRunOutcome>(new UnauthorizedAccessException("denied")));
+        var reporter = Substitute.For<IReportingDispatcher>();
+        var service = CreateService(runner, provisioningEnabled: true, reporter);
+
+        await RunOnceAsync(service);
+
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent>(e => e is ReportingEvent.ProvisioningFailed),
+            Arg.Any<CancellationToken>());
+    }
+
+    private static ProvisioningHostedService CreateService(
+        IStageRunner runner, bool provisioningEnabled, IReportingDispatcher? reporter = null)
     {
         var lifetime = Substitute.For<IHostApplicationLifetime>();
         var flags = new FixedFlags(provisioningEnabled);
         return new ProvisioningHostedService(
-            runner, lifetime, flags, NullLogger<ProvisioningHostedService>.Instance);
+            runner, lifetime, flags, reporter ?? Substitute.For<IReportingDispatcher>(),
+            NullLogger<ProvisioningHostedService>.Instance);
     }
 
     // BackgroundService.StartAsync kicks off ExecuteAsync and exposes the task
