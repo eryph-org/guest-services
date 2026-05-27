@@ -42,8 +42,10 @@ public class ProvisioningHostedServiceGateTests
         // runner and was swallowed, leaving KVP stuck on `running`. The crash must
         // now surface as a `failed` reporting event so the host reports it.
         var runner = Substitute.For<IStageRunner>();
+        // Return a faulted task (the real async failure mode — exception observed
+        // when awaited), not a synchronous throw at invocation.
         runner.RunAsync(Arg.Any<CancellationToken>())
-            .Returns<Task<StageRunOutcome>>(_ => throw new UnauthorizedAccessException("denied"));
+            .Returns(Task.FromException<StageRunOutcome>(new UnauthorizedAccessException("denied")));
         var reporter = Substitute.For<IReportingDispatcher>();
         var service = CreateService(runner, provisioningEnabled: true, reporter);
 

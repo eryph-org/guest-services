@@ -9,10 +9,12 @@ namespace Eryph.GuestServices.Provisioning.State;
 /// <c>MoveFileEx(MOVEFILE_REPLACE_EXISTING)</c>) can transiently fail with
 /// <see cref="UnauthorizedAccessException"/> or <see cref="IOException"/> when
 /// antivirus (Defender real-time scan of the just-written file) or a concurrent
-/// reader briefly holds the destination open without <c>FILE_SHARE_DELETE</c>.
-/// state.json is rewritten after every module, so this race is hit in practice —
-/// it crashed a real Windows Server 2025 provisioning run. Retrying the replace
-/// (and letting readers share delete) makes the stores resilient to it.
+/// reader briefly holds the destination open. state.json is rewritten after
+/// every module, so this race is hit in practice — it crashed a real Windows
+/// Server 2025 provisioning run. Retrying the replace makes the stores resilient
+/// to it. (.NET's <c>File.Move</c> cannot replace a destination another handle
+/// has open even with <c>FILE_SHARE_DELETE</c>, so a reader share-mode change
+/// would not help — the retry is the fix.)
 /// </summary>
 internal static class AtomicFile
 {
@@ -31,7 +33,7 @@ internal static class AtomicFile
                 File.Move(source, destination, overwrite: true);
                 return;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < maxAttempts)
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < maxAttempts)
             {
                 logger.LogWarning(
                     ex,
