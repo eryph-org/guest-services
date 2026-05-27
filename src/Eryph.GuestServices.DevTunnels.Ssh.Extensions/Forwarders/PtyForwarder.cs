@@ -75,20 +75,66 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
-        // ConPTY emits final reset sequences asynchronously after the child exits.
-        // Drain them before CHANNEL_CLOSE — otherwise they ship as CHANNEL_DATA
-        // after close and strict SSH clients (OpenSSH) disconnect.
         using var outputDrainCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         var outputTask = pty.Output!.CopyToAsync(stream, outputDrainCts.Token);
         _ = stream.CopyToAsync(pty.Input!, _cts.Token);
 
         var result = await pty.WaitForExitAsync(_cts.Token);
 
-        outputDrainCts.CancelAfter(TimeSpan.FromSeconds(1));
-        try { await outputTask; }
-        catch (OperationCanceledException) { }
+        await DrainAndCloseAsync(
+            outputTask,
+            outputDrainCts,
+            ct => stream.Channel.CloseAsync(unchecked((uint)result), ct),
+            _cts.Token);
+    }
 
-        await stream.Channel.CloseAsync(unchecked((uint)result), _cts.Token);
+    /// <summary>
+    /// Drains any trailing PTY output, then closes the channel — and closes it
+    /// no matter how the output pump ends, short of a session shutdown.
+    /// </summary>
+    /// <remarks>
+    /// ConPTY emits final reset sequences asynchronously after the child exits,
+    /// so we give them a moment to drain before CHANNEL_CLOSE; otherwise they
+    /// ship as CHANNEL_DATA after close and strict SSH clients (OpenSSH)
+    /// disconnect. But the pump always ends abnormally on teardown — at EOF on
+    /// Windows, with an EIO <see cref="IOException"/> on Linux once the PTY
+    /// slave closes — and an in-flight <see cref="FileStream"/> read can ignore
+    /// cancellation. So the drain must neither block the close indefinitely nor
+    /// let the pump's terminal exception propagate: <see cref="RunAsync"/> is
+    /// fire-and-forget, so a thrown exception here would skip the close and the
+    /// client would never receive CHANNEL_CLOSE — hanging the session on logout.
+    /// </remarks>
+    internal static async Task DrainAndCloseAsync(
+        Task outputTask,
+        CancellationTokenSource outputDrainCts,
+        Func<CancellationToken, Task> closeAsync,
+        CancellationToken cancellation,
+        TimeSpan? drainBudget = null,
+        TimeSpan? drainTimeout = null)
+    {
+        outputDrainCts.CancelAfter(drainBudget ?? TimeSpan.FromSeconds(1));
+        try
+        {
+            await outputTask.WaitAsync(drainTimeout ?? TimeSpan.FromSeconds(2), cancellation);
+        }
+        catch (OperationCanceledException)
+        {
+            // The session/forwarder is shutting down; closing is pointless.
+            return;
+        }
+        catch (TimeoutException)
+        {
+            // The read ignored cancellation; Dispose will tear down the PTY and
+            // unblock it. Observe the eventual fault so it isn't unobserved.
+            _ = outputTask.ContinueWith(static t => _ = t.Exception,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+        }
+        catch
+        {
+            // Pump ended via EOF or EIO — expected, best-effort drain.
+        }
+
+        await closeAsync(cancellation);
     }
 
     public async Task ResizeAsync(
