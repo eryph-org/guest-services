@@ -70,22 +70,40 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
 
         _pty = PtyProvider.CreatePty();
         await _pty.StartAsync(_width, _height, selection.Command, selection.Arguments);
-        _ = RunAsync(stream, _pty);
+        ObserveFault(RunAsync(stream, _pty));
     }
+
+    // Keeps a fire-and-forget task from surfacing its fault as an unobserved
+    // task exception. The faults we expect here are teardown races (e.g. the
+    // EIO when the PTY slave closes), not actionable conditions.
+    private static void ObserveFault(Task task) =>
+        _ = task.ContinueWith(static t => _ = t.Exception,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
     private async Task RunAsync(SshStream stream, IPty pty)
     {
         using var outputDrainCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         var outputTask = pty.Output!.CopyToAsync(stream, outputDrainCts.Token);
-        _ = stream.CopyToAsync(pty.Input!, _cts.Token);
+        ObserveFault(stream.CopyToAsync(pty.Input!, _cts.Token));
 
-        var result = await pty.WaitForExitAsync(_cts.Token);
+        try
+        {
+            var result = await pty.WaitForExitAsync(_cts.Token);
 
-        await DrainAndCloseAsync(
-            outputTask,
-            outputDrainCts,
-            ct => stream.Channel.CloseAsync(unchecked((uint)result), ct),
-            _cts.Token);
+            await DrainAndCloseAsync(
+                outputTask,
+                outputDrainCts,
+                ct => stream.Channel.CloseAsync(unchecked((uint)result), ct),
+                _cts.Token);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Consistent with CommandForwarder/PowershellForwarder: an
+            // unexpected failure is surfaced to the client as an exception
+            // signal rather than faulting this fire-and-forget task and
+            // leaving the channel open.
+            await stream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, _cts.Token);
+        }
     }
 
     /// <summary>
@@ -120,14 +138,16 @@ public sealed class PtyForwarder(IShellSelector? selector = null) : IDisposable
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             // The session/forwarder is shutting down; closing is pointless.
+            // Still observe the pump's eventual teardown fault (EIO) so it
+            // isn't left unobserved.
+            ObserveFault(outputTask);
             return;
         }
         catch (TimeoutException)
         {
             // The read ignored cancellation; Dispose will tear down the PTY and
             // unblock it. Observe the eventual fault so it isn't unobserved.
-            _ = outputTask.ContinueWith(static t => _ = t.Exception,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            ObserveFault(outputTask);
         }
         catch
         {
