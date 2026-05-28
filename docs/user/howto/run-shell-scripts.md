@@ -36,27 +36,20 @@ and full stdout and stderr.
 
 ## Reboots and failures
 
-Two cbi-style exit codes ask the guest to reboot mid-run:
+Two exit codes ask the guest to reboot mid-run:
 
-- `1001` — reboot, the script is done. The next script (or runcmd entry) runs
-  on the boot after.
-- `1003` — reboot and **re-run this same script / entry**. Use this for
-  multi-stage installers (driver → reboot → role → reboot → done). It is up
-  to the script to know which stage it's on; for runcmd entries the agent
-  exposes `EGS_RUNCMD_REBOOT_COUNT` so the script can branch.
+- `1001` — reboot, then move on to the next script / runcmd entry.
+- `1003` — reboot, then re-run **this same script / entry**. Use for
+  multi-stage installers; branch on `EGS_RUNCMD_REBOOT_COUNT` in runcmd
+  entries (see [Runcmd](../reference/modules.md#runcmd)).
 
-Any other non-zero exit is logged and the next script still runs. The exit code
-is in the per-script log.
+Any other non-zero exit is logged and the next script still runs. The exit
+code is in the per-script log.
 
-A runcmd entry that asks for repeated reboots is bounded by a per-entry quota
-(default 10). The script can raise its own cap by emitting
-`##egs.runcmd.reboot_limit=<n>` on stdout. See
-[Runcmd](../reference/modules.md#runcmd) for the full contract, and
-[settings](../reference/settings.md#runcmd) for the global tunables.
-
-`ScriptsUser` (multipart-shebang scripts) honours `1001` and `1003` similarly,
-but a single script is bounded by `reboot.maxPerScript` (default 2) — tighter
-than runcmd because user scripts typically don't need many reboots.
+Reboot caps: a runcmd entry may ask for up to `runcmd.maxRebootsPerEntry`
+reboots (default 10); a user script under `ScriptsUser` is bounded by
+`reboot.maxPerScript` (default 2). A runcmd entry can raise its own cap with
+`##egs.runcmd.reboot_limit=<n>` on stdout.
 
 ## Example: a script in a multipart payload
 

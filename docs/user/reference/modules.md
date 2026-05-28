@@ -232,59 +232,41 @@ a step, handle the error inside that command.
 
 ### Reboot-and-continue (exit 1001 / 1003)
 
-An entry can ask the guest to reboot mid-run with the cloudbase-init exit-code
-convention:
-
 | Exit | Meaning |
 | --- | --- |
 | `0` | success — go to next entry |
-| `1001` | reboot the guest, then go to next entry (this entry is done) |
+| `1001` | reboot the guest, then go to next entry |
 | `1003` | reboot the guest, then re-run **this same entry** afterwards |
 | any other non-zero | log error and continue with next entry |
 
-`1003` is the multi-stage installer pattern — your script does some work,
-asks for a reboot, and runs again on the next boot. It is up to the script to
-track its own progress (state file, registry, idempotent checks) and eventually
-exit `0` (or `1001`) when done. Cloudbase-init's `1002` ("re-run on next boot
-without rebooting") has no eryph equivalent and is treated as an error.
+`1002` is not supported and is treated as an error.
+
+When an entry reboots the guest, completed entries are skipped on the next boot
+and only the entry that asked is re-run. Editing an entry between boots (its
+command text or argv) makes it run again from scratch.
 
 ### Per-entry reboot quota
 
-To stop a stuck installer from looping forever, each entry has its own reboot
-quota. The default cap is **10 reboots per entry** — far more than the
-StageRunner's module-wide cap of 3, which would otherwise trip on any
-multi-stage installer.
-
-A script can raise its own cap by emitting a directive on stdout (last
-occurrence wins, value must be a positive integer):
+Each entry can ask for at most `runcmd.maxRebootsPerEntry` reboots (default 10)
+before the run fails. A script can raise its own cap from inside the entry by
+emitting this line on stdout (last occurrence wins; value must be a positive
+integer larger than the current cap):
 
 ```
 ##egs.runcmd.reboot_limit=20
 ```
 
-The directive uses a `##` prefix so a script that prints its environment cannot
-accidentally trigger it. A directive that would **lower** the current cap is
-logged and ignored — to keep the contract monotonic and prevent a stray output
-line from killing an entry mid-flight. The directive is read from stdout only.
-
-The new cap is persisted in the entry's checkpoint, so the script only needs to
-emit it once. To disable script-supplied overrides entirely, set
-`runcmd.allowScriptOverride: false` in
-[settings](settings.md) — the configured `maxRebootsPerEntry` then becomes a
-hard cap.
+The raised cap persists across reboots, so emit it once. To disable the
+override entirely, set `runcmd.allowScriptOverride: false` in
+[settings](settings.md).
 
 ### Environment exposed to the script
-
-Each runcmd child receives three extra environment variables so it can decide
-what to do:
 
 | Variable | Meaning |
 | --- | --- |
 | `EGS_RUNCMD_ENTRY_INDEX` | 1-based position of this entry in `runcmd:` |
 | `EGS_RUNCMD_REBOOT_COUNT` | reboots this entry has already triggered (0 on the first run) |
 | `EGS_RUNCMD_REBOOT_LIMIT` | the current per-entry reboot cap |
-
-A multi-step installer can branch on `EGS_RUNCMD_REBOOT_COUNT`:
 
 ```powershell
 switch ($env:EGS_RUNCMD_REBOOT_COUNT) {
@@ -293,14 +275,6 @@ switch ($env:EGS_RUNCMD_REBOOT_COUNT) {
     '2' { Verify-All;        exit 0 }
 }
 ```
-
-### Resume across reboots
-
-When an entry reboots the guest, the runcmd module records which entry was
-in-flight. After the reboot, the module **skips entries that completed before
-the reboot** and re-runs only the one that asked. Editing an entry between
-boots (changing its command text or argv) invalidates the completed marker —
-the new version runs from scratch.
 
 ## Licensing
 

@@ -20,18 +20,14 @@ full cloud-init compatibility.
 | Packaging | One binary (`egs-service`) over a shared library, not a Python interpreter and plugin chain. The same library backs the service and the CLI. |
 
 `growpart` refreshes disk geometry before extending a volume, so it picks up a
-host-side VHD resize. Reboot-and-continue exit codes — `1001` ("reboot, this
-entry is done") and `1003` ("reboot, re-run this same entry") — behave as they
-do under cbi. `1002` ("re-run on next boot without rebooting") has no eryph
-equivalent and is treated as an error. The Hyper-V KVP reporting protocol and
-POSIX-permission-to-NTFS-ACL translation also behave as they do under cbi.
+host-side VHD resize. Reboot-and-continue exit codes `1001` and `1003` behave
+as they do under cbi; `1002` is not supported. The Hyper-V KVP reporting
+protocol and POSIX-permission-to-NTFS-ACL translation also behave as they do
+under cbi.
 
-Runcmd entries get a per-entry reboot quota (cbi has no such cap) so a
-multi-stage installer can ask for several reboots without tripping a
-module-wide ceiling, and each entry sees `EGS_RUNCMD_ENTRY_INDEX`,
-`EGS_RUNCMD_REBOOT_COUNT`, and `EGS_RUNCMD_REBOOT_LIMIT` in its environment so
-the script can branch by stage. See
-[Runcmd](../reference/modules.md#runcmd).
+Each runcmd entry has its own reboot quota and sees `EGS_RUNCMD_ENTRY_INDEX`,
+`EGS_RUNCMD_REBOOT_COUNT`, and `EGS_RUNCMD_REBOOT_LIMIT` in its environment.
+See [Runcmd](../reference/modules.md#runcmd).
 
 For what's ready outside eryph and what's still missing, see
 [Windows cloud-init status](windows-cloud-init-status.md).

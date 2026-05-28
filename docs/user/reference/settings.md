@@ -85,27 +85,22 @@ all sources so a typo can't disable provisioning. Valid names: `Azure`, `EC2`,
 
 ## runcmd
 
-Per-entry reboot quota for the `Runcmd` module (separate from the global
-`reboot` caps below). See
-[Runcmd](modules.md#runcmd) for the full feature description.
+Per-entry reboot quota for the `Runcmd` module. See
+[Runcmd](modules.md#runcmd).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `maxRebootsPerEntry` | 10 | How many reboots one runcmd entry may ask for (across `1001` and `1003` combined) before that entry is failed. |
-| `allowScriptOverride` | true | When true, a runcmd script can raise its own cap by emitting `##egs.runcmd.reboot_limit=<n>` on stdout. Set false to make `maxRebootsPerEntry` a hard cap. |
+| `maxRebootsPerEntry` | 10 | How many reboots one runcmd entry may ask for before the entry is failed. |
+| `allowScriptOverride` | true | When true, a runcmd entry can raise its own cap with `##egs.runcmd.reboot_limit=<n>` on stdout. |
 
 ## reboot
 
-Two guards against runaway reboot-and-continue loops.
+Caps against runaway reboot-and-continue loops.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `maxPerModule` | 3 | How many times a module may ask for a reboot of its own accord before the run fails. Script-driven reboots (`runcmd` / user scripts emitting `1001` / `1003`) are exempt — they have their own per-entry / per-script quotas. |
+| `maxPerModule` | 3 | How many times a module may ask for a reboot before the run fails. Reboots requested by `runcmd` entries or user scripts do not count here — they're bounded by `runcmd.maxRebootsPerEntry` and `maxPerScript`. |
 | `maxPerScript` | 2 | How many reboots one user script (under `ScriptsUser`) may ask for before that script is failed. |
-
-`maxPerScript` bounds a single script; `runcmd.maxRebootsPerEntry` bounds a
-single runcmd entry. `maxPerModule` is for misbehaving infrastructure modules
-(e.g. an unexpected `SetLocale` reboot loop), not for user code.
 
 ## defaultUser
 
