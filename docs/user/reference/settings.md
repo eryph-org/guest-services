@@ -119,27 +119,50 @@ Module names are case-insensitive and accept the `Module` suffix (`SetHostname`
 or `SetHostnameModule`). These lists only add or remove — stage membership and
 order are fixed. An unknown name is logged, not fatal.
 
-## Service control (registry)
+## Service control
 
-Two operator switches turn the top-level capabilities off. They live in the
-registry, not in `egs-provisioning.json`, because they're host controls separate
-from the provisioning tunables above.
-
-Key: `HKLM\SOFTWARE\eryph\guest-services`, values of type `REG_DWORD`.
+Operator switches that turn top-level capabilities off. They live outside
+`egs-provisioning.json` because they're host controls separate from the
+provisioning tunables above.
 
 | Value | Turns off | Default |
 | --- | --- | --- |
 | `ProvisioningEnabled` | The first-boot provisioning agent — no user-data is applied. | on |
 | `RemoteAccessEnabled` | The remote-access transport `egs-tool` connects to. | on |
+| `KvpAuthEnabled` | Honoring of authorized client keys delivered via Hyper-V data exchange. When off, only the locally provisioned key in `id_egs.pub` authorizes — pushes via `egs-tool add-ssh-config` and other KVP writers are ignored. | on |
 
-Both are opt-out: a capability is on unless the value is set to `0`. A missing
-value, a read error, or a non-Windows host all leave it on.
+All three are opt-out: a capability is on unless the value is set to `0`. A
+missing value, a read error, or an unknown OS all leave it on. The flags are
+read at service start, so restart `eryph-guest-services` after changing them.
+
+### Windows
+
+Stored in the registry under `HKLM\SOFTWARE\eryph\guest-services` as
+`REG_DWORD` values (`0` = off, anything else = on). REG_SZ and other value
+types are ignored — only REG_DWORD is the documented control surface.
 
 ```powershell
 New-Item -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Force | Out-Null
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'ProvisioningEnabled' -Type DWord -Value 0
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'RemoteAccessEnabled' -Type DWord -Value 0
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'KvpAuthEnabled' -Type DWord -Value 0
+Restart-Service -Name eryph-guest-services
 ```
 
-Set the value back to `1` or delete it to re-enable. The flags are read at
-service start, so restart the `eryph guest services` service after changing them.
+### Linux
+
+Stored in `/etc/opt/eryph/guest-services/service-control.conf` as `KEY=VALUE`
+lines (`0` / `false` = off, case-insensitive; anything else, missing key, or
+missing file = on). Blank lines and `#` comments are ignored.
+
+```bash
+sudo install -d /etc/opt/eryph/guest-services
+sudo tee /etc/opt/eryph/guest-services/service-control.conf <<EOF
+ProvisioningEnabled=0
+RemoteAccessEnabled=0
+KvpAuthEnabled=0
+EOF
+sudo systemctl restart eryph-guest-services
+```
+
+Set values back to `1` (or delete the value / file) and restart to re-enable.

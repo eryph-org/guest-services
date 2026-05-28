@@ -39,6 +39,18 @@ public static class Constants
     public static readonly string ClientAuthKey = "eryph:guest-services:client-public-key";
 
     /// <summary>
+    /// Prefix for additional authorized-key slots in the External KVP pool.
+    /// The guest service treats every value whose key matches
+    /// <c>"eryph:guest-services:client-public-key:&lt;id&gt;"</c> as another
+    /// entry in the authorized set, in addition to the legacy single slot at
+    /// <see cref="ClientAuthKey"/>. The slot id is arbitrary (host name,
+    /// machine id, etc.) — only the prefix is meaningful. This sidesteps the
+    /// 2 KiB Hyper-V data exchange per-value limit when more than a handful
+    /// of keys are authorized.
+    /// </summary>
+    public static readonly string ClientAuthKeyPrefix = ClientAuthKey + ":";
+
+    /// <summary>
     /// The KVP key (External pool) that overrides the shell command spawned
     /// for an interactive SSH session. When unset, the service falls back to
     /// the SSH-sent <c>SHELL</c> environment variable, then to the platform

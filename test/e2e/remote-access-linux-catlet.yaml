@@ -1,0 +1,41 @@
+name: remote-access-linux-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The catlet boots with egs-service pre-installed by the parent gene (an
+# OLDER release). The test BeforeAll swaps the binaries to the local build
+# over the direct-sshd admin channel BEFORE running any assertions.
+#
+# Channels:
+#   1. egs-service over vsock (egs-tool proxy) — the system under test.
+#      The host's egs-tool public key is delivered to the catlet by
+#      writing /etc/opt/eryph/guest-services/id_egs.pub via the admin
+#      channel after binary swap.
+#   2. Direct OpenSSH on TCP/22 — the admin channel for binary swap,
+#      service-control.conf edits, and systemctl restart. Independent of
+#      eryph-guest-services lifecycle. The starter-food/linux-starter
+#      fodder gene installs sshPublicKey into the OS user's
+#      authorized_keys for this channel.
+#
+# Username + Password are throwaway test fixtures; catlet is destroyed in
+# AfterAll.
+variables:
+  - name: adminUsername
+    required: true
+  - name: adminPassword
+    required: true
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - source: gene:dbosoft/starter-food/2.0:linux-starter
+    variables:
+      - name: Username
+        value: '{{ adminUsername }}'
+      - name: Password
+        value: '{{ adminPassword }}'
+      - name: sshPublicKey
+        value: '{{ sshPublicKey }}'

@@ -1,0 +1,48 @@
+name: remote-access-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The remote-access e2e uses the offline-injection pattern: cloudbase-init
+# is disabled, egs-service is replaced with the local build, and the host's
+# egs-tool public key is written into id_egs.pub on the VHD before first
+# boot. We deliberately do NOT include gene:dbosoft/guest-services:win-install
+# — that gene's installer normally runs *via* cbi, which is disabled here.
+#
+# The cloud-config sets a known Administrator password so the test
+# harness can use PowerShell Direct (Invoke-Command -VMId -Credential)
+# to perform host→guest admin operations (notably, restarting
+# eryph-guest-services after toggling KvpAuthEnabled). PowerShell Direct
+# rides Hyper-V's VMBus, so it needs no networking on the catlet, no
+# OpenSSH server, no firewall config — and crucially it is INDEPENDENT
+# of the eryph-guest-services lifecycle, so we can stop/start that
+# service without killing our own admin channel.
+#
+# The password is a test fixture only — the catlet is thrown away in
+# AfterAll. Do NOT reuse this value for anything that survives a test
+# run.
+variables:
+  - name: adminPassword
+    required: true
+
+fodder:
+  - name: remote-access-e2e-cloud-config
+    type: cloud-config
+    content: |
+      #cloud-config
+      # Windows NetBIOS caps hostnames at 15 chars; keep this short.
+      hostname: ra-e2e
+      # users: passwd targets NEW user creation. Administrator already
+      # exists on the starter image, so the password must be set via
+      # chpasswd (cloud-init's "set password on existing account"
+      # pattern) and the account explicitly enabled for PSDirect.
+      chpasswd:
+        expire: false
+        users:
+          - name: Administrator
+            type: text
+            password: "{{ adminPassword }}"
+      runcmd:
+        - 'net user Administrator /active:yes'

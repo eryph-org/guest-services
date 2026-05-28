@@ -33,17 +33,6 @@ public class LinuxKeyStorage : IKeyStorage
         return KeyPair.ImportKey(content);
     }
 
-    public async Task SetClientKeyAsync(IKeyPair keyPair)
-    {
-        Directory.CreateDirectory(ConfigDirectoryPath);
-
-        if (Path.Exists(ClientKeyPath))
-            throw new InvalidOperationException("Cannot update the client key. It already exists.");
-        
-        var keyBytes = KeyPair.ExportPublicKeyBytes(keyPair);
-        await File.WriteAllBytesAsync(ClientKeyPath, keyBytes);
-    }
-
     public async Task<IKeyPair?> GetHostKeyAsync()
     {
         EnsurePrivateDirectory();

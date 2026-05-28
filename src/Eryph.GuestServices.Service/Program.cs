@@ -93,7 +93,7 @@ internal static class Program
         });
 
         builder.Services.AddLogging();
-        builder.Services.AddSingleton<IServiceControlFlags, RegistryServiceControlFlags>();
+        builder.Services.AddSingleton<IServiceControlFlags, PlatformServiceControlFlags>();
         builder.Services.AddHostedService<SshServerService>();
         builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
         builder.Services.AddSingleton<IClientKeyProvider, ClientKeyProvider>();

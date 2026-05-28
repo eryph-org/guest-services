@@ -101,7 +101,9 @@ Prints the agent name and version.
 
 ## Turning a capability off
 
-To disable first-boot provisioning or the remote-access transport on a guest,
-use the registry flags `ProvisioningEnabled` / `RemoteAccessEnabled` under
-`HKLM\SOFTWARE\eryph\guest-services` — see
-[Service control](settings.md#service-control-registry).
+To disable first-boot provisioning, the remote-access transport, or KVP-
+delivered client keys on a guest, use the operator flags `ProvisioningEnabled`,
+`RemoteAccessEnabled`, and `KvpAuthEnabled`. On Windows they live in the
+registry under `HKLM\SOFTWARE\eryph\guest-services`; on Linux in
+`/etc/opt/eryph/guest-services/service-control.conf`. See
+[Service control](settings.md#service-control).

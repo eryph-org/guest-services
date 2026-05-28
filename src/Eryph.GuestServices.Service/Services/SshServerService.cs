@@ -116,22 +116,17 @@ internal sealed class SshServerService(
         e.AuthenticationTask = CheckClientKey(e.PublicKey);
     }
 
-    private async Task<ClaimsPrincipal?> CheckClientKey(IKeyPair clientKey)
+    // internal for composition-root tests in Eryph.GuestServices.Service.Tests
+    internal async Task<ClaimsPrincipal?> CheckClientKey(IKeyPair clientKey)
     {
-        var expectedClientKey = await clientKeyProvider.GetClientKey();
-        if (expectedClientKey is null)
+        if (!await clientKeyProvider.IsAuthorizedAsync(clientKey))
         {
-            logger.LogInformation("Failed to authenticate client. The client public key is missing.");
+            logger.LogInformation(
+                "Failed to authenticate client. The provided public key is not authorized: {FingerPrint}.",
+                clientKey.GetFingerPrint());
             return null;
         }
 
-        if (clientKey.GetPublicKeyBytes() != expectedClientKey.GetPublicKeyBytes())
-        {
-            logger.LogInformation(
-                "Failed to authenticate client. The provided public does not match the expected public key: {FingerPrint}.",
-                expectedClientKey.GetFingerPrint());
-            return null;
-        }
         return new ClaimsPrincipal();
     }
 
