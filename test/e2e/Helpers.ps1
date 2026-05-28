@@ -14,8 +14,10 @@
 # the docs and ssh_config generation target.
 $script:WinSshExe = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
 $script:WinScpExe = Join-Path $env:WINDIR 'System32\OpenSSH\scp.exe'
-if (-not (Test-Path -LiteralPath $script:WinSshExe)) {
-  throw "Windows OpenSSH ssh.exe not found at $($script:WinSshExe); install the 'OpenSSH.Client' optional feature."
+foreach ($exe in @($script:WinSshExe, $script:WinScpExe)) {
+  if (-not (Test-Path -LiteralPath $exe)) {
+    throw "Windows OpenSSH binary not found at $exe; install the 'OpenSSH.Client' optional feature."
+  }
 }
 
 function New-ThrowawayPassword {

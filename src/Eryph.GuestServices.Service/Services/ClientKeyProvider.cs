@@ -14,11 +14,12 @@ public class ClientKeyProvider : IClientKeyProvider
 
     // Read the KVP-auth flag once at construction and cache it. Matches the
     // existing IsRemoteAccessEnabled pattern in SshServerService.StartAsync:
-    // operator changes to HKLM\SOFTWARE\eryph\guest-services\KvpAuthEnabled
-    // take effect on the next service restart, not on the next auth attempt.
-    // Hot-reload would surprise operators expecting deterministic policy and
-    // also make audit trails harder ("which value was in force at the time
-    // of this auth?").
+    // operator changes to the KvpAuthEnabled flag (HKLM\SOFTWARE\eryph\
+    // guest-services on Windows, /etc/opt/eryph/guest-services/
+    // service-control.conf on Linux) take effect on the next service
+    // restart, not on the next auth attempt. Hot-reload would surprise
+    // operators expecting deterministic policy and also make audit trails
+    // harder ("which value was in force at the time of this auth?").
     private readonly bool _kvpAuthEnabled;
 
     public ClientKeyProvider(
