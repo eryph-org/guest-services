@@ -357,7 +357,7 @@ public sealed class RuncmdModuleTests
     }
 
     [Fact]
-    public async Task Injects_EGS_RUNCMD_env_vars_with_current_reboot_count_and_limit()
+    public async Task Injects_EGS_REBOOT_env_vars_with_current_reboot_count_and_limit()
     {
         var os = Substitute.For<IWindowsOs>();
         IReadOnlyDictionary<string, string>? captured = null;
