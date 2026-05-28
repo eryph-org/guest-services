@@ -72,7 +72,11 @@ public sealed class EndToEndProvisioningTests : IDisposable
             .Returns(ci => @"C:\" + ((string)ci[0]).TrimStart('/').Replace('/', '\\'));
         windowsOs.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
+        windowsOs.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
         windowsOs.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+        windowsOs.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
         var stateStore = new FileStateStore(NullLogger<FileStateStore>.Instance, _stateDirectory);
@@ -104,7 +108,10 @@ public sealed class EndToEndProvisioningTests : IDisposable
                 reporter,
                 defaultUserResolver),
             new WriteFilesModule(NullLogger<WriteFilesModule>.Instance),
-            new RuncmdModule(NullLogger<RuncmdModule>.Instance),
+            new RuncmdModule(
+                NullLogger<RuncmdModule>.Instance,
+                settings,
+                new FileRuncmdCheckpointStore(NullLogger<FileRuncmdCheckpointStore>.Instance, _stateDirectory)),
         };
 
         var semaphoreStore = new FileSemaphoreStore(
@@ -177,9 +184,13 @@ public sealed class EndToEndProvisioningTests : IDisposable
             Arg.Is<byte[]>(b => System.Text.Encoding.UTF8.GetString(b) == "hello eryph"),
             false,
             Arg.Any<CancellationToken>());
-        await windowsOs.Received().RunShellCommandAsync("echo first", Arg.Any<CancellationToken>());
+        await windowsOs.Received().RunShellCommandAsync(
+            "echo first",
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+            Arg.Any<CancellationToken>());
         await windowsOs.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(a => a.Count == 2 && a[0] == "echo" && a[1] == "argv-form"),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
             Arg.Any<CancellationToken>());
 
         await reporter.Received().EmitAsync(

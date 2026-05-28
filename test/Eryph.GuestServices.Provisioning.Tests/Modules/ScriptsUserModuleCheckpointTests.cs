@@ -113,6 +113,111 @@ public sealed class ScriptsUserModuleCheckpointTests
     }
 
     [Fact]
+    public async Task Exit_1001_marks_script_completed_and_returns_script_driven_reboot()
+    {
+        // 1001 = "reboot, but this script is done." Checkpoint must record
+        // the executed entry so resume skips it; reboot outcome must be
+        // script-driven so the per-module cap stays out of the way.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-installer.ps1"))),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1001, "", ""));
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var module = CreateModule(checkpoint);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with
+            {
+                Scripts =
+                [
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# 1001"), "installer.ps1"),
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# next"), "next.ps1"),
+                ],
+            };
+
+        var outcome1 = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+        var reboot = outcome1.Should().BeOfType<ModuleOutcome.RebootRequested>().Subject;
+        reboot.IsScriptDriven.Should().BeTrue();
+        reboot.Reason.Should().Contain("exit 1001");
+
+        // Resume: installer.ps1 is marked executed, next.ps1 runs.
+        os.ClearReceivedCalls();
+        var outcome2 = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+        outcome2.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-installer.ps1"))),
+            Arg.Any<CancellationToken>());
+        await os.Received().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Exit_1003_returns_script_driven_reboot_so_module_cap_is_bypassed()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1003, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var module = CreateModule(checkpoint);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# 1003"), "wants-reboot.ps1")] };
+
+        var outcome = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+
+        var reboot = outcome.Should().BeOfType<ModuleOutcome.RebootRequested>().Subject;
+        reboot.IsScriptDriven.Should().BeTrue(
+            "scripts plugin reboots are user-script-driven so the per-module cap does not gate multi-stage installers");
+    }
+
+    [Fact]
+    public async Task Exit_1002_is_treated_as_unsupported_and_module_continues()
+    {
+        // 1002 ("re-run on next boot, no reboot") has no eryph equivalent —
+        // we log a warning and continue with the next script.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-deferred.ps1"))),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1002, "", ""));
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var module = CreateModule(checkpoint);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with
+            {
+                Scripts =
+                [
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# 1002"), "deferred.ps1"),
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# next"), "next.ps1"),
+                ],
+            };
+
+        var outcome = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Edited_script_with_same_ordinal_re_runs_because_body_hash_differs()
     {
         // Body-hash protection: if the operator edits a script between runs,

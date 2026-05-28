@@ -23,10 +23,14 @@ internal sealed class ScriptsUserModule(
     IReportingDispatcher reporter,
     IScriptCheckpointStore checkpointStore) : IModule
 {
-    /// <summary>
-    /// Exit code reserved by the cloudbase-init "reboot and continue"
-    /// convention. Same value the RuncmdModule honors.
-    /// </summary>
+    // cbi exit-code contract — see plugins/common/execcmd.py::get_plugin_return_value
+    // The 1001..1003 range is a bitmask: bit 0 = reboot, bit 1 = re-execute plugin.
+    // Scripts plugin semantics ("the script DID its work and signals what to do
+    // next"): both 1001 and 1003 mark the script executed; the difference is
+    // whether the runner reboots before moving on. Today only 1003 is exercised
+    // in eryph user-data; 1001 is supported for cbi parity.
+    public const int RebootAndDoneExitCode = 1001;
+    public const int RerunOnNextBootExitCode = 1002;
     public const int RebootRequestedExitCode = 1003;
 
     /// <summary>
@@ -136,7 +140,8 @@ internal sealed class ScriptsUserModule(
             LogResult(ordinal, scriptPath, result);
             await ReportProgressAsync(scriptName, result, cancellationToken).ConfigureAwait(false);
 
-            if (result.ExitCode == RebootRequestedExitCode)
+            if (result.ExitCode == RebootAndDoneExitCode ||
+                result.ExitCode == RebootRequestedExitCode)
             {
                 // Per-script reboot quota: the same (ordinal, body-hash) may
                 // request reboot at most MaxRebootsPerScript times. Past that
@@ -160,12 +165,16 @@ internal sealed class ScriptsUserModule(
                 }
 
                 logger.LogInformation(
-                    "Script #{Index} ({Path}) requested reboot-and-continue (exit {Code}).",
-                    ordinal, scriptPath, RebootRequestedExitCode);
+                    "Script #{Index} ({Path}) requested reboot (exit {Code}).",
+                    ordinal, scriptPath, result.ExitCode);
 
                 // Mark the script as executed BEFORE returning Reboot — cbi
-                // semantics for 1003: "I did my work; reboot, then run my
-                // successors". The resume must NOT re-run this script.
+                // semantics for both 1001 and 1003: "I did my work; reboot,
+                // then run my successors". The resume must NOT re-run this
+                // script. (For 1003 cbi also re-executes the plugin; for the
+                // Scripts plugin specifically that means "run the queue from
+                // here", which our checkpoint already implements by skipping
+                // already-executed entries.)
                 var executed = checkpoint.Executed
                     .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
                     .ToList();
@@ -176,11 +185,20 @@ internal sealed class ScriptsUserModule(
                 checkpoint = checkpoint with { Executed = executed, RebootCounts = counts };
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
 
-                return ModuleOutcome.Reboot(
-                    $"script #{ordinal} ('{scriptName}') requested reboot (exit {RebootRequestedExitCode}).");
+                // Script-driven reboot: bypass the per-module cap. The
+                // per-script quota above is the real brake; module-wide
+                // gating here would mean 3 reboot-requesting scripts in
+                // user-data is enough to fail the run, which contradicts
+                // the contract.
+                return ModuleOutcome.RebootForUserScript(
+                    $"script #{ordinal} ('{scriptName}') requested reboot (exit {result.ExitCode}).");
             }
 
-            if (result.ExitCode != 0)
+            if (result.ExitCode == RerunOnNextBootExitCode)
+                logger.LogWarning(
+                    "Script #{Index} ({Path}) returned 1002 (re-run on next boot) — not supported on eryph; treating as error and continuing.",
+                    ordinal, scriptPath);
+            else if (result.ExitCode != 0)
                 logger.LogError(
                     "Script #{Index} ({Path}) exited with code {Code}; continuing with remaining scripts.",
                     ordinal, scriptPath, result.ExitCode);

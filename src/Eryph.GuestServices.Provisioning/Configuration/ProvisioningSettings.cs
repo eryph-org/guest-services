@@ -16,6 +16,8 @@ public sealed class ProvisioningSettings
 
     public ScriptSettings Scripts { get; init; } = new();
 
+    public RuncmdSettings Runcmd { get; init; } = new();
+
     public RebootSettings Reboot { get; init; } = new();
 
     /// <summary>
@@ -76,6 +78,7 @@ public sealed class ProvisioningSettings
                 UserData = loaded.UserData ?? new UserDataSettings(),
                 DataSources = loaded.DataSources ?? new DataSourceSettings(),
                 Scripts = loaded.Scripts ?? new ScriptSettings(),
+                Runcmd = loaded.Runcmd ?? new RuncmdSettings(),
                 Reboot = loaded.Reboot ?? new RebootSettings(),
                 DefaultUser = loaded.DefaultUser ?? new DefaultUserSettings(),
                 Stages = loaded.Stages,
@@ -206,6 +209,29 @@ public sealed class ScriptSettings
 
     /// <summary>Per-script execution timeout. Not enforced in v1; reserved for v2.</summary>
     public int ScriptTimeoutMinutes { get; init; } = 60;
+}
+
+/// <summary>
+/// Tunables for the runcmd module's per-entry reboot quota.
+/// </summary>
+public sealed class RuncmdSettings
+{
+    /// <summary>
+    /// Maximum number of reboots a single runcmd entry may request
+    /// (cloudbase-init exit codes 1001 / 1003) before the module fails the
+    /// run. A multi-stage installer (driver → reboot → role → reboot → done)
+    /// is expected to fit well within this budget. Default 10.
+    /// </summary>
+    public int MaxRebootsPerEntry { get; init; } = 10;
+
+    /// <summary>
+    /// When true, the module honours a script-emitted
+    /// <c>EGS_RUNCMD_REBOOT_LIMIT=&lt;n&gt;</c> stdout marker that bumps the
+    /// per-entry limit for that entry. The value is persisted in the
+    /// entry's checkpoint and remembered across reboots. Set false to
+    /// pin every entry to <see cref="MaxRebootsPerEntry"/>.
+    /// </summary>
+    public bool AllowScriptOverride { get; init; } = true;
 }
 
 /// <summary>
