@@ -2,6 +2,31 @@
 #Requires -RunAsAdministrator
 #Requires -Module Pester
 #Requires -Module Eryph.ComputeClient
+<#
+.SYNOPSIS
+  E2E for the egs remote-access auth path on WINDOWS catlets.
+
+.NOTES
+  egs-service runs on Linux too. The same code (multi-key auth, slot
+  family, KvpAuthEnabled gate) is exercised end-to-end here only on
+  Windows because the harness needs: an offline NTFS VHD mount, the
+  PsDirect admin channel (Hyper-V VMBus is Windows-guest only), and
+  Windows-specific binary swap + cbi disable.
+
+  Linux coverage is a follow-up:
+    - parent: dbosoft/ubuntu-24.04/starter (or similar)
+    - binary swap: linux-x64 publish into /opt/eryph/guest-services/bin
+      via cloud-init or a host-side ssh-as-default-user copy
+    - flag file: /etc/opt/eryph/guest-services/service-control.conf
+      (KEY=VALUE; PlatformServiceControlFlags reads it on startup)
+    - admin channel: ssh-as-default-user via Get-CatletIp; Linux sshd
+      IS enabled by default on cloud-init-provisioned images, unlike
+      Windows.
+
+  Unit tests cross-platform: PlatformServiceControlFlags + parser tests
+  cover both Windows REG_DWORD shape and Linux KEY=VALUE shape on every
+  CI run.
+#>
 param (
     [Parameter()]
     [ValidateSet('winsrv2019', 'winsrv2022', 'winsrv2025')]

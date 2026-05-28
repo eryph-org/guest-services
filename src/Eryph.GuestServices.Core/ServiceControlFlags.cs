@@ -4,11 +4,11 @@ using Microsoft.Win32;
 namespace Eryph.GuestServices.Core;
 
 /// <summary>
-/// Operator on/off switches for the two top-level guest-services capabilities.
-/// Both are <b>opt-out</b>: a capability is ON unless an operator has explicitly
-/// turned it off. This is an injectable seam so the gated services
-/// (provisioning agent, remote-access transport) can be unit-tested without
-/// touching the real registry.
+/// Operator on/off switches for the top-level guest-services capabilities.
+/// All flags are <b>opt-out</b>: a capability is ON unless an operator has
+/// explicitly turned it off. This is an injectable seam so the gated services
+/// (provisioning agent, remote-access transport, KVP-auth honoring) can be
+/// unit-tested without touching the real config sources.
 /// </summary>
 public interface IServiceControlFlags
 {
@@ -37,25 +37,31 @@ public interface IServiceControlFlags
 }
 
 /// <summary>
-/// Default <see cref="IServiceControlFlags"/> implementation. Reads the opt-out
-/// flags from <c>HKLM\SOFTWARE\eryph\guest-services</c> on Windows; on every
-/// other platform both capabilities are always ON (the registry is
-/// Windows-only).
+/// Default <see cref="IServiceControlFlags"/> implementation. Reads opt-out
+/// flags from the platform-native config source:
+/// <list type="bullet">
+/// <item><description>Windows: <c>HKLM\SOFTWARE\eryph\guest-services</c>
+/// REG_DWORD values (<c>0</c> = off, anything else = on).</description></item>
+/// <item><description>Linux: <c>/etc/opt/eryph/guest-services/service-control.conf</c>
+/// in <c>KEY=VALUE</c> format (<c>0</c> / <c>false</c> = off, anything
+/// else = on). Blank lines and <c>#</c> comments are ignored.</description></item>
+/// </list>
 /// </summary>
 /// <remarks>
-/// These are <b>fail-open</b> flags: a missing key/value or any registry /
-/// permission error yields <c>true</c>. We never disable a capability because of
-/// a read error — only an explicit <c>REG_DWORD</c> value of <c>0</c> turns a
-/// capability off. The value→bool interpretation lives in the pure
-/// <see cref="InterpretFlag"/> helper so it can be unit-tested without writing
-/// to HKLM (which needs admin and pollutes the machine). The Windows-only
-/// registry access is split behind a <c>[SupportedOSPlatform("windows")]</c>
-/// core plus an <see cref="OperatingSystem.IsWindows"/> gate, mirroring
-/// <c>PlatformProbes</c> / <c>AzureDataSource</c> so CA1416 stays clean.
+/// These are <b>fail-open</b> flags: a missing key/value, missing file, or any
+/// I/O / permission error yields <c>true</c>. We never disable a capability
+/// because of a read error — only an explicit <c>0</c> (or <c>false</c> on
+/// Linux) turns a capability off. The value→bool interpretation lives in the
+/// pure <see cref="InterpretFlag"/> helper so it is unit-testable without
+/// admin rights, registry writes, or filesystem state. Platform-gated reads
+/// are split behind <c>[SupportedOSPlatform]</c> attributes plus an
+/// <see cref="OperatingSystem"/> gate so CA1416 stays clean.
 /// </remarks>
-public sealed class RegistryServiceControlFlags : IServiceControlFlags
+public sealed class PlatformServiceControlFlags : IServiceControlFlags
 {
-    internal const string ServiceControlKey = @"SOFTWARE\eryph\guest-services";
+    internal const string WindowsServiceControlKey = @"SOFTWARE\eryph\guest-services";
+    internal const string LinuxServiceControlConfigPath = "/etc/opt/eryph/guest-services/service-control.conf";
+
     internal const string ProvisioningEnabledValue = "ProvisioningEnabled";
     internal const string RemoteAccessEnabledValue = "RemoteAccessEnabled";
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
@@ -67,37 +73,83 @@ public sealed class RegistryServiceControlFlags : IServiceControlFlags
     public bool IsKvpAuthEnabled() => ReadFlag(KvpAuthEnabledValue);
 
     /// <summary>
-    /// Pure value→bool interpretation for an opt-out DWORD flag. A
-    /// <c>REG_DWORD</c> reads back as <see cref="int"/>: <c>0</c> means OFF,
-    /// any non-zero value means ON. A missing value (<c>null</c>) or any other
-    /// value kind means ON. Kept pure (no registry I/O) so the opt-out
-    /// semantics are unit-testable without admin or machine state.
+    /// Pure value→bool interpretation for an opt-out flag. Accepts the value
+    /// shapes both backends can produce. Off iff the value is an integer
+    /// <c>0</c> (Windows REG_DWORD), the string <c>"0"</c>, or the string
+    /// <c>"false"</c> (case-insensitive). Anything else — including
+    /// <see langword="null"/>, unrecognised shapes, or unparseable strings —
+    /// yields <c>true</c> (default ON / fail-open).
     /// </summary>
-    internal static bool InterpretFlag(object? regValue) =>
-        regValue is int i ? i != 0 : true;
+    internal static bool InterpretFlag(object? rawValue) => rawValue switch
+    {
+        null => true,
+        int i => i != 0,
+        string s when int.TryParse(s.Trim(), out var n) => n != 0,
+        string s when bool.TryParse(s.Trim(), out var b) => b,
+        _ => true,
+    };
 
     private static bool ReadFlag(string valueName)
     {
-        if (!OperatingSystem.IsWindows())
-            return true;
-
         try
         {
-            return ReadFlagCore(valueName);
+            if (OperatingSystem.IsWindows())
+                return ReadWindowsFlag(valueName);
+            if (OperatingSystem.IsLinux())
+                return ReadLinuxFlag(valueName);
+            return true;
         }
         catch
         {
-            // Fail-open: a registry / permission error must never disable a
-            // capability. These are opt-out flags; only an explicit 0 turns
-            // them off.
+            // Fail-open: any I/O / permission error must never disable a
+            // capability. These are opt-out flags; only an explicit "0" /
+            // "false" turns them off.
             return true;
         }
     }
 
     [SupportedOSPlatform("windows")]
-    private static bool ReadFlagCore(string valueName)
+    private static bool ReadWindowsFlag(string valueName)
     {
-        using var key = Registry.LocalMachine.OpenSubKey(ServiceControlKey);
+        using var key = Registry.LocalMachine.OpenSubKey(WindowsServiceControlKey);
         return InterpretFlag(key?.GetValue(valueName));
+    }
+
+    [SupportedOSPlatform("linux")]
+    private static bool ReadLinuxFlag(string valueName)
+    {
+        if (!File.Exists(LinuxServiceControlConfigPath))
+            return true;
+
+        foreach (var line in File.ReadAllLines(LinuxServiceControlConfigPath))
+        {
+            var entry = ParseConfigLine(line);
+            if (entry is null)
+                continue;
+            if (!string.Equals(entry.Value.key, valueName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return InterpretFlag(entry.Value.value);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Pure parser for a single line of the Linux service-control.conf file.
+    /// Returns <see langword="null"/> for blank lines and <c>#</c> comments,
+    /// or a <c>(key, value)</c> tuple for a well-formed <c>KEY=VALUE</c>
+    /// line. Whitespace around the key and value is trimmed.
+    /// </summary>
+    internal static (string key, string value)? ParseConfigLine(string line)
+    {
+        var trimmed = line.Trim();
+        if (trimmed.Length == 0 || trimmed[0] == '#')
+            return null;
+
+        var eq = trimmed.IndexOf('=');
+        if (eq <= 0)
+            return null;
+
+        return (trimmed[..eq].Trim(), trimmed[(eq + 1)..].Trim());
     }
 }

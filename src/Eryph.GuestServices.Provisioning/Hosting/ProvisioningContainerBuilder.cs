@@ -69,10 +69,11 @@ internal static class ProvisioningContainerBuilder
         // they're operator-configurable.
         container.RegisterInstance(options.Settings ?? ProvisioningSettings.LoadOrDefault());
 
-        // Operator on/off flags (HKLM\SOFTWARE\eryph\guest-services). Injected so
-        // ProvisioningHostedService can gate the first-boot run. Opt-out: ON
-        // unless an explicit REG_DWORD 0 turns it off.
-        container.Register<IServiceControlFlags, RegistryServiceControlFlags>(Lifestyle.Singleton);
+        // Operator on/off flags. Windows: HKLM\SOFTWARE\eryph\guest-services
+        // REG_DWORD values; Linux: /etc/opt/eryph/guest-services/service-control.conf
+        // KEY=VALUE lines. Injected so ProvisioningHostedService can gate the
+        // first-boot run. Opt-out: ON unless an explicit 0/false turns it off.
+        container.Register<IServiceControlFlags, PlatformServiceControlFlags>(Lifestyle.Singleton);
 
         // Data sources. The locator orders by IDataSource.Priority, not registration
         // order — Azure(10) -> EC2(20) -> NoCloud(30) -> ConfigDrive(40) ->
