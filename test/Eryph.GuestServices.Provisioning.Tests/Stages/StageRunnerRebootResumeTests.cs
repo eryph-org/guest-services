@@ -167,6 +167,31 @@ public sealed class StageRunnerRebootResumeTests
     }
 
     [Fact]
+    public async Task Context_IsRebootResume_is_false_on_first_run_and_true_after_reboot_request()
+    {
+        // The "one-shot" modules (SetHostname) rely on IModuleContext.IsRebootResume
+        // to know whether they are being re-entered after their own previous
+        // reboot request. Pin the wiring down at the StageRunner layer.
+        var data = MakeData("i-1");
+        var stateStore = new InMemoryStateStore();
+        var semaphoreStore = new InMemorySemaphoreStore();
+        var module = new RebootOnceThenCompleteModule_CapturesResumeFlag("needs-reboot");
+
+        var runner = BuildRunner(
+            locator: LocatorReturning(data),
+            stateStore: stateStore,
+            semaphoreStore: semaphoreStore,
+            modules: [module]);
+
+        var first = await runner.RunAsync(CancellationToken.None);
+        var second = await runner.RunAsync(CancellationToken.None);
+
+        first.Should().BeOfType<StageRunOutcome.RebootRequested>();
+        second.Should().BeOfType<StageRunOutcome.Success>();
+        module.IsRebootResumeObservations.Should().Equal(false, true);
+    }
+
+    [Fact]
     public async Task Per_module_reboot_cap_fails_the_run_instead_of_looping_forever()
     {
         // A misbehaving module returns Reboot forever. Without a cap the
@@ -374,6 +399,20 @@ public sealed class StageRunnerRebootResumeTests
         {
             trace.Add(label);
             return Task.FromResult(ModuleOutcome.Ok());
+        }
+    }
+
+    [Stage(Stage.Final, Order = 0)]
+    private sealed class RebootOnceThenCompleteModule_CapturesResumeFlag(string reason) : IModule
+    {
+        public List<bool> IsRebootResumeObservations { get; } = new();
+
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken)
+        {
+            IsRebootResumeObservations.Add(context.IsRebootResume);
+            return IsRebootResumeObservations.Count == 1
+                ? Task.FromResult<ModuleOutcome>(ModuleOutcome.Reboot(reason))
+                : Task.FromResult(ModuleOutcome.Ok());
         }
     }
 

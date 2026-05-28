@@ -145,6 +145,85 @@ public sealed class SetHostnameModuleTests
         await os.Received().SetComputerNameAsync("a", Arg.Any<CancellationToken>());
     }
 
+    // Regression: a 17-char hostname like "remote-access-e2e" exceeds the 15-char
+    // Windows NetBIOS limit. Without truncation the OS layer compares the long
+    // desired name against the post-rename, already-truncated Environment.MachineName
+    // ("REMOTE-ACCESS-E"), the comparison never matches, and the module
+    // requests a reboot on every run — reboot-looping until the cap kicks in.
+    [Fact]
+    public async Task Truncates_hostname_to_netbios_max_length()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("remote-access-e", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel { Hostname = "remote-access-e2e" }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().SetComputerNameAsync("remote-access-e", Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetComputerNameAsync("remote-access-e2e", Arg.Any<CancellationToken>());
+    }
+
+    // The same truncation must apply when the name is derived from the
+    // first label of an fqdn — otherwise an fqdn whose first label is > 15
+    // chars would still reboot-loop.
+    [Fact]
+    public async Task Truncates_fqdn_first_label_to_netbios_max_length()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("remote-access-e", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel { Fqdn = "remote-access-e2e.example.com" }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().SetComputerNameAsync("remote-access-e", Arg.Any<CancellationToken>());
+    }
+
+    // One-shot guard: after the StageRunner re-enters us post-reboot the
+    // module accepts whatever the OS settled on and completes. No second
+    // rename attempt — even if Environment.MachineName disagrees with what
+    // we requested for some reason we did not anticipate.
+    [Fact]
+    public async Task Reboot_resume_does_not_rename_again_even_when_machine_name_differs()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.GetComputerNameAsync(Arg.Any<CancellationToken>()).Returns("OS-NORMALIZED");
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel { Hostname = "some-other-name" }),
+            new TestModuleContext(os, isRebootResume: true),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Reboot_resume_completes_quietly_when_machine_name_matches()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.GetComputerNameAsync(Arg.Any<CancellationToken>()).Returns("box");
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel { Hostname = "box" }),
+            new TestModuleContext(os, isRebootResume: true),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Returns_completed_when_name_is_already_set()
     {

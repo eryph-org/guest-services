@@ -21,4 +21,17 @@ public interface IModuleContext
     /// </list>
     /// </summary>
     DataSourceResult DataSource { get; }
+
+    /// <summary>
+    /// True when the StageRunner is re-entering this module after a previous
+    /// run for the same instance returned
+    /// <see cref="ModuleOutcome.RebootRequested"/>. Lets a module make its
+    /// rename/reconfigure work one-shot: do it on the first pass, accept
+    /// whatever post-reboot state the OS settled on, and complete — instead
+    /// of comparing-and-retrying, which can reboot-loop when the OS
+    /// normalizes the value (e.g. NetBIOS-truncates a 17-char hostname so
+    /// the post-reboot <c>Environment.MachineName</c> no longer matches the
+    /// requested name verbatim).
+    /// </summary>
+    bool IsRebootResume { get; }
 }

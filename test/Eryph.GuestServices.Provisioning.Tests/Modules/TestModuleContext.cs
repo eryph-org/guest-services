@@ -6,7 +6,10 @@ namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
 internal sealed class TestModuleContext : IModuleContext
 {
-    public TestModuleContext(IWindowsOs os, DataSourceResult? dataSource = null)
+    public TestModuleContext(
+        IWindowsOs os,
+        DataSourceResult? dataSource = null,
+        bool isRebootResume = false)
     {
         Os = os;
         DataSource = dataSource ?? new DataSourceResult
@@ -14,9 +17,12 @@ internal sealed class TestModuleContext : IModuleContext
             SourceName = "test",
             InstanceId = "test-instance",
         };
+        IsRebootResume = isRebootResume;
     }
 
     public IWindowsOs Os { get; }
 
     public DataSourceResult DataSource { get; }
+
+    public bool IsRebootResume { get; }
 }
