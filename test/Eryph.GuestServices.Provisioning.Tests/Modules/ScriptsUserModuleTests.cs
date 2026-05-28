@@ -60,14 +60,14 @@ public sealed class ScriptsUserModuleTests
 
         outcome.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().WriteFileAsync(Arg.Any<string>(), Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task ApplyAsync_PowerShellScript_StagesAndExecutesViaPowerShell()
     {
         var os = CreateOs();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "ok", ""));
         var module = CreateModule();
 
@@ -86,6 +86,8 @@ public sealed class ScriptsUserModuleTests
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv =>
                 argv[0] == "powershell.exe" && argv.Contains("-Command")),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -93,7 +95,7 @@ public sealed class ScriptsUserModuleTests
     public async Task ApplyAsync_ScriptExitCode1003_ReturnsRebootRequested()
     {
         var os = CreateOs();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
         var module = CreateModule();
 
@@ -110,7 +112,7 @@ public sealed class ScriptsUserModuleTests
     public async Task ApplyAsync_MultipleScripts_StagesWithSequentialNamesAndIndices()
     {
         var os = CreateOs();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
         var module = CreateModule();
 
@@ -151,7 +153,7 @@ public sealed class ScriptsUserModuleTests
     public async Task ApplyAsync_CbiShape_ShellscriptPartWithPs1FilenameAndNoShebang_DispatchesAsPowerShell()
     {
         var os = CreateOs();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
         var module = CreateModule();
 
@@ -182,6 +184,8 @@ public sealed class ScriptsUserModuleTests
                 && argv.Contains("-ExecutionPolicy")
                 && argv.Contains("Bypass")
                 && argv.Contains("-Command")),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -201,14 +205,14 @@ public sealed class ScriptsUserModuleTests
         await os.DidNotReceive().WriteFileAsync(
             Arg.Is<string>(p => p.Contains("garbage")),
             Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task ApplyAsync_OnSuccess_EmitsProgressEventAndWritesPerScriptLog()
     {
         var os = CreateOs();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "captured-stdout", "captured-stderr"));
         var reporter = Substitute.For<IReportingDispatcher>();
         var module = CreateModule(reporter);

@@ -26,13 +26,10 @@ the run.
     "perInstanceDirectory": "%ProgramData%\\eryph\\provisioning\\scripts\\per-instance",
     "scriptTimeoutMinutes": 60
   },
-  "runcmd": {
-    "maxRebootsPerEntry": 10,
-    "allowScriptOverride": true
-  },
   "reboot": {
     "maxPerModule": 3,
-    "maxPerScript": 2
+    "maxPerScript": 10,
+    "allowScriptOverride": true
   },
   "defaultUser": {
     "name": "Administrator",
@@ -83,24 +80,15 @@ all sources so a typo can't disable provisioning. Valid names: `Azure`, `EC2`,
 | `perInstanceDirectory` | `%ProgramData%\eryph\provisioning\scripts\per-instance` | Where user-data scripts are staged. Environment variables are expanded. |
 | `scriptTimeoutMinutes` | 60 | Per-script timeout. Not enforced yet. |
 
-## runcmd
-
-Per-entry reboot quota for the `Runcmd` module. See
-[Runcmd](modules.md#runcmd).
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `maxRebootsPerEntry` | 10 | How many reboots one runcmd entry may ask for before the entry is failed. |
-| `allowScriptOverride` | true | When true, a runcmd entry can raise its own cap with `##egs.runcmd.reboot_limit=<n>` on stdout. |
-
 ## reboot
 
-Caps against runaway reboot-and-continue loops.
+Caps for the cbi-style reboot-and-continue (exit `1001` / `1003`) convention.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `maxPerModule` | 3 | How many times a module may ask for a reboot before the run fails. Reboots requested by `runcmd` entries or user scripts do not count here — they're bounded by `runcmd.maxRebootsPerEntry` and `maxPerScript`. |
-| `maxPerScript` | 2 | How many reboots one user script (under `ScriptsUser`) may ask for before that script is failed. |
+| `maxPerModule` | 3 | How many times a module may ask for a reboot of its own accord before the run fails. Reboots requested by `runcmd` entries or user scripts do not count here — those are bounded by `maxPerScript`. |
+| `maxPerScript` | 10 | How many reboots one piece of user code (a `runcmd` entry or a `ScriptsUser` script) may ask for before it is failed. |
+| `allowScriptOverride` | true | When true, user code can raise its own per-script cap on this run with `##egs.reboot_limit=<n>` on stdout. The raised cap is persisted across reboots so the directive only needs to be emitted once. |
 
 ## defaultUser
 

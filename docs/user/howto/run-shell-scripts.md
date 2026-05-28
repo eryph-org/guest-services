@@ -40,16 +40,15 @@ Two exit codes ask the guest to reboot mid-run:
 
 - `1001` — reboot, then move on to the next script / runcmd entry.
 - `1003` — reboot, then re-run **this same script / entry**. Use for
-  multi-stage installers; branch on `EGS_RUNCMD_REBOOT_COUNT` in runcmd
-  entries (see [Runcmd](../reference/modules.md#runcmd)).
+  multi-stage installers; branch on `EGS_REBOOT_COUNT` (see
+  [Runcmd](../reference/modules.md#runcmd) for the full env var list).
 
 Any other non-zero exit is logged and the next script still runs. The exit
 code is in the per-script log.
 
-Reboot caps: a runcmd entry may ask for up to `runcmd.maxRebootsPerEntry`
-reboots (default 10); a user script under `ScriptsUser` is bounded by
-`reboot.maxPerScript` (default 2). A runcmd entry can raise its own cap with
-`##egs.runcmd.reboot_limit=<n>` on stdout.
+A script (whether a runcmd entry or a multipart-shebang script) may ask for at
+most `reboot.maxPerScript` reboots (default 10) before it is failed. A script
+can raise its own cap with `##egs.reboot_limit=<n>` on stdout.
 
 ## Example: a script in a multipart payload
 

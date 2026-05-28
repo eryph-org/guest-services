@@ -118,10 +118,20 @@ internal sealed class ScriptsUserModule(
                 continue;
             }
 
+            // Surface the same EGS_* env vars to user scripts that runcmd
+            // entries see, so the same multi-stage installer pattern works
+            // here (a script can branch on EGS_REBOOT_COUNT).
+            var rebootKeyForEnv = $"{ordinal}:{bodyHash}";
+            var rebootCountForEnv = checkpoint.RebootCounts.GetValueOrDefault(rebootKeyForEnv);
+            var effectiveLimit = checkpoint.OverrideLimits.GetValueOrDefault(rebootKeyForEnv) is var ol && ol > 0
+                ? ol
+                : MaxRebootsPerScript;
+            var envVars = RebootEnvVars.Build(ordinal, rebootCountForEnv, effectiveLimit);
+
             RunCommandResult result;
             try
             {
-                result = await ExecuteAsync(scriptPath, script.Kind, context, cancellationToken).ConfigureAwait(false);
+                result = await ExecuteAsync(scriptPath, script.Kind, envVars, context, cancellationToken).ConfigureAwait(false);
             }
             catch (NotSupportedException ex)
             {
@@ -143,16 +153,24 @@ internal sealed class ScriptsUserModule(
             if (result.ExitCode == RebootAndDoneExitCode ||
                 result.ExitCode == RebootRequestedExitCode)
             {
+                // The script may raise its own per-script cap on this run via
+                // ##egs.reboot_limit=N on stdout. The raise persists across
+                // reboots so the directive only needs to be emitted once.
+                var rebootKey = rebootKeyForEnv;
+                var emittedRaise = RebootDirective.ParseRaise(
+                    result.StdOut, effectiveLimit, settings.Reboot.AllowScriptOverride,
+                    ordinal, "script", logger);
+                var resolvedLimit = emittedRaise ?? effectiveLimit;
+
                 // Per-script reboot quota: the same (ordinal, body-hash) may
-                // request reboot at most MaxRebootsPerScript times. Past that
-                // we treat it as a stuck installer and fail rather than loop.
-                var rebootKey = $"{ordinal}:{bodyHash}";
+                // request reboot at most `resolvedLimit` times. Past that we
+                // treat it as a stuck installer and fail rather than loop.
                 var rebootCount = checkpoint.RebootCounts.GetValueOrDefault(rebootKey) + 1;
-                if (rebootCount > MaxRebootsPerScript)
+                if (rebootCount > resolvedLimit)
                 {
                     logger.LogError(
                         "Script #{Index} ({Path}) exceeded per-script reboot quota ({Quota}). Failing.",
-                        ordinal, scriptPath, MaxRebootsPerScript);
+                        ordinal, scriptPath, resolvedLimit);
                     var updatedCounts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
                     {
                         [rebootKey] = rebootCount,
@@ -182,7 +200,24 @@ internal sealed class ScriptsUserModule(
                 {
                     [rebootKey] = rebootCount,
                 };
-                checkpoint = checkpoint with { Executed = executed, RebootCounts = counts };
+                // Persist the raised limit only when the script actually
+                // emitted a directive on THIS run; otherwise keep the prior
+                // stored value (or absence) so a later setting change to
+                // MaxPerScript takes effect.
+                var overrides = checkpoint.OverrideLimits;
+                if (emittedRaise is int raise)
+                {
+                    overrides = new Dictionary<string, int>(checkpoint.OverrideLimits, StringComparer.Ordinal)
+                    {
+                        [rebootKey] = raise,
+                    };
+                }
+                checkpoint = checkpoint with
+                {
+                    Executed = executed,
+                    RebootCounts = counts,
+                    OverrideLimits = overrides,
+                };
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
 
                 // Script-driven reboot: bypass the per-module cap. The
@@ -253,6 +288,7 @@ internal sealed class ScriptsUserModule(
     private static async Task<RunCommandResult> ExecuteAsync(
         string scriptPath,
         ScriptKind kind,
+        IReadOnlyDictionary<string, string> environment,
         IModuleContext context,
         CancellationToken cancellationToken)
     {
@@ -270,10 +306,12 @@ internal sealed class ScriptsUserModule(
                     "-ExecutionPolicy", "Bypass",
                     "-Command", PowerShellScriptWrapper.BuildScriptWrapper(scriptPath),
                 ],
+                environment,
                 cancellationToken).ConfigureAwait(false),
 
             ScriptKind.Cmd => await context.Os.RunArgvCommandAsync(
                 ["cmd.exe", "/c", scriptPath],
+                environment,
                 cancellationToken).ConfigureAwait(false),
 
             // ScriptKind.ShellScript should never reach this point on Windows

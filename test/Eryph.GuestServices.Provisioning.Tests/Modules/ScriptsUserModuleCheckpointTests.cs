@@ -50,9 +50,13 @@ public sealed class ScriptsUserModuleCheckpointTests
         // index "-File <path>" or similar.
         os.RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(1003, "", ""));
         os.RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1") || s.Contains("002-two.ps1") || s.Contains("004-four.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(0, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -77,19 +81,25 @@ public sealed class ScriptsUserModuleCheckpointTests
         outcome1.Should().BeOfType<ModuleOutcome.RebootRequested>();
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
         await os.DidNotReceive().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
 
         // Round 2 (post-reboot resume): scripts 1, 2, 3 are checkpointed →
         // skipped. Script 4 executes for the first time.
         os.ClearReceivedCalls();
         // Round-2 calls all return 0 (Hyper-V finished installing across the reboot).
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
         var outcome2 = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
@@ -105,10 +115,14 @@ public sealed class ScriptsUserModuleCheckpointTests
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1")
                                                                 || s.Contains("002-two.ps1")
                                                                 || s.Contains("003-three.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
         // Script 4 must run.
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -121,10 +135,14 @@ public sealed class ScriptsUserModuleCheckpointTests
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(
                 Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-installer.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+
                 Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1001, "", ""));
         os.RunArgvCommandAsync(
                 Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+
                 Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
@@ -153,9 +171,13 @@ public sealed class ScriptsUserModuleCheckpointTests
         outcome2.Should().BeOfType<ModuleOutcome.Completed>();
         await os.DidNotReceive().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-installer.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -163,7 +185,7 @@ public sealed class ScriptsUserModuleCheckpointTests
     public async Task Exit_1003_returns_script_driven_reboot_so_module_cap_is_bypassed()
     {
         var os = Substitute.For<IWindowsOs>();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -188,10 +210,14 @@ public sealed class ScriptsUserModuleCheckpointTests
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(
                 Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-deferred.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+
                 Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1002, "", ""));
         os.RunArgvCommandAsync(
                 Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+
                 Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
@@ -214,6 +240,8 @@ public sealed class ScriptsUserModuleCheckpointTests
         outcome.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -223,7 +251,7 @@ public sealed class ScriptsUserModuleCheckpointTests
         // Body-hash protection: if the operator edits a script between runs,
         // its checkpoint entry no longer matches and the new body runs.
         var os = Substitute.For<IWindowsOs>();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(0, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -246,6 +274,8 @@ public sealed class ScriptsUserModuleCheckpointTests
         // -File argv entry, so we substring-match the staged filename.
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-edit.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+
             Arg.Any<CancellationToken>());
     }
 
@@ -253,13 +283,19 @@ public sealed class ScriptsUserModuleCheckpointTests
     public async Task Per_script_reboot_quota_fails_after_repeated_1003_without_progress()
     {
         // A broken installer that returns 1003 on every invocation must
-        // eventually be failed rather than looped forever (MaxRebootsPerScript = 2).
+        // eventually be failed rather than looped forever. Pin the cap
+        // explicitly so the test stays compact regardless of default changes.
         var os = Substitute.For<IWindowsOs>();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
-        var module = CreateModule(checkpoint);
+        var settings = new ProvisioningSettings
+        {
+            Scripts = new ScriptSettings { PerInstanceDirectory = @"C:\temp\eryph-scripts-test" },
+            Reboot = new RebootSettings { MaxPerScript = 2 },
+        };
+        var module = CreateModule(checkpoint, settings);
         var ctx = new TestModuleContext(os);
 
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
@@ -301,7 +337,7 @@ public sealed class ScriptsUserModuleCheckpointTests
         // A tighter cap of 1 must fail on the SECOND 1003 (after one reboot),
         // proving the quota reads from ProvisioningSettings.Reboot.MaxPerScript.
         var os = Substitute.For<IWindowsOs>();
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -327,5 +363,71 @@ public sealed class ScriptsUserModuleCheckpointTests
         var second = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
         second.Should().BeOfType<ModuleOutcome.Failed>(
             "with MaxPerScript=1 the second 1003 trips the quota");
+    }
+
+    [Fact]
+    public async Task Script_can_raise_its_own_reboot_limit_via_directive()
+    {
+        // A user script emits ##egs.reboot_limit=N on stdout to raise its own
+        // per-script cap. Parallel to runcmd's directive.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1003, "##egs.reboot_limit=5\n", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var settings = new ProvisioningSettings
+        {
+            Scripts = new ScriptSettings { PerInstanceDirectory = @"C:\temp\eryph-scripts-test" },
+            Reboot = new RebootSettings { MaxPerScript = 2 },
+        };
+        var module = CreateModule(checkpoint, settings);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# raise"), "longinstaller.ps1")] };
+
+        // Without the directive a cap of 2 would fail on the third 1003.
+        // With the directive raising to 5, the third must still reboot.
+        for (var i = 0; i < 3; i++)
+        {
+            await checkpoint.SaveAsync(
+                "test-instance",
+                (await checkpoint.LoadAsync("test-instance", CancellationToken.None)) with { Executed = [] },
+                CancellationToken.None);
+            var outcome = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+            outcome.Should().BeOfType<ModuleOutcome.RebootRequested>(
+                "iteration {0}: directive raised limit to 5", i);
+        }
+    }
+
+    [Fact]
+    public async Task Script_receives_EGS_REBOOT_env_vars()
+    {
+        IReadOnlyDictionary<string, string>? captured = null;
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(
+                Arg.Any<IReadOnlyList<string>>(),
+                Arg.Do<IReadOnlyDictionary<string, string>>(env => captured = env),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var settings = new ProvisioningSettings
+        {
+            Scripts = new ScriptSettings { PerInstanceDirectory = @"C:\temp\eryph-scripts-test" },
+            Reboot = new RebootSettings { MaxPerScript = 7 },
+        };
+        var module = CreateModule(checkpoint, settings);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# envtest"), "envtest.ps1")] };
+
+        await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!["EGS_ENTRY_INDEX"].Should().Be("1");
+        captured["EGS_REBOOT_COUNT"].Should().Be("0");
+        captured["EGS_REBOOT_LIMIT"].Should().Be("7");
     }
 }

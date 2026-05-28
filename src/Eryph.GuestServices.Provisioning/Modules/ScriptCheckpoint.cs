@@ -20,6 +20,14 @@ public sealed record ScriptCheckpoint
     /// </summary>
     public Dictionary<string, int> RebootCounts { get; init; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Per-script raised reboot limit, set by a script emitting
+    /// <c>##egs.reboot_limit=&lt;n&gt;</c> on stdout. Persisted so the script
+    /// only needs to emit the directive once. Null entry (or missing key) =
+    /// no override; the configured default applies.
+    /// </summary>
+    public Dictionary<string, int> OverrideLimits { get; init; } = new(StringComparer.Ordinal);
+
     public static ScriptCheckpoint Empty => new();
 
     public bool Contains(int ordinal, string bodyHash) =>

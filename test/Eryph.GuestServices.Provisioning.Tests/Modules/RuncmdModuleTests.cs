@@ -140,7 +140,7 @@ public sealed class RuncmdModuleTests
             .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 2 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -161,15 +161,15 @@ public sealed class RuncmdModuleTests
     [Fact]
     public async Task Honors_script_emitted_directive_to_raise_per_entry_limit()
     {
-        // First attempt returns 1003 with stdout `##egs.runcmd.reboot_limit=5`,
+        // First attempt returns 1003 with stdout `##egs.reboot_limit=5`,
         // raising the limit past the configured default (2). The 3rd attempt
         // — which would have failed at the default — succeeds.
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=5\n", ""));
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.reboot_limit=5\n", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 2 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -195,13 +195,13 @@ public sealed class RuncmdModuleTests
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(
-                new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=4\n", ""),
+                new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.reboot_limit=4\n", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 2 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -216,7 +216,7 @@ public sealed class RuncmdModuleTests
         }
     }
 
-    // Regression: the injected EGS_RUNCMD_REBOOT_LIMIT env var has the same
+    // Regression: the injected EGS_REBOOT_LIMIT env var has the same
     // shape as a `KEY=VALUE` line. If the directive token were also a
     // KEY=VALUE line (the pre-fix marker), a script that dumps its
     // environment would trip the parser and silently raise its own limit.
@@ -227,14 +227,14 @@ public sealed class RuncmdModuleTests
     {
         // Simulated env dump: the kind of output you'd get from `set` in cmd,
         // `Get-ChildItem Env:` in PS, or `env` in bash. The injected
-        // EGS_RUNCMD_REBOOT_LIMIT=2 line MUST NOT be picked up as a directive.
-        const string fakeEnvDump = "PATH=C:\\Windows\nUSERPROFILE=C:\\Users\\test\nEGS_RUNCMD_ENTRY_INDEX=1\nEGS_RUNCMD_REBOOT_COUNT=0\nEGS_RUNCMD_REBOOT_LIMIT=2\n";
+        // EGS_REBOOT_LIMIT=2 line MUST NOT be picked up as a directive.
+        const string fakeEnvDump = "PATH=C:\\Windows\nUSERPROFILE=C:\\Users\\test\nEGS_ENTRY_INDEX=1\nEGS_REBOOT_COUNT=0\nEGS_REBOOT_LIMIT=2\n";
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, fakeEnvDump, ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 2 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -260,10 +260,10 @@ public sealed class RuncmdModuleTests
     {
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=1\n", ""));
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.reboot_limit=1\n", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 5 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 5 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -312,12 +312,12 @@ public sealed class RuncmdModuleTests
     {
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=99\n", ""));
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.reboot_limit=99\n", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
         var settings = new ProvisioningSettings
         {
-            Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 1, AllowScriptOverride = false },
+            Reboot = new RebootSettings { MaxPerScript = 1, AllowScriptOverride = false },
         };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
@@ -339,10 +339,10 @@ public sealed class RuncmdModuleTests
     {
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", "##egs.runcmd.reboot_limit=99\n"));
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", "##egs.reboot_limit=99\n"));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 1 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 1 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -367,7 +367,7 @@ public sealed class RuncmdModuleTests
             .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
-        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 7 } };
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 7 } };
         var module = CreateModule(settings, checkpointStore);
         var userData = ResolvedUserData.Empty(new CloudConfigModel
         {
@@ -377,14 +377,14 @@ public sealed class RuncmdModuleTests
         await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
         captured.Should().NotBeNull();
-        captured!["EGS_RUNCMD_ENTRY_INDEX"].Should().Be("1");
-        captured["EGS_RUNCMD_REBOOT_COUNT"].Should().Be("0");
-        captured["EGS_RUNCMD_REBOOT_LIMIT"].Should().Be("7");
+        captured!["EGS_ENTRY_INDEX"].Should().Be("1");
+        captured["EGS_REBOOT_COUNT"].Should().Be("0");
+        captured["EGS_REBOOT_LIMIT"].Should().Be("7");
 
         // After one reboot, the count must reflect the persisted attempt.
         captured = null;
         await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
-        captured!["EGS_RUNCMD_REBOOT_COUNT"].Should().Be("1");
+        captured!["EGS_REBOOT_COUNT"].Should().Be("1");
     }
 
     [Fact]

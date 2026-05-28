@@ -25,9 +25,9 @@ as they do under cbi; `1002` is not supported. The Hyper-V KVP reporting
 protocol and POSIX-permission-to-NTFS-ACL translation also behave as they do
 under cbi.
 
-Each runcmd entry has its own reboot quota and sees `EGS_RUNCMD_ENTRY_INDEX`,
-`EGS_RUNCMD_REBOOT_COUNT`, and `EGS_RUNCMD_REBOOT_LIMIT` in its environment.
-See [Runcmd](../reference/modules.md#runcmd).
+Each runcmd entry and each ScriptsUser script has its own per-script reboot
+quota and sees `EGS_ENTRY_INDEX`, `EGS_REBOOT_COUNT`, and `EGS_REBOOT_LIMIT` in
+its environment. See [Runcmd](../reference/modules.md#runcmd).
 
 For what's ready outside eryph and what's still missing, see
 [Windows cloud-init status](windows-cloud-init-status.md).

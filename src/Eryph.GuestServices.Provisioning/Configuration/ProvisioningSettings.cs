@@ -16,8 +16,6 @@ public sealed class ProvisioningSettings
 
     public ScriptSettings Scripts { get; init; } = new();
 
-    public RuncmdSettings Runcmd { get; init; } = new();
-
     public RebootSettings Reboot { get; init; } = new();
 
     /// <summary>
@@ -78,7 +76,6 @@ public sealed class ProvisioningSettings
                 UserData = loaded.UserData ?? new UserDataSettings(),
                 DataSources = loaded.DataSources ?? new DataSourceSettings(),
                 Scripts = loaded.Scripts ?? new ScriptSettings(),
-                Runcmd = loaded.Runcmd ?? new RuncmdSettings(),
                 Reboot = loaded.Reboot ?? new RebootSettings(),
                 DefaultUser = loaded.DefaultUser ?? new DefaultUserSettings(),
                 Stages = loaded.Stages,
@@ -212,45 +209,38 @@ public sealed class ScriptSettings
 }
 
 /// <summary>
-/// Tunables for the runcmd module's per-entry reboot quota.
-/// </summary>
-public sealed class RuncmdSettings
-{
-    /// <summary>
-    /// Maximum number of reboots a single runcmd entry may request
-    /// (cloudbase-init exit codes 1001 / 1003) before the module fails the
-    /// run. A multi-stage installer (driver → reboot → role → reboot → done)
-    /// is expected to fit well within this budget. Default 10.
-    /// </summary>
-    public int MaxRebootsPerEntry { get; init; } = 10;
-
-    /// <summary>
-    /// When true, the module honours a script-emitted
-    /// <c>EGS_RUNCMD_REBOOT_LIMIT=&lt;n&gt;</c> stdout marker that bumps the
-    /// per-entry limit for that entry. The value is persisted in the
-    /// entry's checkpoint and remembered across reboots. Set false to
-    /// pin every entry to <see cref="MaxRebootsPerEntry"/>.
-    /// </summary>
-    public bool AllowScriptOverride { get; init; } = true;
-}
-
-/// <summary>
-/// Loop-safety caps for the cloudbase-init "reboot-and-continue" (exit 1003)
-/// convention. Two independent guards (see docs/bugs/0001 "loop-safety"):
-/// <see cref="MaxPerModule"/> bounds how often the StageRunner re-enters the
-/// same module, while <see cref="MaxPerScript"/> bounds reboots for a single
-/// (ordinal, body-hash) script inside ScriptsUser. The per-script cap is the
-/// tighter inner guard; the per-module cap is the outer backstop. Defaults
-/// match the historical hard-coded values, so behaviour is unchanged unless
-/// configured.
+/// Caps for the cloudbase-init "reboot-and-continue" (exit 1001 / 1003)
+/// convention. The two caps cover different blast radii:
+/// <see cref="MaxPerModule"/> bounds an infrastructure module that asks for a
+/// reboot of its own accord; <see cref="MaxPerScript"/> bounds a single piece
+/// of user code (a runcmd entry or a ScriptsUser script) asking for repeated
+/// reboots.
 /// </summary>
 public sealed class RebootSettings
 {
-    /// <summary>Max times a single module may return RebootRequested before the run fails.</summary>
+    /// <summary>
+    /// Max times a single module may return RebootRequested on its own accord
+    /// before the run fails. Script-driven reboots (1001 / 1003 relayed from a
+    /// runcmd entry or user script) are exempt — those are bounded by
+    /// <see cref="MaxPerScript"/>.
+    /// </summary>
     public int MaxPerModule { get; init; } = 3;
 
-    /// <summary>Max reboots a single (ordinal, body-hash) script may request before it fails.</summary>
-    public int MaxPerScript { get; init; } = 2;
+    /// <summary>
+    /// Max reboots a single piece of user code may request before it is
+    /// failed. Applies to both runcmd entries (keyed by ordinal + content
+    /// hash) and ScriptsUser scripts (keyed by ordinal + body hash). A
+    /// multi-stage installer is expected to fit within this budget.
+    /// </summary>
+    public int MaxPerScript { get; init; } = 10;
+
+    /// <summary>
+    /// When true, user code can raise its own per-script reboot limit by
+    /// emitting <c>##egs.reboot_limit=&lt;n&gt;</c> on stdout. The raise is
+    /// persisted in the module's checkpoint so the directive only needs to be
+    /// emitted once. Set false to make <see cref="MaxPerScript"/> a hard cap.
+    /// </summary>
+    public bool AllowScriptOverride { get; init; } = true;
 }
 
 /// <summary>
