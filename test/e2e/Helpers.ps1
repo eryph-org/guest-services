@@ -13,6 +13,7 @@
 # Pinning to %WINDIR%\System32\OpenSSH\ssh.exe guarantees the same client
 # the docs and ssh_config generation target.
 $script:WinSshExe = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
+$script:WinScpExe = Join-Path $env:WINDIR 'System32\OpenSSH\scp.exe'
 if (-not (Test-Path -LiteralPath $script:WinSshExe)) {
   throw "Windows OpenSSH ssh.exe not found at $($script:WinSshExe); install the 'OpenSSH.Client' optional feature."
 }
@@ -1184,5 +1185,274 @@ function Set-OfflineProvisioningSettings {
   }
   finally {
     Dismount-CatletVhd -VhdPath $mount.VhdPath
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Linux catlet helpers — direct sshd as the admin channel
+# ---------------------------------------------------------------------------
+#
+# PowerShell Direct does NOT work for Linux guests (Hyper-V VMBus PSDirect is
+# Windows-guest only). On Linux the admin channel is plain OpenSSH on TCP/22
+# as the OS user the linux-starter fodder gene provisioned with our public
+# key — cloud-init enables sshd by default on Ubuntu, so the channel exists
+# from first boot. Same architectural property as PsDirect on Windows: the
+# channel is INDEPENDENT of eryph-guest-services, so we can stop/start that
+# service without losing the session.
+
+function Invoke-CatletAdminSshLinux {
+  <#
+  .SYNOPSIS
+    Runs a shell command on a Linux catlet over its direct sshd, as the
+    cloud-init-provisioned admin user, authenticated by the host's
+    egs-tool private key (whose public half the linux-starter fodder
+    placed in the user's authorized_keys).
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [string] $Command,
+    [Parameter()] [int] $ConnectTimeoutSeconds = 15
+  )
+
+  $catletIp = (Get-CatletIp -Id $Catlet.Id).IpAddress
+  if (-not $catletIp) {
+    throw "Get-CatletIp returned no IP for $($Catlet.Name); admin channel unreachable."
+  }
+  $idEgs = Join-Path $env:ProgramData 'eryph\guest-services\private\id_egs'
+  # -F NUL to bypass any local ssh_config Host blocks (egs-tool
+  # update-ssh-config writes *.eryph.alt/*.hyper-v.alt patterns, but the
+  # IP target shouldn't match — be defensive).
+  return & $script:WinSshExe `
+    -F NUL `
+    -i $idEgs `
+    -o IdentitiesOnly=yes `
+    -o StrictHostKeyChecking=no `
+    -o "UserKnownHostsFile=$env:TEMP\egs-linux-known_hosts.tmp" `
+    -o BatchMode=yes `
+    -o "ConnectTimeout=$ConnectTimeoutSeconds" `
+    "$Username@$catletIp" $Command
+}
+
+function Wait-LinuxCatletSshReady {
+  <#
+  .SYNOPSIS
+    Polls direct sshd on the catlet's IP as the admin user until a probe
+    command (or `true`) returns 0. Times out with throw.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter()] [timespan] $Timeout = (New-TimeSpan -Minutes 10),
+    [Parameter()] [timespan] $Interval = (New-TimeSpan -Seconds 5)
+  )
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $deadline = (Get-Date).Add($Timeout)
+    while ((Get-Date) -lt $deadline) {
+      Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username -Command 'true' 2>&1 | Out-Null
+      if ($LASTEXITCODE -eq 0) { return }
+      Start-Sleep -Seconds $Interval.TotalSeconds
+    }
+    throw "Linux catlet $($Catlet.Name) sshd did not become reachable within $($Timeout.TotalSeconds)s."
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
+function Update-EgsServiceLinuxOnline {
+  <#
+  .SYNOPSIS
+    Replaces the egs-service binaries on a running Linux catlet with a
+    locally-built linux-x64 publish, preserving /etc/opt/eryph/guest-services
+    (host key + id_egs.pub live there). Restarts the systemd unit
+    `eryph-guest-services` via direct sshd — never via the egs vsock
+    channel.
+
+  .NOTES
+    Per project memory, a single-DLL hot-swap is unsafe (ABI mismatch
+    between mixed builds → crash-loop). This helper REPLACES the entire
+    bin directory contents.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [string] $PublishPath
+  )
+
+  if (-not (Test-Path -LiteralPath $PublishPath)) {
+    throw "PublishPath not found: $PublishPath. Run 'dotnet publish -r linux-x64' first."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $PublishPath 'egs-service'))) {
+    throw "egs-service binary not present under $PublishPath; check publish target (linux-x64)."
+  }
+
+  $catletIp = (Get-CatletIp -Id $Catlet.Id).IpAddress
+  if (-not $catletIp) { throw "No IP for $($Catlet.Name)" }
+  $idEgs = Join-Path $env:ProgramData 'eryph\guest-services\private\id_egs'
+
+  # Staging dir in the user's home — scp can write there without sudo;
+  # the install step then moves the files with sudo.
+  $stamp = [guid]::NewGuid().ToString('N').Substring(0, 8)
+  $remoteDir = "/tmp/egs-publish-$stamp"
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command "mkdir -p $remoteDir" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to create staging dir on $($Catlet.Name)." }
+
+    Write-Verbose "Uploading $PublishPath -> $($Catlet.Name):$remoteDir"
+    # scp -r copies directory contents recursively. Bash's brace
+    # expansion isn't portable here — let scp do the recursion.
+    & $script:WinScpExe `
+      -i $idEgs `
+      -o IdentitiesOnly=yes `
+      -o StrictHostKeyChecking=no `
+      -o "UserKnownHostsFile=$env:TEMP\egs-linux-known_hosts.tmp" `
+      -o BatchMode=yes `
+      -r `
+      "$PublishPath/*" `
+      "${Username}@${catletIp}:$remoteDir/" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "scp upload to $($Catlet.Name) returned $LASTEXITCODE." }
+
+    # All-in-one install: stop service, wipe bin, copy, set executable bit,
+    # restart. Preserve /etc/opt/eryph/guest-services entirely. Single line
+    # with `&&` so it survives the ssh.exe -> remote-shell hop without
+    # newline-handling surprises.
+    $installCmd = 'set -e && ' +
+      'sudo systemctl stop eryph-guest-services && ' +
+      'sudo find /opt/eryph/guest-services/bin -mindepth 1 -delete && ' +
+      "sudo cp -r $remoteDir/. /opt/eryph/guest-services/bin/ && " +
+      'sudo chmod +x /opt/eryph/guest-services/bin/egs-service && ' +
+      'sudo systemctl start eryph-guest-services && ' +
+      "rm -rf $remoteDir"
+    $installOutput = Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command $installCmd 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $logDir = Join-Path $env:TEMP 'egs-remoteaccess-linux-e2e-logs'
+      New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+      $log = Join-Path $logDir "$($Catlet.VmId)-install-$([DateTime]::UtcNow.Ticks).log"
+      "exit=$LASTEXITCODE`ncmd:`n$installCmd`n----`n" + ($installOutput | Out-String) `
+        | Set-Content -LiteralPath $log -Encoding utf8
+      throw "Binary install on $($Catlet.Name) returned $LASTEXITCODE; log: $log"
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
+function Write-LinuxEgsClientKey {
+  <#
+  .SYNOPSIS
+    Writes a public key to /etc/opt/eryph/guest-services/id_egs.pub on a
+    running Linux catlet via the direct sshd admin channel. egs-service
+    reads this file on startup as the provisioned authorized identity.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [string] $PublicKey
+  )
+
+  # base64 the content to avoid quoting/escaping pitfalls through
+  # ssh.exe -> shell. The remote `tee` writes with root privileges via
+  # sudo; the parent dir is created by the egs-service package install.
+  $content = $PublicKey.TrimEnd() + "`n"
+  $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
+  $cmd = "echo $b64 | base64 -d | sudo tee /etc/opt/eryph/guest-services/id_egs.pub > /dev/null"
+  Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+    -Command $cmd 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Writing id_egs.pub on $($Catlet.Name) returned $LASTEXITCODE."
+  }
+}
+
+function Set-CatletKvpAuthEnabledLinux {
+  <#
+  .SYNOPSIS
+    Writes / clears the KvpAuthEnabled flag in
+    /etc/opt/eryph/guest-services/service-control.conf on a running
+    Linux catlet, then restarts eryph-guest-services so the new value
+    is in force (PlatformServiceControlFlags caches at startup).
+
+    Channel: direct sshd as the admin user — independent of
+    eryph-guest-services lifecycle.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter()] [Nullable[int]] $Value
+  )
+
+  $confPath = '/etc/opt/eryph/guest-services/service-control.conf'
+
+  if ($null -eq $Value) {
+    # Clear: just remove the file (no flags = all default ON). Tolerate
+    # "file already absent" — rm -f is idempotent.
+    $writeCmd = "sudo rm -f $confPath"
+  } else {
+    $content = "KvpAuthEnabled=$Value`n"
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
+    $writeCmd = "echo $b64 | base64 -d | sudo tee $confPath > /dev/null"
+  }
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command $writeCmd 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "service-control.conf write on $($Catlet.Name) returned $LASTEXITCODE."
+    }
+
+    # Read back so a hive/path mismatch surfaces immediately.
+    $verifyCmd = "test -f $confPath && cat $confPath || echo MISSING"
+    $readBack = (Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command $verifyCmd) | Out-String
+    if ($null -eq $Value) {
+      if ($readBack -notmatch 'MISSING') {
+        throw "KvpAuthEnabled clear did not take effect on $($Catlet.Name); conf still:`n$readBack"
+      }
+    } else {
+      if ($readBack -notmatch "KvpAuthEnabled\s*=\s*$Value") {
+        throw "KvpAuthEnabled=$Value not visible in conf on $($Catlet.Name). Got:`n$readBack"
+      }
+    }
+
+    # Restart over the admin channel (NOT via egs vsock — that would die
+    # with the service). systemctl restart blocks until the unit is
+    # active or failed; the egs-status poll below catches a failed unit.
+    Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command 'sudo systemctl restart eryph-guest-services' 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "systemctl restart on $($Catlet.Name) returned $LASTEXITCODE."
+    }
+
+    # Poll egs-status via host-side KVP until the new instance reports
+    # 'available' again.
+    $deadline = (Get-Date).AddMinutes(2)
+    $status = ''
+    while ((Get-Date) -lt $deadline) {
+      Start-Sleep -Seconds 2
+      try { $status = & egs-tool get-status $Catlet.VmId 2>&1 } catch { $status = $_.Exception.Message }
+      if ($status -eq 'available') { break }
+    }
+    if ($status -ne 'available') {
+      throw "egs-service did not return to 'available' within 2 minutes after restart on $($Catlet.Name) (status=$status)"
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
   }
 }
