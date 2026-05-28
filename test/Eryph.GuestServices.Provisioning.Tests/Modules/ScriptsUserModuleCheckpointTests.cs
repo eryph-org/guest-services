@@ -39,24 +39,22 @@ public sealed class ScriptsUserModuleCheckpointTests
             checkpointStore);
 
     [Fact]
-    public async Task Resume_after_1003_skips_already_executed_scripts_and_runs_the_next_one()
+    public async Task Resume_after_1003_re_runs_the_emitting_script_and_then_continues()
     {
-        // Mirror the bug-doc repro: script #3 returns 1003 on first run; on
-        // the resume pass scripts #1, #2, #3 must be skipped (checkpoint
-        // matches) and script #4 must execute.
+        // cbi parity: a script that exits 1003 means "reboot, then re-execute
+        // me". On resume the previously-completed scripts (#1, #2) are
+        // skipped via the checkpoint, but the 1003 emitter (#3) MUST run
+        // again — it tracks its own multi-stage progress and eventually
+        // exits 0 (or 1001). Once it does, the queue continues with #4.
         var os = Substitute.For<IWindowsOs>();
-        // Round 1: script 3 returns 1003; the others return 0. We track by
-        // file path argument — RunArgvCommandAsync gets the staged path on
-        // index "-File <path>" or similar.
+        // Round 1: script 3 returns 1003; the others return 0.
         os.RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(1003, "", ""));
         os.RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1") || s.Contains("002-two.ps1") || s.Contains("004-four.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>()).Returns(new RunCommandResult(0, "", ""));
 
         var checkpoint = new InMemoryScriptCheckpointStore();
@@ -82,47 +80,47 @@ public sealed class ScriptsUserModuleCheckpointTests
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>());
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>());
         await os.DidNotReceive().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>());
 
-        // Round 2 (post-reboot resume): scripts 1, 2, 3 are checkpointed →
-        // skipped. Script 4 executes for the first time.
+        // Round 2 (post-reboot resume): scripts 1, 2 are checkpointed → skipped.
+        // Script 3 is NOT in Completed (1003 left it in-flight) → runs again.
+        // Stub it to succeed this time so the queue can finish.
         os.ClearReceivedCalls();
-        // Round-2 calls all return 0 (Hyper-V finished installing across the reboot).
-        os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(0, "", ""));
+        os.RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+            Arg.Any<CancellationToken>()).Returns(new RunCommandResult(0, "", ""));
+        os.RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+            Arg.Any<CancellationToken>()).Returns(new RunCommandResult(0, "", ""));
 
         var outcome2 = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
 
         outcome2.Should().BeOfType<ModuleOutcome.Completed>();
-        // Scripts 1, 2, 3 must NOT be re-staged or re-executed.
-        await os.DidNotReceive().WriteFileAsync(
-            Arg.Is<string>(p => p.EndsWith(@"\001-one.ps1")
-                                || p.EndsWith(@"\002-two.ps1")
-                                || p.EndsWith(@"\003-three.ps1")),
-            Arg.Any<byte[]>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Scripts 1, 2 must NOT be re-executed.
         await os.DidNotReceive().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-one.ps1")
-                                                                || s.Contains("002-two.ps1")
-                                                                || s.Contains("003-three.ps1"))),
+                                                                || s.Contains("002-two.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>());
-        // Script 4 must run.
+        // Script 3 MUST run again (cbi 1003 = re-execute).
+        await os.Received().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("003-three.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+            Arg.Any<CancellationToken>());
+        // And script 4 runs after #3 succeeds.
         await os.Received().RunArgvCommandAsync(
             Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("004-four.ps1"))),
             Arg.Any<IReadOnlyDictionary<string, string>>(),
-
             Arg.Any<CancellationToken>());
     }
 
@@ -283,8 +281,10 @@ public sealed class ScriptsUserModuleCheckpointTests
     public async Task Per_script_reboot_quota_fails_after_repeated_1003_without_progress()
     {
         // A broken installer that returns 1003 on every invocation must
-        // eventually be failed rather than looped forever. Pin the cap
-        // explicitly so the test stays compact regardless of default changes.
+        // eventually be failed rather than looped forever. With the corrected
+        // 1003 semantic (script is NOT marked completed; it re-runs on
+        // resume) the test no longer needs to manually clear state between
+        // module invocations — repeat calls naturally re-run the same script.
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
@@ -301,41 +301,20 @@ public sealed class ScriptsUserModuleCheckpointTests
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
             with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# always 1003"), "stuck.ps1")] };
 
-        // First 1003 marks the script executed (cbi semantics) and returns Reboot.
-        // The script will then be skipped on subsequent runs because the
-        // (ordinal, body-hash) is in the checkpoint, so the quota check fires
-        // through a different path: we re-set the test to make the same
-        // script "un-executed" between calls so its 1003 is observable.
-        var first = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
-        first.Should().BeOfType<ModuleOutcome.RebootRequested>();
-
-        // Force the script back into the not-yet-executed state by clearing
-        // the checkpoint's Executed list (RebootCounts persists) — simulates
-        // an operator manually clearing the per-script done marker.
-        var current = await checkpoint.LoadAsync("test-instance", CancellationToken.None);
-        await checkpoint.SaveAsync(
-            "test-instance",
-            current with { Executed = [] },
-            CancellationToken.None);
-
-        var second = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
-        second.Should().BeOfType<ModuleOutcome.RebootRequested>();
-
-        await checkpoint.SaveAsync(
-            "test-instance",
-            (await checkpoint.LoadAsync("test-instance", CancellationToken.None)) with { Executed = [] },
-            CancellationToken.None);
-
-        var third = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
-        third.Should().BeOfType<ModuleOutcome.Failed>(
-            "after MaxRebootsPerScript (=2) the quota fires and the module fails the run");
+        // Limit = 2 → 2 reboot requests allowed; the 3rd attempt must Fail.
+        (await module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.Failed>(
+                "after MaxRebootsPerScript (=2) the quota fires and the module fails the run");
     }
 
     [Fact]
     public async Task Per_script_reboot_quota_honors_custom_MaxPerScript_setting()
     {
-        // A tighter cap of 1 must fail on the SECOND 1003 (after one reboot),
-        // proving the quota reads from ProvisioningSettings.Reboot.MaxPerScript.
+        // A tighter cap of 1 must fail on the SECOND 1003 (after one reboot).
         var os = Substitute.For<IWindowsOs>();
         os.RunArgvCommandAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(new RunCommandResult(1003, "", ""));
@@ -352,17 +331,11 @@ public sealed class ScriptsUserModuleCheckpointTests
         var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
             with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# always 1003"), "stuck.ps1")] };
 
-        var first = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
-        first.Should().BeOfType<ModuleOutcome.RebootRequested>();
-
-        await checkpoint.SaveAsync(
-            "test-instance",
-            (await checkpoint.LoadAsync("test-instance", CancellationToken.None)) with { Executed = [] },
-            CancellationToken.None);
-
-        var second = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
-        second.Should().BeOfType<ModuleOutcome.Failed>(
-            "with MaxPerScript=1 the second 1003 trips the quota");
+        (await module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.Failed>(
+                "with MaxPerScript=1 the second 1003 trips the quota");
     }
 
     [Fact]
@@ -387,13 +360,9 @@ public sealed class ScriptsUserModuleCheckpointTests
             with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# raise"), "longinstaller.ps1")] };
 
         // Without the directive a cap of 2 would fail on the third 1003.
-        // With the directive raising to 5, the third must still reboot.
+        // With the directive raising to 5, three consecutive 1003s all reboot.
         for (var i = 0; i < 3; i++)
         {
-            await checkpoint.SaveAsync(
-                "test-instance",
-                (await checkpoint.LoadAsync("test-instance", CancellationToken.None)) with { Executed = [] },
-                CancellationToken.None);
             var outcome = await module.ApplyAsync(resolved, ctx, CancellationToken.None);
             outcome.Should().BeOfType<ModuleOutcome.RebootRequested>(
                 "iteration {0}: directive raised limit to 5", i);

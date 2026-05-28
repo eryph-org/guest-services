@@ -4,51 +4,54 @@ using Microsoft.Extensions.Logging;
 namespace Eryph.GuestServices.Provisioning.Modules;
 
 /// <summary>
-/// File-backed checkpoint store. Layout mirrors the semaphore store —
-/// scripts.json lives next to the per-instance sem/ directory.
+/// File-backed user-code checkpoint store. The per-module subclass pins the
+/// JSON filename (e.g. <c>runcmd.json</c>, <c>scripts.json</c>) under
+/// <c>%ProgramData%\eryph\provisioning\instance\&lt;id&gt;\</c>.
 /// </summary>
-public sealed class FileScriptCheckpointStore : IScriptCheckpointStore
+public abstract class FileUserCodeCheckpointStore : IUserCodeCheckpointStore
 {
-    private readonly ILogger<FileScriptCheckpointStore> _logger;
+    private readonly ILogger _logger;
     private readonly string _root;
+    private readonly string _filename;
 
-    public FileScriptCheckpointStore(ILogger<FileScriptCheckpointStore> logger)
-        : this(logger, DefaultRoot())
+    protected FileUserCodeCheckpointStore(ILogger logger, string filename)
+        : this(logger, DefaultRoot(), filename)
     {
     }
 
     // Test seam.
-    public FileScriptCheckpointStore(ILogger<FileScriptCheckpointStore> logger, string root)
+    protected FileUserCodeCheckpointStore(ILogger logger, string root, string filename)
     {
         _logger = logger;
         _root = root;
+        _filename = filename;
     }
 
-    public async Task<ScriptCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken)
+    public async Task<UserCodeCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken)
     {
         var path = ResolvePath(instanceId);
         if (!File.Exists(path))
-            return ScriptCheckpoint.Empty;
+            return UserCodeCheckpoint.Empty;
 
         try
         {
             await using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             var parsed = await JsonSerializer.DeserializeAsync(
                 stream,
-                ScriptCheckpointJsonContext.Default.ScriptCheckpoint,
+                UserCodeCheckpointJsonContext.Default.UserCodeCheckpoint,
                 cancellationToken).ConfigureAwait(false);
-            return parsed ?? ScriptCheckpoint.Empty;
+            return parsed ?? UserCodeCheckpoint.Empty;
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {
             _logger.LogWarning(ex,
-                "Script checkpoint at {Path} is unreadable; starting from empty checkpoint",
+                "User-code checkpoint at {Path} is unreadable; starting from empty checkpoint",
                 path);
-            return ScriptCheckpoint.Empty;
+            return UserCodeCheckpoint.Empty;
         }
     }
 
-    public async Task SaveAsync(string instanceId, ScriptCheckpoint checkpoint, CancellationToken cancellationToken)
+    public async Task SaveAsync(string instanceId, UserCodeCheckpoint checkpoint, CancellationToken cancellationToken)
     {
         var path = ResolvePath(instanceId);
         var dir = Path.GetDirectoryName(path)!;
@@ -60,7 +63,7 @@ public sealed class FileScriptCheckpointStore : IScriptCheckpointStore
             await JsonSerializer.SerializeAsync(
                 stream,
                 checkpoint,
-                ScriptCheckpointJsonContext.Default.ScriptCheckpoint,
+                UserCodeCheckpointJsonContext.Default.UserCodeCheckpoint,
                 cancellationToken).ConfigureAwait(false);
             await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -76,7 +79,7 @@ public sealed class FileScriptCheckpointStore : IScriptCheckpointStore
     }
 
     private string ResolvePath(string instanceId) =>
-        Path.Combine(_root, "instance", SanitizeForPath(instanceId), "scripts.json");
+        Path.Combine(_root, "instance", SanitizeForPath(instanceId), _filename);
 
     private static string SanitizeForPath(string instanceId)
     {
@@ -97,4 +100,26 @@ public sealed class FileScriptCheckpointStore : IScriptCheckpointStore
         var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         return Path.Combine(programData, "eryph", "provisioning");
     }
+}
+
+/// <summary>File-backed checkpoint for <see cref="RuncmdModule"/>.</summary>
+public sealed class FileRuncmdCheckpointStore : FileUserCodeCheckpointStore, IRuncmdCheckpointStore
+{
+    public FileRuncmdCheckpointStore(ILogger<FileRuncmdCheckpointStore> logger)
+        : base(logger, "runcmd.json") { }
+
+    // Test seam.
+    public FileRuncmdCheckpointStore(ILogger<FileRuncmdCheckpointStore> logger, string root)
+        : base(logger, root, "runcmd.json") { }
+}
+
+/// <summary>File-backed checkpoint for <see cref="ScriptsUserModule"/>.</summary>
+public sealed class FileScriptCheckpointStore : FileUserCodeCheckpointStore, IScriptCheckpointStore
+{
+    public FileScriptCheckpointStore(ILogger<FileScriptCheckpointStore> logger)
+        : base(logger, "scripts.json") { }
+
+    // Test seam.
+    public FileScriptCheckpointStore(ILogger<FileScriptCheckpointStore> logger, string root)
+        : base(logger, root, "scripts.json") { }
 }

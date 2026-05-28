@@ -155,7 +155,7 @@ public sealed class RuncmdModuleTests
         var third = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
         var failed = third.Should().BeOfType<ModuleOutcome.Failed>().Subject;
-        failed.Reason.Should().Contain("exceeded per-entry reboot limit");
+        failed.Reason.Should().Contain("exceeded per-script reboot limit");
     }
 
     [Fact]
@@ -499,12 +499,12 @@ public sealed class RuncmdModuleTests
 
     private sealed class InMemoryRuncmdCheckpointStore : IRuncmdCheckpointStore
     {
-        private readonly Dictionary<string, RuncmdCheckpoint> _byInstance = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, UserCodeCheckpoint> _byInstance = new(StringComparer.Ordinal);
 
-        public Task<RuncmdCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken) =>
-            Task.FromResult(_byInstance.GetValueOrDefault(instanceId) ?? RuncmdCheckpoint.Empty);
+        public Task<UserCodeCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken) =>
+            Task.FromResult(_byInstance.GetValueOrDefault(instanceId) ?? UserCodeCheckpoint.Empty);
 
-        public Task SaveAsync(string instanceId, RuncmdCheckpoint checkpoint, CancellationToken cancellationToken)
+        public Task SaveAsync(string instanceId, UserCodeCheckpoint checkpoint, CancellationToken cancellationToken)
         {
             _byInstance[instanceId] = checkpoint;
             return Task.CompletedTask;

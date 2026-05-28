@@ -10,14 +10,12 @@ namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 /// </summary>
 internal sealed class InMemoryScriptCheckpointStore : IScriptCheckpointStore
 {
-    private readonly Dictionary<string, ScriptCheckpoint> _byInstance = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, UserCodeCheckpoint> _byInstance = new(StringComparer.Ordinal);
 
-    public Task<ScriptCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken)
-    {
-        return Task.FromResult(_byInstance.TryGetValue(instanceId, out var c) ? c : ScriptCheckpoint.Empty);
-    }
+    public Task<UserCodeCheckpoint> LoadAsync(string instanceId, CancellationToken cancellationToken) =>
+        Task.FromResult(_byInstance.TryGetValue(instanceId, out var c) ? c : UserCodeCheckpoint.Empty);
 
-    public Task SaveAsync(string instanceId, ScriptCheckpoint checkpoint, CancellationToken cancellationToken)
+    public Task SaveAsync(string instanceId, UserCodeCheckpoint checkpoint, CancellationToken cancellationToken)
     {
         _byInstance[instanceId] = checkpoint;
         return Task.CompletedTask;

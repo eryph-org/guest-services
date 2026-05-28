@@ -25,22 +25,14 @@ internal sealed class ScriptsUserModule(
 {
     // cbi exit-code contract — see plugins/common/execcmd.py::get_plugin_return_value
     // The 1001..1003 range is a bitmask: bit 0 = reboot, bit 1 = re-execute plugin.
-    // Scripts plugin semantics ("the script DID its work and signals what to do
-    // next"): both 1001 and 1003 mark the script executed; the difference is
-    // whether the runner reboots before moving on. Today only 1003 is exercised
-    // in eryph user-data; 1001 is supported for cbi parity.
+    //   1001: reboot, plugin done (this script won't run again)
+    //   1002: re-run plugin on next boot, no reboot — NOT supported on eryph
+    //   1003: reboot, re-execute plugin (the script that emitted 1003 runs again)
+    // Eryph's per-script checkpoint encodes this: 1001 marks the script
+    // completed; 1003 leaves it in-flight so the resume re-runs it.
     public const int RebootAndDoneExitCode = 1001;
     public const int RerunOnNextBootExitCode = 1002;
     public const int RebootRequestedExitCode = 1003;
-
-    /// <summary>
-    /// Per-script reboot quota. A given (ordinal, body-hash) may request
-    /// reboot at most this many times before we fail the module — guards
-    /// against a broken installer that returns 1003 indefinitely.
-    /// docs/bugs/0001 "loop-safety". Sourced from
-    /// ProvisioningSettings.Reboot.MaxPerScript (default 2).
-    /// </summary>
-    internal int MaxRebootsPerScript => settings.Reboot.MaxPerScript;
 
     /// <summary>
     /// Directory where per-script stdout/stderr logs are written. One log
@@ -89,17 +81,12 @@ internal sealed class ScriptsUserModule(
                 continue;
             }
 
-            var bodyHash = ScriptCheckpoint.ComputeBodyHash(script.Body);
+            var bodyHash = ComputeBodyHash(script.Body);
 
-            // Resume guard: skip scripts already recorded as executed (cloud-init
-            // doesn't have this; we do because cbi-style 1003 means the script
-            // DID its work and signalled "reboot, then move on"). The (ordinal,
-            // body-hash) pair invalidates the entry if the operator edits the
-            // script between runs.
-            if (checkpoint.Contains(ordinal, bodyHash))
+            if (checkpoint.IsCompleted(ordinal, bodyHash))
             {
                 logger.LogInformation(
-                    "Skipping script #{Index} ('{Filename}') — already executed in a prior run (resume).",
+                    "Skipping script #{Index} ('{Filename}') — already completed in a prior run (resume).",
                     ordinal, script.Filename ?? "<root>");
                 continue;
             }
@@ -118,15 +105,10 @@ internal sealed class ScriptsUserModule(
                 continue;
             }
 
-            // Surface the same EGS_* env vars to user scripts that runcmd
-            // entries see, so the same multi-stage installer pattern works
-            // here (a script can branch on EGS_REBOOT_COUNT).
-            var rebootKeyForEnv = $"{ordinal}:{bodyHash}";
-            var rebootCountForEnv = checkpoint.RebootCounts.GetValueOrDefault(rebootKeyForEnv);
-            var effectiveLimit = checkpoint.OverrideLimits.GetValueOrDefault(rebootKeyForEnv) is var ol && ol > 0
-                ? ol
-                : MaxRebootsPerScript;
-            var envVars = RebootEnvVars.Build(ordinal, rebootCountForEnv, effectiveLimit);
+            var progressKey = UserCodeCheckpoint.ProgressKey(ordinal, bodyHash);
+            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new EntryProgress();
+            var effectiveLimit = progress.OverrideLimit ?? settings.Reboot.MaxPerScript;
+            var envVars = RebootEnvVars.Build(ordinal, progress.RebootAttempts, effectiveLimit);
 
             RunCommandResult result;
             try
@@ -150,106 +132,60 @@ internal sealed class ScriptsUserModule(
             LogResult(ordinal, scriptPath, result);
             await ReportProgressAsync(scriptName, result, cancellationToken).ConfigureAwait(false);
 
-            if (result.ExitCode == RebootAndDoneExitCode ||
-                result.ExitCode == RebootRequestedExitCode)
-            {
-                // The script may raise its own per-script cap on this run via
-                // ##egs.reboot_limit=N on stdout. The raise persists across
-                // reboots so the directive only needs to be emitted once.
-                var rebootKey = rebootKeyForEnv;
-                var emittedRaise = RebootDirective.ParseRaise(
-                    result.StdOut, effectiveLimit, settings.Reboot.AllowScriptOverride,
-                    ordinal, "script", logger);
-                var resolvedLimit = emittedRaise ?? effectiveLimit;
+            var dispatch = RebootExitDispatcher.Dispatch(
+                result.ExitCode, result.StdOut, progress, settings.Reboot,
+                ordinal, "script", logger);
 
-                // Per-script reboot quota: the same (ordinal, body-hash) may
-                // request reboot at most `resolvedLimit` times. Past that we
-                // treat it as a stuck installer and fail rather than loop.
-                var rebootCount = checkpoint.RebootCounts.GetValueOrDefault(rebootKey) + 1;
-                if (rebootCount > resolvedLimit)
-                {
-                    logger.LogError(
-                        "Script #{Index} ({Path}) exceeded per-script reboot quota ({Quota}). Failing.",
-                        ordinal, scriptPath, resolvedLimit);
-                    var updatedCounts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
-                    {
-                        [rebootKey] = rebootCount,
-                    };
-                    await checkpointStore.SaveAsync(instanceId,
-                        checkpoint with { RebootCounts = updatedCounts },
-                        cancellationToken).ConfigureAwait(false);
-                    return ModuleOutcome.Fail(
-                        $"script #{ordinal} ('{scriptName}') exceeded per-script reboot quota.");
-                }
-
-                logger.LogInformation(
-                    "Script #{Index} ({Path}) requested reboot (exit {Code}).",
-                    ordinal, scriptPath, result.ExitCode);
-
-                // Mark the script as executed BEFORE returning Reboot — cbi
-                // semantics for both 1001 and 1003: "I did my work; reboot,
-                // then run my successors". The resume must NOT re-run this
-                // script. (For 1003 cbi also re-executes the plugin; for the
-                // Scripts plugin specifically that means "run the queue from
-                // here", which our checkpoint already implements by skipping
-                // already-executed entries.)
-                var executed = checkpoint.Executed
-                    .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
-                    .ToList();
-                var counts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
-                {
-                    [rebootKey] = rebootCount,
-                };
-                // Persist the raised limit only when the script actually
-                // emitted a directive on THIS run; otherwise keep the prior
-                // stored value (or absence) so a later setting change to
-                // MaxPerScript takes effect.
-                var overrides = checkpoint.OverrideLimits;
-                if (emittedRaise is int raise)
-                {
-                    overrides = new Dictionary<string, int>(checkpoint.OverrideLimits, StringComparer.Ordinal)
-                    {
-                        [rebootKey] = raise,
-                    };
-                }
-                checkpoint = checkpoint with
-                {
-                    Executed = executed,
-                    RebootCounts = counts,
-                    OverrideLimits = overrides,
-                };
-                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-
-                // Script-driven reboot: bypass the per-module cap. The
-                // per-script quota above is the real brake; module-wide
-                // gating here would mean 3 reboot-requesting scripts in
-                // user-data is enough to fail the run, which contradicts
-                // the contract.
-                return ModuleOutcome.RebootForUserScript(
-                    $"script #{ordinal} ('{scriptName}') requested reboot (exit {result.ExitCode}).");
-            }
-
-            if (result.ExitCode == RerunOnNextBootExitCode)
-                logger.LogWarning(
-                    "Script #{Index} ({Path}) returned 1002 (re-run on next boot) — not supported on eryph; treating as error and continuing.",
-                    ordinal, scriptPath);
-            else if (result.ExitCode != 0)
-                logger.LogError(
-                    "Script #{Index} ({Path}) exited with code {Code}; continuing with remaining scripts.",
-                    ordinal, scriptPath, result.ExitCode);
-
-            // Mark executed (success OR non-1003 failure). A failing script
-            // does not block the queue, so it has 'run'; replaying it on the
-            // next reboot-resume would just fail twice.
-            var nowExecuted = checkpoint.Executed
-                .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
-                .ToList();
-            checkpoint = checkpoint with { Executed = nowExecuted };
+            checkpoint = ApplyDispatch(checkpoint, progressKey, ordinal, bodyHash, dispatch);
             await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+
+            switch (dispatch.Outcome)
+            {
+                case RebootExitDispatcher.Action.Continue:
+                    continue;
+                case RebootExitDispatcher.Action.Reboot:
+                    logger.LogInformation(
+                        "Script #{Index} → reboot ({Message}).", ordinal, dispatch.Message);
+                    return ModuleOutcome.RebootForUserScript(dispatch.Message);
+                case RebootExitDispatcher.Action.Fail:
+                    logger.LogError(dispatch.Message);
+                    return ModuleOutcome.Fail(dispatch.Message);
+            }
         }
 
         return ModuleOutcome.Ok();
     }
+
+    private static UserCodeCheckpoint ApplyDispatch(
+        UserCodeCheckpoint checkpoint,
+        string progressKey,
+        int ordinal,
+        string hash,
+        RebootExitDispatcher.Result dispatch)
+    {
+        if (dispatch.MarkCompleted)
+        {
+            var completed = new List<CheckpointEntry>(checkpoint.Completed)
+            {
+                new(ordinal, hash),
+            };
+            var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
+            progress.Remove(progressKey);
+            return checkpoint with { Completed = completed, Progress = progress };
+        }
+
+        var nextProgress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal)
+        {
+            [progressKey] = dispatch.NextProgress,
+        };
+        return checkpoint with { Progress = nextProgress };
+    }
+
+    // Identity hash over the script's body bytes. Operator edits to the
+    // body invalidate the hash so the checkpoint cannot mistakenly skip a
+    // replaced script.
+    private static string ComputeBodyHash(byte[] body) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(body));
 
     // Preserves the operator-authored filename (extension included) prefixed
     // with the declaration order. Eryph genes ship meaningful filenames like

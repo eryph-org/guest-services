@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
@@ -8,9 +10,9 @@ using RuncmdEntryModel = Eryph.GuestServices.CloudConfig.RuncmdEntry;
 namespace Eryph.GuestServices.Provisioning.Modules;
 
 /// <summary>
-/// Runs <c>runcmd</c> entries with full cloudbase-init exit-code semantics
-/// (1001 = reboot then move on; 1003 = reboot and re-enter the same entry).
-/// Per-entry checkpoint state survives reboots so multi-stage installers
+/// Runs <c>runcmd</c> entries with cbi exit-code semantics (1001 = reboot
+/// then move on; 1003 = reboot and re-run the same entry). Per-entry
+/// checkpoint state survives reboots so multi-stage installers
 /// (driver → reboot → role → reboot → done) make incremental progress.
 /// </summary>
 [Stage(Stage.Config, Order = 4, Frequency = ModuleFrequency.PerInstance)]
@@ -19,12 +21,6 @@ internal sealed class RuncmdModule(
     ProvisioningSettings settings,
     IRuncmdCheckpointStore checkpointStore) : IModule
 {
-    // cbi exit-code contract — see plugins/common/execcmd.py::get_plugin_return_value
-    // The 1001..1003 range is a bitmask: bit 0 = reboot, bit 1 = re-execute.
-    public const int RebootAndDoneExitCode = 1001;          // reboot now, entry is done
-    public const int RerunOnNextBootExitCode = 1002;        // no reboot, re-run on next boot (NOT supported)
-    public const int RebootAndContinueExitCode = 1003;      // reboot now, re-run same entry
-
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
         IModuleContext context,
@@ -42,11 +38,9 @@ internal sealed class RuncmdModule(
             cancellationToken.ThrowIfCancellationRequested();
             var entry = config.Runcmd[i];
             var ordinal = i + 1;
-            var contentHash = RuncmdCheckpoint.ComputeContentHash(
-                entry.IsShellCommand ? entry.Command : null,
-                entry.IsShellCommand ? null : entry.Argv);
+            var hash = ComputeContentHash(entry);
 
-            if (checkpoint.IsCompleted(ordinal, contentHash))
+            if (checkpoint.IsCompleted(ordinal, hash))
             {
                 logger.LogInformation(
                     "Skipping runcmd #{Index} — already completed in a prior run (resume).",
@@ -54,10 +48,9 @@ internal sealed class RuncmdModule(
                 continue;
             }
 
-            var progressKey = RuncmdCheckpoint.ProgressKey(ordinal, contentHash);
-            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new RuncmdEntryProgress();
+            var progressKey = UserCodeCheckpoint.ProgressKey(ordinal, hash);
+            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new EntryProgress();
             var effectiveLimit = progress.OverrideLimit ?? settings.Reboot.MaxPerScript;
-
             var envVars = RebootEnvVars.Build(ordinal, progress.RebootAttempts, effectiveLimit);
 
             RunCommandResult result;
@@ -71,93 +64,68 @@ internal sealed class RuncmdModule(
             }
             catch (Exception ex)
             {
-                // Cannot launch the child at all — out of scope for the reboot
-                // contract. Log + carry on so a later entry still gets a chance.
                 logger.LogError(ex, "runcmd entry #{Index} failed to start.", ordinal);
-                checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
+                checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, hash);
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
             LogResult(ordinal, entry, result);
 
-            switch (result.ExitCode)
+            var dispatch = RebootExitDispatcher.Dispatch(
+                result.ExitCode, result.StdOut, progress, settings.Reboot,
+                ordinal, "runcmd", logger);
+
+            checkpoint = ApplyDispatch(checkpoint, progressKey, ordinal, hash, dispatch);
+            await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+
+            switch (dispatch.Outcome)
             {
-                case RebootAndDoneExitCode:
-                {
-                    // 1001 marks the entry done — the per-entry quota cannot
-                    // accumulate against an entry that won't re-enter, so we
-                    // don't consult it here (would be dead branch). Any
-                    // script-supplied limit directive on a 1001 line is
-                    // ignored: the entry is completing anyway.
-                    var nextAttempts = progress.RebootAttempts + 1;
-                    checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
-                    await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+                case RebootExitDispatcher.Action.Continue:
+                    continue;
+                case RebootExitDispatcher.Action.Reboot:
                     logger.LogInformation(
-                        "runcmd #{Index} returned 1001 (reboot, entry done); attempt {Attempt}.",
-                        ordinal, nextAttempts);
-                    return ModuleOutcome.RebootForUserScript(
-                        $"runcmd entry #{ordinal} requested reboot (exit 1001, entry done).");
-                }
-
-                case RebootAndContinueExitCode:
-                {
-                    var emittedOverride = RebootDirective.ParseRaise(
-                        result.StdOut, effectiveLimit, settings.Reboot.AllowScriptOverride,
-                        ordinal, "runcmd", logger);
-                    var newLimit = emittedOverride ?? effectiveLimit;
-                    var nextAttempts = progress.RebootAttempts + 1;
-                    if (nextAttempts > newLimit)
-                        return FailEntry(ordinal, nextAttempts, newLimit);
-                    var updatedProgress = progress with
-                    {
-                        RebootAttempts = nextAttempts,
-                        // Only PERSIST a new override when the script actually emitted
-                        // a directive on THIS run; otherwise keep whatever was already
-                        // stored (null = "no override, use configured default"). Writing
-                        // the resolved value unconditionally would pin the entry to a
-                        // snapshot of MaxRebootsPerEntry and break later config edits.
-                        OverrideLimit = emittedOverride ?? progress.OverrideLimit,
-                    };
-                    checkpoint = checkpoint with
-                    {
-                        Progress = WithProgress(checkpoint.Progress, progressKey, updatedProgress),
-                    };
-                    await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-                    logger.LogInformation(
-                        "runcmd #{Index} returned 1003 (reboot and continue); attempt {Attempt}/{Limit}.",
-                        ordinal, nextAttempts, newLimit);
-                    return ModuleOutcome.RebootForUserScript(
-                        $"runcmd entry #{ordinal} requested reboot (exit 1003, will re-enter).");
-                }
-
-                case RerunOnNextBootExitCode:
-                    // cbi's 1002 ("re-execute on next boot without rebooting") has
-                    // no eryph equivalent: our PerInstance gating closes the module
-                    // after Completed. Treat as a non-zero error and move on.
-                    logger.LogWarning(
-                        "runcmd #{Index} returned 1002 (re-run on next boot) — not supported on eryph; treating as error and continuing.",
-                        ordinal);
-                    checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
-                    await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-                    continue;
-
-                case 0:
-                    checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
-                    await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-                    continue;
-
-                default:
-                    logger.LogError(
-                        "runcmd #{Index} exited with code {Code}; continuing with remaining commands.",
-                        ordinal, result.ExitCode);
-                    checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
-                    await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-                    continue;
+                        "runcmd #{Index} → reboot ({Message}).", ordinal, dispatch.Message);
+                    return ModuleOutcome.RebootForUserScript(dispatch.Message);
+                case RebootExitDispatcher.Action.Fail:
+                    logger.LogError(dispatch.Message);
+                    return ModuleOutcome.Fail(dispatch.Message);
             }
         }
 
         return ModuleOutcome.Ok();
+    }
+
+    private static UserCodeCheckpoint ApplyDispatch(
+        UserCodeCheckpoint checkpoint,
+        string progressKey,
+        int ordinal,
+        string hash,
+        RebootExitDispatcher.Result dispatch)
+    {
+        if (dispatch.MarkCompleted)
+            return MarkCompleted(checkpoint, progressKey, ordinal, hash);
+
+        var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal)
+        {
+            [progressKey] = dispatch.NextProgress,
+        };
+        return checkpoint with { Progress = progress };
+    }
+
+    private static UserCodeCheckpoint MarkCompleted(
+        UserCodeCheckpoint checkpoint,
+        string progressKey,
+        int ordinal,
+        string hash)
+    {
+        var completed = new List<CheckpointEntry>(checkpoint.Completed)
+        {
+            new(ordinal, hash),
+        };
+        var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
+        progress.Remove(progressKey);
+        return checkpoint with { Completed = completed, Progress = progress };
     }
 
     private static async Task<RunCommandResult> ExecuteAsync(
@@ -179,43 +147,31 @@ internal sealed class RuncmdModule(
         return await context.Os.RunArgvCommandAsync(entry.Argv, environment, cancellationToken).ConfigureAwait(false);
     }
 
-
-    private static RuncmdCheckpoint MarkCompleted(
-        RuncmdCheckpoint checkpoint,
-        string progressKey,
-        int ordinal,
-        string contentHash)
+    // Stable identity hash over the entry's command content. Hashing the
+    // shell command or the argv form joined with a separator that cannot
+    // collide with either (NUL). Identity key only — never compared
+    // cryptographically.
+    private static string ComputeContentHash(RuncmdEntryModel entry)
     {
-        var completed = new List<RuncmdCheckpointEntry>(checkpoint.Completed)
+        var sb = new StringBuilder();
+        if (entry.IsShellCommand)
         {
-            new(ordinal, contentHash),
-        };
-        var progress = new Dictionary<string, RuncmdEntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
-        progress.Remove(progressKey);
-        return checkpoint with
+            sb.Append("shell\0");
+            sb.Append(entry.Command ?? string.Empty);
+        }
+        else
         {
-            Completed = completed,
-            Progress = progress,
-        };
-    }
-
-    private static Dictionary<string, RuncmdEntryProgress> WithProgress(
-        Dictionary<string, RuncmdEntryProgress> source,
-        string key,
-        RuncmdEntryProgress value)
-    {
-        var next = new Dictionary<string, RuncmdEntryProgress>(source, StringComparer.Ordinal)
-        {
-            [key] = value,
-        };
-        return next;
-    }
-
-    private ModuleOutcome FailEntry(int ordinal, int attempts, int limit)
-    {
-        var message = $"runcmd entry #{ordinal} exceeded per-entry reboot limit ({attempts}/{limit}).";
-        logger.LogError(message);
-        return ModuleOutcome.Fail(message);
+            sb.Append("argv\0");
+            var argv = entry.Argv ?? [];
+            sb.Append(argv.Count);
+            foreach (var part in argv)
+            {
+                sb.Append('\0');
+                sb.Append(part ?? string.Empty);
+            }
+        }
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
+        return Convert.ToHexString(hash);
     }
 
     private void LogResult(int index, RuncmdEntryModel entry, RunCommandResult result)
@@ -233,4 +189,9 @@ internal sealed class RuncmdModule(
         if (!string.IsNullOrWhiteSpace(result.StdErr))
             logger.LogDebug("runcmd #{Index} stderr:\n{StdErr}", index, result.StdErr);
     }
+
+    // cbi exit-code constants — see plugins/common/execcmd.py::get_plugin_return_value
+    public const int RebootAndDoneExitCode = 1001;
+    public const int RerunOnNextBootExitCode = 1002;
+    public const int RebootAndContinueExitCode = 1003;
 }
