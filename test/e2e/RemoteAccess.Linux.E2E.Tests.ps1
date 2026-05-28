@@ -53,7 +53,10 @@ BeforeAll {
     throw "egs-tool get-ssh-key returned empty — run 'egs-tool initialize' first."
   }
   $adminUsername = 'e2euser'
-  $adminPassword = 'RaE2eLinux!Pw9_Throwaway'
+  # Throwaway password generated per run — never persisted outside this
+  # catlet (which is destroyed in AfterAll). Generated rather than
+  # hardcoded so secret scanners don't false-positive on the source.
+  $adminPassword = New-ThrowawayPassword
 
   $catletConfigTemplate = Get-Content -Raw -Path $PSScriptRoot/remote-access-linux-catlet.yaml
   $catletConfig = $catletConfigTemplate `

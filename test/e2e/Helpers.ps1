@@ -18,6 +18,50 @@ if (-not (Test-Path -LiteralPath $script:WinSshExe)) {
   throw "Windows OpenSSH ssh.exe not found at $($script:WinSshExe); install the 'OpenSSH.Client' optional feature."
 }
 
+function New-ThrowawayPassword {
+  <#
+  .SYNOPSIS
+    Generates a strong random password for a throwaway test account.
+    Never persisted past the catlet's AfterAll teardown. Generated rather
+    than hardcoded so secret scanners (GitGuardian etc.) don't flag the
+    source. Meets the Windows default complexity policy (upper + lower +
+    digit + symbol; >= 12 chars; avoids the obvious account-name overlap
+    traps from the Provisioning.E2E catlet comments).
+  #>
+  [CmdletBinding()]
+  param([int] $Length = 18)
+
+  $upper  = [char[]] 'ABCDEFGHJKLMNPQRSTUVWXYZ'    # excludes I, O
+  $lower  = [char[]] 'abcdefghjkmnpqrstuvwxyz'     # excludes i, l, o
+  $digits = [char[]] '23456789'                    # excludes 0, 1
+  $sym    = [char[]] '!@#$%^*-_=+?'
+
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    function Pick($pool) {
+      $bytes = [byte[]]::new(4)
+      $rng.GetBytes($bytes)
+      $idx = [BitConverter]::ToUInt32($bytes, 0) % [uint32]$pool.Length
+      $pool[$idx]
+    }
+    # Seed one of each category, then fill with the union and shuffle.
+    $chars = @((Pick $upper), (Pick $lower), (Pick $digits), (Pick $sym))
+    $pool = $upper + $lower + $digits + $sym
+    while ($chars.Count -lt $Length) { $chars += Pick $pool }
+    # Fisher-Yates with the same RNG.
+    for ($i = $chars.Count - 1; $i -gt 0; $i--) {
+      $bytes = [byte[]]::new(4)
+      $rng.GetBytes($bytes)
+      $j = [int]([BitConverter]::ToUInt32($bytes, 0) % [uint32]($i + 1))
+      $tmp = $chars[$i]; $chars[$i] = $chars[$j]; $chars[$j] = $tmp
+    }
+    -join $chars
+  }
+  finally {
+    $rng.Dispose()
+  }
+}
+
 function New-TestProject {
   # Eryph project names are capped at 20 characters.
   $projectName = "egs-$(Get-Date -Format 'yyyyMMddHHmmss')"

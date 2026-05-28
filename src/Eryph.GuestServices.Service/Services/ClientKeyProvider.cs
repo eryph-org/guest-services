@@ -34,7 +34,7 @@ public class ClientKeyProvider : IClientKeyProvider
         if (!_kvpAuthEnabled)
         {
             _logger.LogInformation(
-                "KVP-delivered authorized client keys are disabled via registry (HKLM\\SOFTWARE\\eryph\\guest-services\\KvpAuthEnabled=0); only the locally provisioned key will authorize. Restart the service after changing the flag.");
+                "KVP-delivered authorized client keys are disabled (KvpAuthEnabled=0); only the locally provisioned key will authorize. Restart the service after changing the flag.");
         }
     }
 

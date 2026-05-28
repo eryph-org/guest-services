@@ -321,23 +321,23 @@ public class ClientKeyProviderTests
     {
         // Real-world shape: the fixture has the exact bytes a user would
         // get from `cat ~/.ssh/authorized_keys` — extra trailing whitespace,
-        // a stray comment, two different algorithms with a key comment.
+        // a stray comment, two different curves with a key comment.
         // We generate two fresh keys and round-trip through the fixture
         // template to keep the test self-contained.
-        var ed = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var rsa = SshAlgorithms.PublicKey.ECDsaSha2Nistp384.GenerateKeyPair();
+        var ecdsaP256 = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
+        var ecdsaP384 = SshAlgorithms.PublicKey.ECDsaSha2Nistp384.GenerateKeyPair();
         var fixture =
             "# /home/egs/.ssh/authorized_keys — managed by egs-tool\n"
             + "\n"
-            + KeyPair.ExportPublicKey(ed, keyFormat: KeyFormat.Ssh) + " admin@workstation\n"
+            + KeyPair.ExportPublicKey(ecdsaP256, keyFormat: KeyFormat.Ssh) + " admin@workstation\n"
             + "\n"
             + "# alt host\n"
-            + KeyPair.ExportPublicKey(rsa, keyFormat: KeyFormat.Ssh) + " ci@build-runner\r\n";
+            + KeyPair.ExportPublicKey(ecdsaP384, keyFormat: KeyFormat.Ssh) + " ci@build-runner\r\n";
 
         var provider = NewProvider(kvpValue: fixture);
 
-        (await provider.IsAuthorizedAsync(ed)).Should().BeTrue();
-        (await provider.IsAuthorizedAsync(rsa)).Should().BeTrue();
+        (await provider.IsAuthorizedAsync(ecdsaP256)).Should().BeTrue();
+        (await provider.IsAuthorizedAsync(ecdsaP384)).Should().BeTrue();
     }
 
     private static IKeyPair GenerateKey()

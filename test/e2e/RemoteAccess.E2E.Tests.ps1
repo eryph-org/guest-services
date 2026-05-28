@@ -47,7 +47,10 @@ BeforeAll {
   if (-not $hostEgsPublicKey) {
     throw "egs-tool get-ssh-key returned empty — run 'egs-tool initialize' first."
   }
-  $adminPassword = 'RaE2e!Pw9_Throwaway'
+  # Throwaway Administrator password generated per run — never persisted
+  # outside this catlet (which is destroyed in AfterAll). Generated rather
+  # than hardcoded so secret scanners don't false-positive on the source.
+  $adminPassword = New-ThrowawayPassword
 
   $catletConfigTemplate = Get-Content -Raw -Path $PSScriptRoot/remote-access-catlet.yaml
   $catletConfig = $catletConfigTemplate `
@@ -210,7 +213,9 @@ Describe 'Remote-access client auth' {
 
     It 'KvpAuthEnabled=0 rejects KVP-pushed key' {
       Set-CatletKvpAuthEnabled -Catlet $catlet -Value 0 -Credential $script:CatletAdminCredential
-      # The flag is read on every auth attempt — no service restart needed.
+      # Set-CatletKvpAuthEnabled writes the registry, then restarts the
+      # eryph-guest-services unit via PsDirect — the flag is cached at
+      # service start, not re-read on every auth attempt.
       $exit = Test-CatletSshWithKey -VmId $catlet.VmId -IdentityFile $hardeningEphemeral.PrivateKeyPath
       $exit | Should -Not -Be 0
     }
