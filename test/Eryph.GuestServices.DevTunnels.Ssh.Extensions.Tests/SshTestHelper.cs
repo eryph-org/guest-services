@@ -13,10 +13,17 @@ public sealed class SshTestHelper : IDisposable
     private Stream? _clientStream;
     private Socket? _serverSocket;
 
+    // Per-test unique port. xUnit runs test classes in parallel within an
+    // assembly; on Linux VSOCK two helpers binding the same (cid, port)
+    // race and the second hits EADDRINUSE (Windows' Hyper-V transport
+    // tolerates the collision, which is why this only surfaced on Linux
+    // CI). The previous "use fixed port to avoid flakiness" comment had
+    // it backwards — a fixed port is what *causes* the race.
+    private static int _portCounter = 42425;
+
     public SshTestHelper()
     {
-        // Use fixed port to avoid test flakiness
-        var portNumber = 42425u;
+        var portNumber = (uint)Interlocked.Increment(ref _portCounter);
         ServiceId = PortNumberConverter.ToIntegrationId(portNumber);
     }
 

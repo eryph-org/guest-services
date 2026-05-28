@@ -51,9 +51,11 @@ public interface IServiceControlFlags
 /// These are <b>fail-open</b> flags: a missing key/value, missing file, or any
 /// I/O / permission error yields <c>true</c>. We never disable a capability
 /// because of a read error — only an explicit <c>0</c> (or <c>false</c> on
-/// Linux) turns a capability off. The value→bool interpretation lives in the
-/// pure <see cref="InterpretFlag"/> helper so it is unit-testable without
-/// admin rights, registry writes, or filesystem state. Platform-gated reads
+/// Linux) turns a capability off. The value→bool interpretation lives in two
+/// pure helpers — <see cref="InterpretWindowsRegistryValue"/> for the
+/// REG_DWORD path and <see cref="InterpretLinuxConfigValue"/> for the
+/// KEY=VALUE path — kept separate so a mistyped REG_SZ on Windows cannot
+/// accidentally exercise the Linux string-parsing rules. Platform-gated reads
 /// are split behind <c>[SupportedOSPlatform]</c> attributes plus an
 /// <see cref="OperatingSystem"/> gate so CA1416 stays clean.
 /// </remarks>
