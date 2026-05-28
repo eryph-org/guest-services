@@ -57,12 +57,12 @@ public class SshServerServiceRemoteAccessGateTests
     {
         public bool IsProvisioningEnabled() => true;
         public bool IsRemoteAccessEnabled() => remoteAccessEnabled;
+        public bool IsKvpAuthEnabled() => true;
     }
 
     private sealed class ThrowingKeyStorage : IKeyStorage
     {
         public Task<IKeyPair?> GetClientKeyAsync() => throw new InvalidOperationException("should not be called");
-        public Task SetClientKeyAsync(IKeyPair keyPair) => throw new InvalidOperationException("should not be called");
         public Task<IKeyPair?> GetHostKeyAsync() => throw new InvalidOperationException("should not be called");
         public Task SetHostKeyAsync(IKeyPair keyPair) => throw new InvalidOperationException("should not be called");
     }
@@ -74,7 +74,7 @@ public class SshServerServiceRemoteAccessGateTests
 
     private sealed class ThrowingClientKeyProvider : IClientKeyProvider
     {
-        public Task<IKeyPair?> GetClientKey() => throw new InvalidOperationException("should not be called");
+        public Task<bool> IsAuthorizedAsync(IKeyPair candidate) => throw new InvalidOperationException("should not be called");
     }
 
     private sealed class ThrowingShellSelector : IShellSelector

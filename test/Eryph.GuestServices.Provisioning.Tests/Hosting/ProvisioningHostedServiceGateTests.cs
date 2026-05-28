@@ -81,5 +81,6 @@ public class ProvisioningHostedServiceGateTests
     {
         public bool IsProvisioningEnabled() => provisioningEnabled;
         public bool IsRemoteAccessEnabled() => true;
+        public bool IsKvpAuthEnabled() => true;
     }
 }

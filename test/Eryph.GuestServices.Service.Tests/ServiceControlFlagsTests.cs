@@ -42,13 +42,14 @@ public class ServiceControlFlagsTests
     }
 
     [Fact]
-    public void NonWindowsOrDefault_BothCapabilities_AreOn()
+    public void NonWindowsOrDefault_AllCapabilities_AreOn()
     {
         // No flags set on the machine (and the Linux CI leg has no registry at
-        // all): both capabilities default to ON. Fail-open by design.
+        // all): every capability defaults to ON. Fail-open by design.
         var flags = new RegistryServiceControlFlags();
 
         flags.IsProvisioningEnabled().Should().BeTrue();
         flags.IsRemoteAccessEnabled().Should().BeTrue();
+        flags.IsKvpAuthEnabled().Should().BeTrue();
     }
 }

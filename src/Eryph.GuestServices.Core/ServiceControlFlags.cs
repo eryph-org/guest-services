@@ -24,6 +24,16 @@ public interface IServiceControlFlags
     /// <c>true</c> unless an operator turned it off.
     /// </summary>
     bool IsRemoteAccessEnabled();
+
+    /// <summary>
+    /// Gates whether authorized client keys delivered via Hyper-V data exchange
+    /// (KVP) are honored. When <c>false</c>, only the locally provisioned
+    /// (on-disk) key authorizes — a hardening option for environments that
+    /// want eryph-zero / geneset to be the sole authority over guest access
+    /// and where keys pushed at runtime via <c>egs-tool add-ssh-config</c>
+    /// should be rejected. <c>true</c> unless an operator turned it off.
+    /// </summary>
+    bool IsKvpAuthEnabled();
 }
 
 /// <summary>
@@ -48,10 +58,13 @@ public sealed class RegistryServiceControlFlags : IServiceControlFlags
     internal const string ServiceControlKey = @"SOFTWARE\eryph\guest-services";
     internal const string ProvisioningEnabledValue = "ProvisioningEnabled";
     internal const string RemoteAccessEnabledValue = "RemoteAccessEnabled";
+    internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
 
     public bool IsProvisioningEnabled() => ReadFlag(ProvisioningEnabledValue);
 
     public bool IsRemoteAccessEnabled() => ReadFlag(RemoteAccessEnabledValue);
+
+    public bool IsKvpAuthEnabled() => ReadFlag(KvpAuthEnabledValue);
 
     /// <summary>
     /// Pure value→bool interpretation for an opt-out DWORD flag. A

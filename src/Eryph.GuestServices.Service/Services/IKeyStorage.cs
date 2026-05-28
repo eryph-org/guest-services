@@ -6,8 +6,6 @@ public interface IKeyStorage
 {
     public Task<IKeyPair?> GetClientKeyAsync();
 
-    public Task SetClientKeyAsync(IKeyPair keyPair);
-
     public Task<IKeyPair?> GetHostKeyAsync();
 
     public Task SetHostKeyAsync(IKeyPair keyPair);

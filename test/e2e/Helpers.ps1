@@ -2,6 +2,21 @@
 
 # Adapted from MaxBack/test/e2e/Helpers.ps1.
 
+# egs ssh ALWAYS has to use the Windows OpenSSH client. A bare `ssh.exe`
+# can resolve to Git-Bash's portable OpenSSH (in C:\Program Files\Git\usr\bin
+# on most dev boxes), which:
+#   - reads ~/.ssh/config as a Unix path and corrupts Windows-style Include
+#     directives ("/c/Users/<u>/.ssh/<C:\Users\...>") — so the catlet alias
+#     blocks are never applied and the hostname falls through to DNS;
+#   - uses MSYS2-bundled libcrypto which fails to load private keys whose
+#     ACL only grants BUILTIN\Administrators (the egs id_egs files).
+# Pinning to %WINDIR%\System32\OpenSSH\ssh.exe guarantees the same client
+# the docs and ssh_config generation target.
+$script:WinSshExe = Join-Path $env:WINDIR 'System32\OpenSSH\ssh.exe'
+if (-not (Test-Path -LiteralPath $script:WinSshExe)) {
+  throw "Windows OpenSSH ssh.exe not found at $($script:WinSshExe); install the 'OpenSSH.Client' optional feature."
+}
+
 function New-TestProject {
   # Eryph project names are capped at 20 characters.
   $projectName = "egs-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -368,6 +383,54 @@ function Update-EgsServiceBinariesOffline {
     }
 
     Disable-CloudbaseInitUnattend -VolumeRoot $mount.VolumeRoot
+  }
+  finally {
+    Dismount-CatletVhd -VhdPath $mount.VhdPath
+  }
+}
+
+function Write-OfflineEgsClientKey {
+  <#
+  .SYNOPSIS
+    Writes a public key into the offline catlet's egs-service client-key
+    cache path (C:\ProgramData\eryph\guest-services\id_egs.pub), mimicking
+    what gene:dbosoft/guest-services:win-install would have done. Used in
+    the offline-injection path where cloudbase-init (and the win-install
+    gene that depends on it) are disabled.
+
+  .DESCRIPTION
+    The catlet must be Stopped. Mounts the VHD, creates the directory
+    chain if missing, writes the supplied public-key string (single
+    OpenSSH line), then dismounts. egs-service reads this file via
+    WindowsKeyStorage.GetClientKeyAsync on first auth and treats it as
+    the catlet's primary authorized identity.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $PublicKey
+  )
+
+  $status = (Get-VM -Id $VmId).State
+  if ($status -eq 'Running' -or $status -eq 'Saved') {
+    throw "Catlet must be Stopped (current: $status) before mounting its VHD."
+  }
+
+  $mount = Mount-CatletVhd -VmId $VmId
+  try {
+    $configDir = Join-Path $mount.VolumeRoot 'ProgramData\eryph\guest-services'
+    if (-not (Test-Path -LiteralPath $configDir)) {
+      New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+    $keyFile = Join-Path $configDir 'id_egs.pub'
+    # WindowsKeyStorage.GetClientKeyAsync reads with File.ReadAllText and
+    # then KeyPair.ImportKey, so trailing newlines are tolerated. Match the
+    # OpenSSH single-line convention with one trailing LF. UTF-8 *without*
+    # BOM — File.ReadAllText auto-strips BOM, but the OpenSSH writer
+    # convention is BOM-less and a few key parsers in the wild trip on it.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($keyFile, $PublicKey.TrimEnd() + "`n", $utf8NoBom)
+    Write-Verbose "Wrote provisioned client key to $keyFile"
   }
   finally {
     Dismount-CatletVhd -VhdPath $mount.VhdPath
@@ -779,6 +842,252 @@ function Save-GuestDiagnostics {
     $PSNativeCommandUseErrorActionPreference = $savedPref
   }
   Write-Host "Guest diagnostics saved to $OutputDir"
+}
+
+function Push-CatletExternalKvp {
+  <#
+  .SYNOPSIS
+    Writes a single key/value into the External KVP pool of a (running)
+    Hyper-V VM, bypassing egs-tool. Used by the multi-key e2e to push
+    arbitrary authorized client keys into named slots without mutating the
+    host's local egs-tool key files.
+
+  .DESCRIPTION
+    Mirrors what HostDataExchange.SetExternalValuesAsync does in C#: build
+    a Msvm_KvpExchangeDataItem (Source = HostExternal = 0), serialize to a
+    WMI-DTD embedded instance, and invoke AddKvpItems on the host's
+    Msvm_VirtualSystemManagementService. Falls back to ModifyKvpItems when
+    the slot already exists. Returns when the operation completes (poll-
+    short-sleep for the async-job code path).
+
+    Requires administrator + Hyper-V.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $Key,
+    [Parameter(Mandatory = $true)] [string] $Value
+  )
+
+  $ns = 'root\virtualization\v2'
+  $vm = Get-CimInstance -Namespace $ns -ClassName Msvm_ComputerSystem `
+    -Filter "Name = '$VmId'"
+  if (-not $vm) { throw "Hyper-V VM $VmId not found in $ns" }
+
+  $vmms = Get-CimInstance -Namespace $ns -ClassName Msvm_VirtualSystemManagementService
+
+  $itemClass = Get-CimClass -Namespace $ns -ClassName Msvm_KvpExchangeDataItem
+  $item = New-CimInstance -CimClass $itemClass -Property @{
+    Name = $Key
+    Data = $Value
+    Source = [UInt16]0   # HostExternal
+  } -ClientOnly
+
+  $serializer = [Microsoft.Management.Infrastructure.Serialization.CimSerializer]::Create()
+  $bytes = $serializer.Serialize($item, `
+    [Microsoft.Management.Infrastructure.Serialization.InstanceSerializationOptions]::None)
+  $embedded = [System.Text.Encoding]::Unicode.GetString($bytes)
+
+  # Try Add first; on any non-success/non-async return, fall through to Modify.
+  $result = Invoke-CimMethod -InputObject $vmms -MethodName 'AddKvpItems' `
+    -Arguments @{ TargetSystem = $vm; DataItems = @($embedded) }
+  if ($result.ReturnValue -ne 0 -and $result.ReturnValue -ne 4096) {
+    $result = Invoke-CimMethod -InputObject $vmms -MethodName 'ModifyKvpItems' `
+      -Arguments @{ TargetSystem = $vm; DataItems = @($embedded) }
+  }
+  if ($result.ReturnValue -ne 0 -and $result.ReturnValue -ne 4096) {
+    throw "Add/ModifyKvpItems for '$Key' failed: ReturnValue=$($result.ReturnValue)"
+  }
+
+  # 4096 == async job; sleep briefly. KVP writes are sub-second so this is
+  # ample without us having to thread a Msvm_ConcreteJob poller.
+  if ($result.ReturnValue -eq 4096) {
+    Start-Sleep -Seconds 2
+  }
+}
+
+function Test-CatletSshWithKey {
+  <#
+  .SYNOPSIS
+    Returns the exit code of `ssh hostname` against a catlet using the
+    supplied identity file. Zero = auth succeeded; non-zero = auth failed
+    (or the proxy/network broke). Suppresses prompts so a failed auth is
+    a fast, deterministic non-zero exit.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $IdentityFile,
+    [Parameter()] [int] $TimeoutSeconds = 10
+  )
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $proxy = "egs-tool.exe proxy $VmId"
+    # Capture stderr so a failure here yields an actionable log instead of
+    # an opaque exit-255. Pester redirection / variable-scope differences
+    # have bitten us before; the log file makes both rerunnable and easy
+    # to diff against an interactive ssh probe.
+    # `-F NUL` ignores ~/.ssh/config entirely. Without it, the catlet's
+    # Host block (written by egs-tool update-ssh-config) matches the
+    # *.hyper-v.alt target and silently adds `IdentityFile
+    # C:\ProgramData\eryph\guest-services\private\id_egs` to the list of
+    # keys ssh.exe offers — even with IdentitiesOnly=yes, because that
+    # flag merely restricts to "keys explicitly listed in config or -i",
+    # and the Host-block IdentityFile counts as explicit. The fallback
+    # makes a "this key should be REJECTED" test pass spuriously, because
+    # the provisioned id_egs key still authorizes after the ephemeral
+    # bounces off the gate. ProxyCommand is supplied via -o so we don't
+    # need the Host block for routing either.
+    $output = & $script:WinSshExe `
+      -F NUL `
+      -i $IdentityFile `
+      -o "IdentitiesOnly=yes" `
+      -o "StrictHostKeyChecking=no" `
+      -o "UserKnownHostsFile=$env:TEMP\egs-remoteaccess-known_hosts.tmp" `
+      -o "BatchMode=yes" `
+      -o "PasswordAuthentication=no" `
+      -o "KbdInteractiveAuthentication=no" `
+      -o "ConnectTimeout=$TimeoutSeconds" `
+      -o "ProxyCommand=$proxy" `
+      -v `
+      "egs@$($VmId).hyper-v.alt" hostname 2>&1
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0) {
+      $logDir = Join-Path $env:TEMP "egs-remoteaccess-e2e-ssh-logs"
+      New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+      $log = Join-Path $logDir "$VmId-$([DateTime]::UtcNow.Ticks).log"
+      "exit=$exit`nargs: -i $IdentityFile / egs@$VmId.hyper-v.alt hostname / ProxyCommand=$proxy`n----`n" + ($output | Out-String) `
+        | Set-Content -LiteralPath $log -Encoding utf8
+      Write-Host "ssh probe failed (exit=$exit); log: $log"
+    }
+    return $exit
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+    Remove-Item -LiteralPath "$env:TEMP\egs-remoteaccess-known_hosts.tmp" -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Set-CatletKvpAuthEnabled {
+  <#
+  .SYNOPSIS
+    Writes (or clears) the HKLM\SOFTWARE\eryph\guest-services\KvpAuthEnabled
+    DWORD inside a running catlet AND restarts eryph-guest-services so the
+    new flag value is in force. The service caches the flag at startup
+    (matches IsRemoteAccessEnabled semantics), so a registry change alone
+    is invisible to the running service until restart.
+
+    Uses PowerShell Direct (Hyper-V VMBus) for BOTH the registry write and
+    the service restart — no networking, no SSH, no firewall. The caller
+    supplies a Credential for an admin user on the catlet. This channel is
+    independent of eryph-guest-services lifecycle, so stopping it does NOT
+    kill the admin session.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter()] [Nullable[int]] $Value,  # null = delete, otherwise REG_DWORD
+    [Parameter(Mandatory = $true)] [pscredential] $Credential
+  )
+
+  # All registry I/O + the restart go through PowerShell Direct. Same
+  # channel for write, verify, and restart — survives the service stop.
+  Invoke-Command -VMId $Catlet.VmId -Credential $Credential -ScriptBlock {
+    param([Nullable[int]] $TargetValue)
+    $key = 'HKLM:\SOFTWARE\eryph\guest-services'
+    if ($null -eq $TargetValue) {
+      if (Test-Path -LiteralPath $key) {
+        Remove-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -ErrorAction SilentlyContinue
+      }
+    } else {
+      if (-not (Test-Path -LiteralPath $key)) {
+        New-Item -Path $key -Force | Out-Null
+      }
+      Set-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -Type DWord -Value $TargetValue
+    }
+    # Read back so the caller can fail fast if the write didn't land
+    # where egs-service reads from.
+    $kvp = Get-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -ErrorAction SilentlyContinue
+    if ($null -ne $kvp) { $kvp.KvpAuthEnabled } else { $null }
+  } -ArgumentList $Value -OutVariable readBack | Out-Null
+
+  if ($null -eq $Value) {
+    if ($null -ne $readBack[0]) {
+      throw "KvpAuthEnabled clear did not take effect on $($Catlet.Name); still reads $($readBack[0])."
+    }
+  } else {
+    if ($readBack[0] -ne $Value) {
+      throw "KvpAuthEnabled=$Value not visible on $($Catlet.Name) (read back $($readBack[0]))."
+    }
+  }
+
+  # Restart eryph-guest-services so the new (cached-at-startup) flag is
+  # in force. PowerShell Direct is independent of the service, so this
+  # works cleanly even though we're stopping the SSH listener that other
+  # tests rely on.
+  Invoke-Command -VMId $Catlet.VmId -Credential $Credential -ScriptBlock {
+    Restart-Service -Name eryph-guest-services -Force
+  } | Out-Null
+
+  # Poll until the SSH listener is back via the egs channel.
+  $deadline = (Get-Date).AddMinutes(2)
+  $status = ''
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 2
+    try { $status = & egs-tool get-status $Catlet.VmId 2>&1 } catch { $status = $_.Exception.Message }
+    if ($status -eq 'available') { break }
+  }
+  if ($status -ne 'available') {
+    throw "egs-service did not return to 'available' within 2 minutes after restart (status=$status)"
+  }
+}
+
+function New-EphemeralSshKey {
+  <#
+  .SYNOPSIS
+    Generates an ephemeral ecdsa-sha2-nistp256 keypair into a temp
+    directory and returns a record with the private-key path and
+    public-key OpenSSH string. The caller owns cleanup.
+
+  .NOTES
+    Algorithm is ecdsa-sha2-nistp256 because the egs-service's SSH
+    library (Microsoft.DevTunnels.Ssh) advertises only rsa-sha2-* and
+    ecdsa-sha2-nistp{256,384}. An ed25519 ephemeral key parses and is
+    accepted into the authorized set on the guest, but the handshake
+    fails with "PublicKeyAlgorithm not supported: ssh-ed25519" — the
+    library can't VERIFY ed25519 signatures.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter()] [string] $Comment = 'multikey-e2e-ephemeral'
+  )
+
+  $dir = Join-Path $env:TEMP "egs-multikey-$([guid]::NewGuid().ToString('N'))"
+  New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  $key = Join-Path $dir 'id'
+
+  # Pin to the Windows OpenSSH ssh-keygen so the produced key file is
+  # readable by the Windows OpenSSH ssh.exe we use to authenticate. The
+  # Git-Bash variant writes files OK but the ACL pattern can trip an
+  # IdentityFile permissions check on Windows.
+  #
+  # -N '' creates a passphraseless key. Do NOT use -N '""' — PowerShell
+  # passes those two double-quote characters through verbatim and
+  # ssh-keygen encrypts the key with a literal two-char passphrase, which
+  # ssh.exe in BatchMode then silently fails to decrypt (server accepts
+  # the public key offer, client can't sign, ssh exits 255).
+  $sshKeygen = Join-Path $env:WINDIR 'System32\OpenSSH\ssh-keygen.exe'
+  & $sshKeygen -t ecdsa -b 256 -N '' -f $key -C $Comment | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "ssh-keygen failed: $LASTEXITCODE"
+  }
+  return [pscustomobject]@{
+    PrivateKeyPath = $key
+    PublicKey = (Get-Content -Raw -LiteralPath "$key.pub").Trim()
+    TempDir = $dir
+  }
 }
 
 function Set-CatletChassisAssetTag {
