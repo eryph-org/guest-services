@@ -423,4 +423,28 @@ public sealed class LicensingModuleTests
         result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received(1).RearmLicenseAsync(Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task Reboot_resume_skips_rearm_and_activation()
+    {
+        // After a rearm-triggered reboot, IsEvaluationLicenseAsync still
+        // returns true (rearm extends the grace timer, doesn't change the SKU).
+        // Re-running rearm would burn another rearm slot and eventually trip
+        // the per-module reboot cap. The whole module must short-circuit.
+        var os = NewOs(resolvedAvmaKey: "AVMA-KEY", isEvaluation: true);
+        var module = new LicensingModule(NullLogger<LicensingModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            new TestModuleContext(os, isRebootResume: true),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RearmLicenseAsync(Arg.Any<CancellationToken>());
+        await os.DidNotReceive().ApplyLicenseAsync(
+            Arg.Any<LicenseSpec>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().ResolveVolumeActivationKeyAsync(
+            Arg.Any<VolumeActivationKeyType>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().IsEvaluationLicenseAsync(Arg.Any<CancellationToken>());
+    }
 }
