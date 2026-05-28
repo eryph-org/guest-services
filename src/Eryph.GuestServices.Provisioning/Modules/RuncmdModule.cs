@@ -65,7 +65,13 @@ internal sealed class RuncmdModule(
             catch (Exception ex)
             {
                 logger.LogError(ex, "runcmd entry #{Index} failed to start.", ordinal);
-                checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, hash);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, hash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"runcmd #{ordinal} failed to launch."));
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -76,7 +82,7 @@ internal sealed class RuncmdModule(
                 result.ExitCode, result.StdOut, progress, settings.Reboot,
                 ordinal, "runcmd", logger);
 
-            checkpoint = ApplyDispatch(checkpoint, progressKey, ordinal, hash, dispatch);
+            checkpoint = RebootExitDispatcher.Apply(checkpoint, progressKey, ordinal, hash, dispatch);
             await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
 
             switch (dispatch.Outcome)
@@ -94,38 +100,6 @@ internal sealed class RuncmdModule(
         }
 
         return ModuleOutcome.Ok();
-    }
-
-    private static UserCodeCheckpoint ApplyDispatch(
-        UserCodeCheckpoint checkpoint,
-        string progressKey,
-        int ordinal,
-        string hash,
-        RebootExitDispatcher.Result dispatch)
-    {
-        if (dispatch.MarkCompleted)
-            return MarkCompleted(checkpoint, progressKey, ordinal, hash);
-
-        var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal)
-        {
-            [progressKey] = dispatch.NextProgress,
-        };
-        return checkpoint with { Progress = progress };
-    }
-
-    private static UserCodeCheckpoint MarkCompleted(
-        UserCodeCheckpoint checkpoint,
-        string progressKey,
-        int ordinal,
-        string hash)
-    {
-        var completed = new List<CheckpointEntry>(checkpoint.Completed)
-        {
-            new(ordinal, hash),
-        };
-        var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
-        progress.Remove(progressKey);
-        return checkpoint with { Completed = completed, Progress = progress };
     }
 
     private static async Task<RunCommandResult> ExecuteAsync(

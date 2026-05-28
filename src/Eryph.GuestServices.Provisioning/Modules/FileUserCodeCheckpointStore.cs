@@ -40,7 +40,20 @@ public abstract class FileUserCodeCheckpointStore : IUserCodeCheckpointStore
                 stream,
                 UserCodeCheckpointJsonContext.Default.UserCodeCheckpoint,
                 cancellationToken).ConfigureAwait(false);
-            return parsed ?? UserCodeCheckpoint.Empty;
+            if (parsed is null)
+                return UserCodeCheckpoint.Empty;
+
+            // System.Text.Json source-generation does NOT apply C# property
+            // initializers for keys absent from the JSON (same trap as
+            // ProvisioningSettings.LoadFromFileOrDefault). A checkpoint file
+            // that omits a section — e.g. an older format with only
+            // 'completed' — would leave the corresponding property null and
+            // crash the module on first dereference. Normalize defensively.
+            return parsed with
+            {
+                Completed = parsed.Completed ?? [],
+                Progress = parsed.Progress ?? new Dictionary<string, EntryProgress>(StringComparer.Ordinal),
+            };
         }
         catch (Exception ex) when (ex is JsonException or IOException)
         {

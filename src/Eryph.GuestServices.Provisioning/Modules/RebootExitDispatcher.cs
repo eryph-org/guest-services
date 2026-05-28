@@ -20,6 +20,37 @@ internal static class RebootExitDispatcher
         EntryProgress NextProgress,
         string Message);
 
+    /// <summary>
+    /// Folds the dispatch result into a checkpoint: either appends the item
+    /// to <see cref="UserCodeCheckpoint.Completed"/> (and drops its progress
+    /// record), or updates its progress entry in place. Returns the new
+    /// checkpoint instance — the caller persists it.
+    /// </summary>
+    public static UserCodeCheckpoint Apply(
+        UserCodeCheckpoint checkpoint,
+        string progressKey,
+        int ordinal,
+        string hash,
+        Result dispatch)
+    {
+        if (dispatch.MarkCompleted)
+        {
+            var completed = new List<CheckpointEntry>(checkpoint.Completed)
+            {
+                new(ordinal, hash),
+            };
+            var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
+            progress.Remove(progressKey);
+            return checkpoint with { Completed = completed, Progress = progress };
+        }
+
+        var nextProgress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal)
+        {
+            [progressKey] = dispatch.NextProgress,
+        };
+        return checkpoint with { Progress = nextProgress };
+    }
+
     public static Result Dispatch(
         int exitCode,
         string stdout,
@@ -39,16 +70,14 @@ internal static class RebootExitDispatcher
                     Message: $"{label} #{ordinal} succeeded.");
 
             case 1001:
-            {
-                // Reboot, item is done. Any directive on this run is moot —
-                // the item will not re-enter.
-                var nextAttempts = current.RebootAttempts + 1;
+                // Reboot, item is done. The progress record is dropped on
+                // MarkCompleted so RebootAttempts is moot; any directive on
+                // this run is also moot since the item will not re-enter.
                 return new Result(
                     Action.Reboot,
                     MarkCompleted: true,
-                    NextProgress: current with { RebootAttempts = nextAttempts },
+                    NextProgress: current,
                     Message: $"{label} #{ordinal} requested reboot (exit 1001, item done).");
-            }
 
             case 1002:
                 // cbi's "re-execute plugin on next boot without rebooting" has

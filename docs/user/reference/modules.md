@@ -266,7 +266,7 @@ set `reboot.allowScriptOverride: false` in [settings](settings.md).
 
 | Variable | Meaning |
 | --- | --- |
-| `EGS_ENTRY_INDEX` | 1-based position of this entry in `runcmd:` (or the script's ordinal under ScriptsUser) |
+| `EGS_ENTRY_INDEX` | 1-based position of this entry in `runcmd:` (or the script's ordinal under ScriptsUser — values may skip when a payload is unrunnable on Windows, e.g. a POSIX shell script) |
 | `EGS_REBOOT_COUNT` | reboots this entry / script has already triggered (0 on the first run) |
 | `EGS_REBOOT_LIMIT` | the current per-script reboot cap |
 

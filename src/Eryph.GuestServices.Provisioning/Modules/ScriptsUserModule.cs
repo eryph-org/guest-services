@@ -93,6 +93,8 @@ internal sealed class ScriptsUserModule(
 
             var scriptName = BuildScriptName(ordinal, script);
             var scriptPath = WindowsPath.Combine(scriptDirectory, scriptName);
+            var progressKey = UserCodeCheckpoint.ProgressKey(ordinal, bodyHash);
+            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new EntryProgress();
 
             try
             {
@@ -101,12 +103,23 @@ internal sealed class ScriptsUserModule(
             }
             catch (Exception ex)
             {
+                // Mark as completed + persist so a transient or persistent
+                // staging failure does not silently re-stage on every resume.
+                // (Pre-fix this `continue`d without saving — the script would
+                // be retried on every boot until the underlying problem was
+                // fixed externally.)
                 logger.LogError(ex, "Failed to stage script #{Index} to '{Path}'; skipping.", ordinal, scriptPath);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} failed to stage."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
-            var progressKey = UserCodeCheckpoint.ProgressKey(ordinal, bodyHash);
-            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new EntryProgress();
             var effectiveLimit = progress.OverrideLimit ?? settings.Reboot.MaxPerScript;
             var envVars = RebootEnvVars.Build(ordinal, progress.RebootAttempts, effectiveLimit);
 
@@ -117,13 +130,34 @@ internal sealed class ScriptsUserModule(
             }
             catch (NotSupportedException ex)
             {
+                // Unsupported kind is a static property of the payload (not a
+                // transient failure), so persist completion so we don't try
+                // again next boot.
                 logger.LogWarning(ex, "Script #{Index} ({Path}) has unsupported kind {Kind}; skipping.",
                     ordinal, scriptPath, script.Kind);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} unsupported kind."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
             catch (Exception ex)
             {
+                // Same reasoning as the staging-failure branch: persist
+                // completion so a launch failure doesn't infinite-retry.
                 logger.LogError(ex, "Script #{Index} ({Path}) failed to start.", ordinal, scriptPath);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} failed to launch."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
@@ -136,7 +170,7 @@ internal sealed class ScriptsUserModule(
                 result.ExitCode, result.StdOut, progress, settings.Reboot,
                 ordinal, "script", logger);
 
-            checkpoint = ApplyDispatch(checkpoint, progressKey, ordinal, bodyHash, dispatch);
+            checkpoint = RebootExitDispatcher.Apply(checkpoint, progressKey, ordinal, bodyHash, dispatch);
             await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
 
             switch (dispatch.Outcome)
@@ -154,31 +188,6 @@ internal sealed class ScriptsUserModule(
         }
 
         return ModuleOutcome.Ok();
-    }
-
-    private static UserCodeCheckpoint ApplyDispatch(
-        UserCodeCheckpoint checkpoint,
-        string progressKey,
-        int ordinal,
-        string hash,
-        RebootExitDispatcher.Result dispatch)
-    {
-        if (dispatch.MarkCompleted)
-        {
-            var completed = new List<CheckpointEntry>(checkpoint.Completed)
-            {
-                new(ordinal, hash),
-            };
-            var progress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal);
-            progress.Remove(progressKey);
-            return checkpoint with { Completed = completed, Progress = progress };
-        }
-
-        var nextProgress = new Dictionary<string, EntryProgress>(checkpoint.Progress, StringComparer.Ordinal)
-        {
-            [progressKey] = dispatch.NextProgress,
-        };
-        return checkpoint with { Progress = nextProgress };
     }
 
     // Identity hash over the script's body bytes. Operator edits to the

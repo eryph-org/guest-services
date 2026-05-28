@@ -8,6 +8,7 @@ using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
@@ -398,5 +399,52 @@ public sealed class ScriptsUserModuleCheckpointTests
         captured!["EGS_ENTRY_INDEX"].Should().Be("1");
         captured["EGS_REBOOT_COUNT"].Should().Be("0");
         captured["EGS_REBOOT_LIMIT"].Should().Be("7");
+    }
+
+    // A launch-failure that just `continue`d without persisting completion
+    // would silently re-launch the failing script on every resume boot —
+    // exactly the kind of infinite retry the checkpoint exists to prevent.
+    [Fact]
+    public async Task Script_launch_failure_marks_script_completed_so_resume_does_not_re_launch()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-broken.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<CancellationToken>())
+            .Throws(new InvalidOperationException("simulated launch failure"));
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("002-next.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var module = CreateModule(checkpoint);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with
+            {
+                Scripts =
+                [
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# broken"), "broken.ps1"),
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# next"), "next.ps1"),
+                ],
+            };
+
+        await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+
+        var saved = await checkpoint.LoadAsync("test-instance", CancellationToken.None);
+        saved.Completed.Should().HaveCount(2, "both scripts must be checkpointed — the broken one as a failure, the next one as a success");
+        saved.Completed.Should().Contain(e => e.Ordinal == 1, "the failed script must be marked completed so resume does not re-launch it");
+
+        // Resume: the broken script must NOT run again.
+        os.ClearReceivedCalls();
+        await module.ApplyAsync(resolved, ctx, CancellationToken.None);
+        await os.DidNotReceive().RunArgvCommandAsync(
+            Arg.Is<IReadOnlyList<string>>(argv => argv.Any(s => s.Contains("001-broken.ps1"))),
+            Arg.Any<IReadOnlyDictionary<string, string>>(),
+            Arg.Any<CancellationToken>());
     }
 }
