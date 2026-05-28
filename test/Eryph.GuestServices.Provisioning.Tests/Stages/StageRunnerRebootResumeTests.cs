@@ -192,6 +192,41 @@ public sealed class StageRunnerRebootResumeTests
     }
 
     [Fact]
+    public async Task Script_driven_reboots_are_exempt_from_the_per_module_cap()
+    {
+        // RuncmdModule / ScriptsUserModule relay reboot requests issued by
+        // user-supplied code (exit 1001 / 1003). Those modules enforce their
+        // own per-entry / per-script quota; the module-wide cap is for
+        // detecting a misbehaving MODULE, not for clamping the number of
+        // reboots an installer-style user script is allowed to request.
+        var data = MakeData("i-1");
+        var stateStore = new InMemoryStateStore();
+        var semaphoreStore = new InMemorySemaphoreStore();
+        var module = new AlwaysScriptDrivenRebootModule("user-script-reboots");
+
+        var runner = BuildRunner(
+            locator: LocatorReturning(data),
+            stateStore: stateStore,
+            semaphoreStore: semaphoreStore,
+            modules: [module]);
+
+        // Drive past the default cap (3) and confirm the run keeps relaying
+        // reboot requests instead of being killed by the module-wide cap.
+        for (var i = 0; i < 10; i++)
+        {
+            var outcome = await runner.RunAsync(CancellationToken.None);
+            outcome.Should().BeOfType<StageRunOutcome.RebootRequested>(
+                "script-driven reboots must bypass the per-module cap (iteration {0})", i);
+        }
+
+        // Diagnostics: ModuleRebootCounts only tracks module-driven reboots,
+        // so it stays empty even though we cycled the module 10 times.
+        stateStore.Current!.ModuleRebootCounts.Should().NotContainKey(
+            typeof(AlwaysScriptDrivenRebootModule).FullName!,
+            "ModuleRebootCounts is a misbehaviour signal; script-driven reboots do not pollute it");
+    }
+
+    [Fact]
     public async Task Per_module_reboot_cap_fails_the_run_instead_of_looping_forever()
     {
         // A misbehaving module returns Reboot forever. Without a cap the
@@ -413,6 +448,18 @@ public sealed class StageRunnerRebootResumeTests
             return IsRebootResumeObservations.Count == 1
                 ? Task.FromResult<ModuleOutcome>(ModuleOutcome.Reboot(reason))
                 : Task.FromResult(ModuleOutcome.Ok());
+        }
+    }
+
+    [Stage(Stage.Final, Order = 0)]
+    private sealed class AlwaysScriptDrivenRebootModule(string reason) : IModule
+    {
+        public int CallCount { get; private set; }
+
+        public Task<ModuleOutcome> ApplyAsync(ResolvedUserData userData, IModuleContext context, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult<ModuleOutcome>(ModuleOutcome.RebootForUserScript(reason));
         }
     }
 

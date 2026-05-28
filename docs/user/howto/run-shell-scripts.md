@@ -36,12 +36,19 @@ and full stdout and stderr.
 
 ## Reboots and failures
 
-A script that exits `1003` reboots the guest and resumes provisioning afterward —
-the script that asked for the reboot isn't re-run. This is a cloudbase-init
-convention; on cloud-init you'd use `power_state`.
+Two exit codes ask the guest to reboot mid-run:
 
-Any other non-zero exit is logged and the next script still runs. The exit code
-is in the per-script log.
+- `1001` — reboot, then move on to the next script / runcmd entry.
+- `1003` — reboot, then re-run **this same script / entry**. Use for
+  multi-stage installers; branch on `EGS_REBOOT_COUNT` (see
+  [Runcmd](../reference/modules.md#runcmd) for the full env var list).
+
+Any other non-zero exit is logged and the next script still runs. The exit
+code is in the per-script log.
+
+A script (whether a runcmd entry or a multipart-shebang script) may ask for at
+most `reboot.maxPerScript` reboots (default 10) before it is failed. A script
+can raise its own cap with `##egs.reboot_limit=<n>` on stdout.
 
 ## Example: a script in a multipart payload
 

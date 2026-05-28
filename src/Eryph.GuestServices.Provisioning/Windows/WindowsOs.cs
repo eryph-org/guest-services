@@ -369,8 +369,14 @@ internal sealed class WindowsOs : IWindowsOs
         return line;
     }
 
+    public Task<RunCommandResult> RunShellCommandAsync(
+        string command,
+        CancellationToken cancellationToken) =>
+        RunShellCommandAsync(command, EmptyEnvironment, cancellationToken);
+
     public async Task<RunCommandResult> RunShellCommandAsync(
         string command,
+        IReadOnlyDictionary<string, string> environment,
         CancellationToken cancellationToken)
     {
         // cmd.exe /c "<complex command>" has notoriously broken quoting rules:
@@ -397,6 +403,7 @@ internal sealed class WindowsOs : IWindowsOs
             var psi = CreateUtf8Psi("cmd.exe");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
+            ApplyEnvironment(psi, environment);
 
             return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
         }
@@ -406,8 +413,14 @@ internal sealed class WindowsOs : IWindowsOs
         }
     }
 
+    public Task<RunCommandResult> RunArgvCommandAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken) =>
+        RunArgvCommandAsync(argv, EmptyEnvironment, cancellationToken);
+
     public async Task<RunCommandResult> RunArgvCommandAsync(
         IReadOnlyList<string> argv,
+        IReadOnlyDictionary<string, string> environment,
         CancellationToken cancellationToken)
     {
         if (argv.Count == 0)
@@ -416,8 +429,26 @@ internal sealed class WindowsOs : IWindowsOs
         var psi = CreateUtf8Psi(argv[0]);
         for (var i = 1; i < argv.Count; i++)
             psi.ArgumentList.Add(argv[i]);
+        ApplyEnvironment(psi, environment);
 
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment =
+        new Dictionary<string, string>(0);
+
+    // Merges caller-supplied vars onto the inherited parent environment.
+    // ProcessStartInfo.Environment is pre-populated with the parent env when
+    // we instantiate the PSI, so writes here are an overlay (caller wins
+    // on collision — that's the intended override semantics).
+    private static void ApplyEnvironment(
+        ProcessStartInfo psi,
+        IReadOnlyDictionary<string, string> environment)
+    {
+        if (environment.Count == 0)
+            return;
+        foreach (var (key, value) in environment)
+            psi.Environment[key] = value;
     }
 
     public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>

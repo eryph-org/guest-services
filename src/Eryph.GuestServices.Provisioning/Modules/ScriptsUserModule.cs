@@ -23,20 +23,16 @@ internal sealed class ScriptsUserModule(
     IReportingDispatcher reporter,
     IScriptCheckpointStore checkpointStore) : IModule
 {
-    /// <summary>
-    /// Exit code reserved by the cloudbase-init "reboot and continue"
-    /// convention. Same value the RuncmdModule honors.
-    /// </summary>
+    // cbi exit-code contract — see plugins/common/execcmd.py::get_plugin_return_value
+    // The 1001..1003 range is a bitmask: bit 0 = reboot, bit 1 = re-execute plugin.
+    //   1001: reboot, plugin done (this script won't run again)
+    //   1002: re-run plugin on next boot, no reboot — NOT supported on eryph
+    //   1003: reboot, re-execute plugin (the script that emitted 1003 runs again)
+    // Eryph's per-script checkpoint encodes this: 1001 marks the script
+    // completed; 1003 leaves it in-flight so the resume re-runs it.
+    public const int RebootAndDoneExitCode = 1001;
+    public const int RerunOnNextBootExitCode = 1002;
     public const int RebootRequestedExitCode = 1003;
-
-    /// <summary>
-    /// Per-script reboot quota. A given (ordinal, body-hash) may request
-    /// reboot at most this many times before we fail the module — guards
-    /// against a broken installer that returns 1003 indefinitely.
-    /// docs/bugs/0001 "loop-safety". Sourced from
-    /// ProvisioningSettings.Reboot.MaxPerScript (default 2).
-    /// </summary>
-    internal int MaxRebootsPerScript => settings.Reboot.MaxPerScript;
 
     /// <summary>
     /// Directory where per-script stdout/stderr logs are written. One log
@@ -85,49 +81,95 @@ internal sealed class ScriptsUserModule(
                 continue;
             }
 
-            var bodyHash = ScriptCheckpoint.ComputeBodyHash(script.Body);
+            var bodyHash = ComputeBodyHash(script.Body);
 
-            // Resume guard: skip scripts already recorded as executed (cloud-init
-            // doesn't have this; we do because cbi-style 1003 means the script
-            // DID its work and signalled "reboot, then move on"). The (ordinal,
-            // body-hash) pair invalidates the entry if the operator edits the
-            // script between runs.
-            if (checkpoint.Contains(ordinal, bodyHash))
+            if (checkpoint.IsCompleted(ordinal, bodyHash))
             {
                 logger.LogInformation(
-                    "Skipping script #{Index} ('{Filename}') — already executed in a prior run (resume).",
+                    "Skipping script #{Index} ('{Filename}') — already completed in a prior run (resume).",
                     ordinal, script.Filename ?? "<root>");
                 continue;
             }
 
             var scriptName = BuildScriptName(ordinal, script);
             var scriptPath = WindowsPath.Combine(scriptDirectory, scriptName);
+            var progressKey = UserCodeCheckpoint.ProgressKey(ordinal, bodyHash);
+            var progress = checkpoint.Progress.GetValueOrDefault(progressKey) ?? new EntryProgress();
 
             try
             {
                 await context.Os.WriteFileAsync(scriptPath, script.Body, append: false, cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is not a script-level failure — propagate so
+                // the run aborts cleanly instead of being silently persisted
+                // as a completed script.
+                throw;
+            }
             catch (Exception ex)
             {
+                // Mark as completed + persist so a transient or persistent
+                // staging failure does not silently re-stage on every resume.
+                // (Pre-fix this `continue`d without saving — the script would
+                // be retried on every boot until the underlying problem was
+                // fixed externally.)
                 logger.LogError(ex, "Failed to stage script #{Index} to '{Path}'; skipping.", ordinal, scriptPath);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} failed to stage."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
+
+            var effectiveLimit = progress.OverrideLimit ?? settings.Reboot.MaxPerScript;
+            var envVars = RebootEnvVars.Build(ordinal, progress.RebootAttempts, effectiveLimit);
 
             RunCommandResult result;
             try
             {
-                result = await ExecuteAsync(scriptPath, script.Kind, context, cancellationToken).ConfigureAwait(false);
+                result = await ExecuteAsync(scriptPath, script.Kind, envVars, context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation must propagate — see staging branch above.
+                throw;
             }
             catch (NotSupportedException ex)
             {
+                // Unsupported kind is a static property of the payload (not a
+                // transient failure), so persist completion so we don't try
+                // again next boot.
                 logger.LogWarning(ex, "Script #{Index} ({Path}) has unsupported kind {Kind}; skipping.",
                     ordinal, scriptPath, script.Kind);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} unsupported kind."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
             catch (Exception ex)
             {
+                // Same reasoning as the staging-failure branch: persist
+                // completion so a launch failure doesn't infinite-retry.
                 logger.LogError(ex, "Script #{Index} ({Path}) failed to start.", ordinal, scriptPath);
+                checkpoint = RebootExitDispatcher.Apply(
+                    checkpoint, progressKey, ordinal, bodyHash,
+                    new RebootExitDispatcher.Result(
+                        RebootExitDispatcher.Action.Continue,
+                        MarkCompleted: true,
+                        NextProgress: progress,
+                        Message: $"script #{ordinal} failed to launch."));
+                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
@@ -136,67 +178,35 @@ internal sealed class ScriptsUserModule(
             LogResult(ordinal, scriptPath, result);
             await ReportProgressAsync(scriptName, result, cancellationToken).ConfigureAwait(false);
 
-            if (result.ExitCode == RebootRequestedExitCode)
-            {
-                // Per-script reboot quota: the same (ordinal, body-hash) may
-                // request reboot at most MaxRebootsPerScript times. Past that
-                // we treat it as a stuck installer and fail rather than loop.
-                var rebootKey = $"{ordinal}:{bodyHash}";
-                var rebootCount = checkpoint.RebootCounts.GetValueOrDefault(rebootKey) + 1;
-                if (rebootCount > MaxRebootsPerScript)
-                {
-                    logger.LogError(
-                        "Script #{Index} ({Path}) exceeded per-script reboot quota ({Quota}). Failing.",
-                        ordinal, scriptPath, MaxRebootsPerScript);
-                    var updatedCounts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
-                    {
-                        [rebootKey] = rebootCount,
-                    };
-                    await checkpointStore.SaveAsync(instanceId,
-                        checkpoint with { RebootCounts = updatedCounts },
-                        cancellationToken).ConfigureAwait(false);
-                    return ModuleOutcome.Fail(
-                        $"script #{ordinal} ('{scriptName}') exceeded per-script reboot quota.");
-                }
+            var dispatch = RebootExitDispatcher.Dispatch(
+                result.ExitCode, result.StdOut, progress, settings.Reboot,
+                ordinal, "script", logger);
 
-                logger.LogInformation(
-                    "Script #{Index} ({Path}) requested reboot-and-continue (exit {Code}).",
-                    ordinal, scriptPath, RebootRequestedExitCode);
-
-                // Mark the script as executed BEFORE returning Reboot — cbi
-                // semantics for 1003: "I did my work; reboot, then run my
-                // successors". The resume must NOT re-run this script.
-                var executed = checkpoint.Executed
-                    .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
-                    .ToList();
-                var counts = new Dictionary<string, int>(checkpoint.RebootCounts, StringComparer.Ordinal)
-                {
-                    [rebootKey] = rebootCount,
-                };
-                checkpoint = checkpoint with { Executed = executed, RebootCounts = counts };
-                await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
-
-                return ModuleOutcome.Reboot(
-                    $"script #{ordinal} ('{scriptName}') requested reboot (exit {RebootRequestedExitCode}).");
-            }
-
-            if (result.ExitCode != 0)
-                logger.LogError(
-                    "Script #{Index} ({Path}) exited with code {Code}; continuing with remaining scripts.",
-                    ordinal, scriptPath, result.ExitCode);
-
-            // Mark executed (success OR non-1003 failure). A failing script
-            // does not block the queue, so it has 'run'; replaying it on the
-            // next reboot-resume would just fail twice.
-            var nowExecuted = checkpoint.Executed
-                .Append(new ScriptCheckpointEntry(ordinal, bodyHash))
-                .ToList();
-            checkpoint = checkpoint with { Executed = nowExecuted };
+            checkpoint = RebootExitDispatcher.Apply(checkpoint, progressKey, ordinal, bodyHash, dispatch);
             await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+
+            switch (dispatch.Outcome)
+            {
+                case RebootExitDispatcher.Action.Continue:
+                    continue;
+                case RebootExitDispatcher.Action.Reboot:
+                    logger.LogInformation(
+                        "Script #{Index} → reboot ({Message}).", ordinal, dispatch.Message);
+                    return ModuleOutcome.RebootForUserScript(dispatch.Message);
+                case RebootExitDispatcher.Action.Fail:
+                    logger.LogError(dispatch.Message);
+                    return ModuleOutcome.Fail(dispatch.Message);
+            }
         }
 
         return ModuleOutcome.Ok();
     }
+
+    // Identity hash over the script's body bytes. Operator edits to the
+    // body invalidate the hash so the checkpoint cannot mistakenly skip a
+    // replaced script.
+    private static string ComputeBodyHash(byte[] body) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(body));
 
     // Preserves the operator-authored filename (extension included) prefixed
     // with the declaration order. Eryph genes ship meaningful filenames like
@@ -235,6 +245,7 @@ internal sealed class ScriptsUserModule(
     private static async Task<RunCommandResult> ExecuteAsync(
         string scriptPath,
         ScriptKind kind,
+        IReadOnlyDictionary<string, string> environment,
         IModuleContext context,
         CancellationToken cancellationToken)
     {
@@ -252,10 +263,12 @@ internal sealed class ScriptsUserModule(
                     "-ExecutionPolicy", "Bypass",
                     "-Command", PowerShellScriptWrapper.BuildScriptWrapper(scriptPath),
                 ],
+                environment,
                 cancellationToken).ConfigureAwait(false),
 
             ScriptKind.Cmd => await context.Os.RunArgvCommandAsync(
                 ["cmd.exe", "/c", scriptPath],
+                environment,
                 cancellationToken).ConfigureAwait(false),
 
             // ScriptKind.ShellScript should never reach this point on Windows

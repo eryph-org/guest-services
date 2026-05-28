@@ -9,7 +9,7 @@ expect. The differences that matter:
 | Topic | This agent |
 | --- | --- |
 | Script dispatch | By filename extension (`.ps1`, `.cmd`, `.bat`) first, shebang only as a fallback. cloud-init goes by the shebang. |
-| Reboot during provisioning | A `runcmd` entry or script that exits `1003` reboots and resumes on the next boot. cloud-init uses `power_state` for this. |
+| Reboot during provisioning | A `runcmd` entry or script can exit `1001` (reboot, entry done) or `1003` (reboot, re-run same entry). cloud-init uses `power_state` for this. |
 | `power_state: halt` | Falls back to hibernate — Windows has no halt equivalent. |
 | `runcmd` argv form | Passed to the Windows process API verbatim, no shell re-quoting. A string entry goes through `cmd.exe`. |
 | Jinja2 templating | Not supported. `## template: jinja` is ignored. |

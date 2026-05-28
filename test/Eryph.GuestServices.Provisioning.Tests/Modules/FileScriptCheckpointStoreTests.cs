@@ -24,25 +24,30 @@ public sealed class FileScriptCheckpointStoreTests : IDisposable
     {
         var store = new FileScriptCheckpointStore(NullLogger<FileScriptCheckpointStore>.Instance, _root);
         var checkpoint = await store.LoadAsync("instance-1", CancellationToken.None);
-        checkpoint.Executed.Should().BeEmpty();
-        checkpoint.RebootCounts.Should().BeEmpty();
+        checkpoint.Completed.Should().BeEmpty();
+        checkpoint.Progress.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task SaveAsync_LoadAsync_round_trips_executed_and_reboot_counts()
+    public async Task SaveAsync_LoadAsync_round_trips_completed_and_progress()
     {
         var store = new FileScriptCheckpointStore(NullLogger<FileScriptCheckpointStore>.Instance, _root);
-        var c = new ScriptCheckpoint
+        var c = new UserCodeCheckpoint
         {
-            Executed = [new ScriptCheckpointEntry(1, "abc"), new ScriptCheckpointEntry(2, "def")],
-            RebootCounts = new Dictionary<string, int>(StringComparer.Ordinal) { ["2:def"] = 1 },
+            Completed = [new CheckpointEntry(1, "abc"), new CheckpointEntry(2, "def")],
+            Progress = new Dictionary<string, EntryProgress>(StringComparer.Ordinal)
+            {
+                ["3:ghi"] = new() { RebootAttempts = 2, OverrideLimit = 5 },
+            },
         };
 
         await store.SaveAsync("instance-1", c, CancellationToken.None);
         var loaded = await store.LoadAsync("instance-1", CancellationToken.None);
 
-        loaded.Executed.Should().BeEquivalentTo(c.Executed);
-        loaded.RebootCounts.Should().ContainKey("2:def").WhoseValue.Should().Be(1);
+        loaded.Completed.Should().BeEquivalentTo(c.Completed);
+        loaded.Progress.Should().ContainKey("3:ghi");
+        loaded.Progress["3:ghi"].RebootAttempts.Should().Be(2);
+        loaded.Progress["3:ghi"].OverrideLimit.Should().Be(5);
     }
 
     [Fact]
@@ -51,7 +56,7 @@ public sealed class FileScriptCheckpointStoreTests : IDisposable
         // Sanity check that no .tmp lingers after a successful save — a
         // half-written checkpoint would otherwise survive a process crash.
         var store = new FileScriptCheckpointStore(NullLogger<FileScriptCheckpointStore>.Instance, _root);
-        await store.SaveAsync("i", new ScriptCheckpoint { Executed = [new(1, "h")] }, CancellationToken.None);
+        await store.SaveAsync("i", new UserCodeCheckpoint { Completed = [new(1, "h")] }, CancellationToken.None);
 
         var instanceDir = Path.Combine(_root, "instance", "i");
         Directory.GetFiles(instanceDir, "*.tmp").Should().BeEmpty();
@@ -69,35 +74,18 @@ public sealed class FileScriptCheckpointStoreTests : IDisposable
 
         var store = new FileScriptCheckpointStore(NullLogger<FileScriptCheckpointStore>.Instance, _root);
         var loaded = await store.LoadAsync("i", CancellationToken.None);
-        loaded.Executed.Should().BeEmpty();
+        loaded.Completed.Should().BeEmpty();
     }
 
     [Fact]
     public async Task ResetAsync_removes_the_checkpoint_file()
     {
         var store = new FileScriptCheckpointStore(NullLogger<FileScriptCheckpointStore>.Instance, _root);
-        await store.SaveAsync("i", new ScriptCheckpoint { Executed = [new(1, "h")] }, CancellationToken.None);
+        await store.SaveAsync("i", new UserCodeCheckpoint { Completed = [new(1, "h")] }, CancellationToken.None);
 
         await store.ResetAsync("i", CancellationToken.None);
 
         var loaded = await store.LoadAsync("i", CancellationToken.None);
-        loaded.Executed.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task ComputeBodyHash_is_stable_and_changes_with_body()
-    {
-        var a = ScriptCheckpoint.ComputeBodyHash(System.Text.Encoding.UTF8.GetBytes("hello"));
-        var b = ScriptCheckpoint.ComputeBodyHash(System.Text.Encoding.UTF8.GetBytes("hello"));
-        var c = ScriptCheckpoint.ComputeBodyHash(System.Text.Encoding.UTF8.GetBytes("hello!"));
-        a.Should().Be(b);
-        a.Should().NotBe(c);
-
-        // Make sure the function survives non-UTF-8 / binary bodies — the
-        // hash is over the raw byte sequence.
-        var bin = new byte[] { 0x00, 0xFF, 0x80, 0x7F };
-        var d = ScriptCheckpoint.ComputeBodyHash(bin);
-        d.Should().NotBeNullOrWhiteSpace();
-        await Task.CompletedTask;
+        loaded.Completed.Should().BeEmpty();
     }
 }

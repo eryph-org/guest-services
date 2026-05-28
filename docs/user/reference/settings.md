@@ -28,7 +28,8 @@ the run.
   },
   "reboot": {
     "maxPerModule": 3,
-    "maxPerScript": 2
+    "maxPerScript": 10,
+    "allowScriptOverride": true
   },
   "defaultUser": {
     "name": "Administrator",
@@ -81,15 +82,13 @@ all sources so a typo can't disable provisioning. Valid names: `Azure`, `EC2`,
 
 ## reboot
 
-Two guards against a runaway reboot-and-continue (exit `1003`) loop.
+Caps for the cbi-style reboot-and-continue (exit `1001` / `1003`) convention.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `maxPerModule` | 3 | How many times a module may ask for a reboot before the run fails instead. |
-| `maxPerScript` | 2 | How many reboots one user script may ask for before that script is failed. |
-
-`maxPerScript` bounds a single script; `maxPerModule` bounds the whole
-`ScriptsUser` module across all its scripts. Keep `maxPerScript` ≤ `maxPerModule`.
+| `maxPerModule` | 3 | How many times a module may ask for a reboot of its own accord before the run fails. Reboots requested by `runcmd` entries or user scripts do not count here — those are bounded by `maxPerScript`. |
+| `maxPerScript` | 10 | How many reboots one piece of user code (a `runcmd` entry or a `ScriptsUser` script) may ask for before it is failed. |
+| `allowScriptOverride` | true | When true, user code can raise its own per-script cap on this run with `##egs.reboot_limit=<n>` on stdout. The raised cap is persisted across reboots so the directive only needs to be emitted once. |
 
 ## defaultUser
 

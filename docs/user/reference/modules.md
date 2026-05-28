@@ -228,8 +228,55 @@ runcmd:
 
 A command that exits non-zero is logged and the next one still runs — the module
 doesn't stop on the first failure (this matches cloud-init). To gate the rest on
-a step, handle the error inside that command. Exit code `1003` reboots the guest
-and resumes provisioning afterward.
+a step, handle the error inside that command.
+
+### Reboot-and-continue (exit 1001 / 1003)
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | success — go to next entry |
+| `1001` | reboot the guest, then go to next entry |
+| `1003` | reboot the guest, then re-run **this same entry** afterwards |
+| any other non-zero | log error and continue with next entry |
+
+`1002` is not supported and is treated as an error. The same exit-code contract
+applies to user scripts under [ScriptsUser](#scriptsuser).
+
+When an entry reboots the guest, completed entries are skipped on the next boot
+and only the entry that asked is re-run. Editing an entry between boots (its
+command text or argv) makes it run again from scratch.
+
+### Per-script reboot quota
+
+Each entry can ask for at most `reboot.maxPerScript` reboots (default 10)
+before the run fails. The same cap applies to ScriptsUser scripts.
+
+A script can raise its own cap from inside the entry by emitting this line on
+stdout (last occurrence wins; the value must be a positive integer larger than
+the current cap):
+
+```
+##egs.reboot_limit=20
+```
+
+The raised cap is persisted, so emit it once. To disable the override entirely,
+set `reboot.allowScriptOverride: false` in [settings](settings.md).
+
+### Environment exposed to the script
+
+| Variable | Meaning |
+| --- | --- |
+| `EGS_ENTRY_INDEX` | 1-based position of this entry in `runcmd:` (or the script's ordinal under ScriptsUser — values may skip when a payload is unrunnable on Windows, e.g. a POSIX shell script) |
+| `EGS_REBOOT_COUNT` | reboots this entry / script has already triggered (0 on the first run) |
+| `EGS_REBOOT_LIMIT` | the current per-script reboot cap |
+
+```powershell
+switch ($env:EGS_REBOOT_COUNT) {
+    '0' { Install-Feature-A; exit 1003 }
+    '1' { Install-Feature-B; exit 1003 }
+    '2' { Verify-All;        exit 0 }
+}
+```
 
 ## Licensing
 
@@ -276,8 +323,13 @@ Stages every script (from multipart parts or a top-level shebang) under
 `%ProgramData%\eryph\provisioning\scripts\per-instance\` and runs it. The runner
 is chosen by filename extension — see
 [Run shell scripts](../howto/run-shell-scripts.md). Each script's output is
-written to a per-script log and reported to the host. Exit code `1003` reboots
-and resumes, as with `runcmd`.
+written to a per-script log and reported to the host.
+
+Exit codes `1001` and `1003` and the `##egs.reboot_limit=N` directive work the
+same way as in [Runcmd](#runcmd): a script can ask for one or more reboots,
+inspect `EGS_REBOOT_COUNT` / `EGS_REBOOT_LIMIT` / `EGS_ENTRY_INDEX` in its
+environment, and raise its own per-script cap (`reboot.maxPerScript`, default
+10) by emitting the directive on stdout.
 
 ## PowerState
 

@@ -168,6 +168,30 @@ public interface IWindowsOs
 
     Task<RunCommandResult> RunArgvCommandAsync(IReadOnlyList<string> argv, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// As <see cref="RunShellCommandAsync(string, CancellationToken)"/>, but
+    /// also injects the given key/value pairs into the child's environment
+    /// (in addition to the inherited parent environment). Used by
+    /// <c>RuncmdModule</c> and <c>ScriptsUserModule</c> to surface the
+    /// <c>EGS_ENTRY_INDEX</c>, <c>EGS_REBOOT_COUNT</c>, and
+    /// <c>EGS_REBOOT_LIMIT</c> variables so the child can read its current
+    /// reboot count and limit.
+    /// </summary>
+    Task<RunCommandResult> RunShellCommandAsync(
+        string command,
+        IReadOnlyDictionary<string, string> environment,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// As <see cref="RunArgvCommandAsync(IReadOnlyList{string}, CancellationToken)"/>,
+    /// but also injects the given key/value pairs into the child's
+    /// environment (in addition to the inherited parent environment).
+    /// </summary>
+    Task<RunCommandResult> RunArgvCommandAsync(
+        IReadOnlyList<string> argv,
+        IReadOnlyDictionary<string, string> environment,
+        CancellationToken cancellationToken);
+
     // Paths
 
     /// <summary>

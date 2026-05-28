@@ -200,9 +200,31 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.FromResult(new RunCommandResult(0, "", ""));
     }
 
+    public Task<RunCommandResult> RunShellCommandAsync(
+        string command,
+        IReadOnlyDictionary<string, string> environment,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would run shell command with env ({EnvCount}): {Command}",
+            environment.Count, command);
+        return Task.FromResult(new RunCommandResult(0, "", ""));
+    }
+
     public Task<RunCommandResult> RunArgvCommandAsync(IReadOnlyList<string> argv, CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would run argv command: {Argv}", string.Join(" ", argv));
+        return Task.FromResult(new RunCommandResult(0, "", ""));
+    }
+
+    public Task<RunCommandResult> RunArgvCommandAsync(
+        IReadOnlyList<string> argv,
+        IReadOnlyDictionary<string, string> environment,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would run argv command with env ({EnvCount}): {Argv}",
+            environment.Count, string.Join(" ", argv));
         return Task.FromResult(new RunCommandResult(0, "", ""));
     }
 

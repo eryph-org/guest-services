@@ -242,8 +242,16 @@ public sealed class StageRunner(
                         // requested a reboot >= MaxRebootsPerModule times,
                         // treat the third+ request as a hard failure to avoid
                         // an unbounded re-entry loop (docs/bugs/0001).
+                        //
+                        // Script-driven reboots (1001/1003 relayed from a
+                        // user-supplied runcmd entry or user script) are
+                        // exempt — the per-script / per-entry quota inside
+                        // the module is the right brake there; bouncing the
+                        // module on the third user-requested reboot would
+                        // make multi-stage installers (each needing its own
+                        // reboot) impossible.
                         var nextRebootCount = state.ModuleRebootCounts.GetValueOrDefault(moduleKey) + 1;
-                        if (nextRebootCount > MaxRebootsPerModule)
+                        if (!reboot.IsScriptDriven && nextRebootCount > MaxRebootsPerModule)
                         {
                             var capMessage = $"Module {moduleKey} exceeded the reboot cap " +
                                 $"({MaxRebootsPerModule} reboots) without making progress.";
@@ -277,10 +285,17 @@ public sealed class StageRunner(
                         // Reboot-pending must NOT enter CompletedHandlers —
                         // pre-fix that's how state.json reported "all green"
                         // when a script-3 1003 silently dropped scripts 4+.
+                        // Script-driven reboots do NOT bump ModuleRebootCounts
+                        // (the field is for module-misbehaviour detection
+                        // only); they DO bump RebootCount for total-reboot
+                        // observability.
+                        var updatedModuleRebootCounts = reboot.IsScriptDriven
+                            ? state.ModuleRebootCounts
+                            : WithCount(state.ModuleRebootCounts, moduleKey, nextRebootCount);
                         state = state with
                         {
                             PendingHandlers = With(state.PendingHandlers, moduleKey),
-                            ModuleRebootCounts = WithCount(state.ModuleRebootCounts, moduleKey, nextRebootCount),
+                            ModuleRebootCounts = updatedModuleRebootCounts,
                             RebootCount = state.RebootCount + 1,
                             LastUpdated = DateTimeOffset.UtcNow,
                         };
