@@ -172,8 +172,10 @@ public interface IWindowsOs
     /// As <see cref="RunShellCommandAsync(string, CancellationToken)"/>, but
     /// also injects the given key/value pairs into the child's environment
     /// (in addition to the inherited parent environment). Used by
-    /// <c>RuncmdModule</c> to surface <c>EGS_RUNCMD_*</c> variables so the
-    /// script can read its current reboot count and limit.
+    /// <c>RuncmdModule</c> and <c>ScriptsUserModule</c> to surface the
+    /// <c>EGS_ENTRY_INDEX</c>, <c>EGS_REBOOT_COUNT</c>, and
+    /// <c>EGS_REBOOT_LIMIT</c> variables so the child can read its current
+    /// reboot count and limit.
     /// </summary>
     Task<RunCommandResult> RunShellCommandAsync(
         string command,

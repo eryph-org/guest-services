@@ -401,6 +401,35 @@ public sealed class ScriptsUserModuleCheckpointTests
         captured["EGS_REBOOT_LIMIT"].Should().Be("7");
     }
 
+    // Cancellation during a script run must propagate cleanly — silently
+    // catching it would mark the script as completed and continue with the
+    // next entry, both ignoring the cancel and burning the completed slot.
+    [Fact]
+    public async Task Script_launch_cancellation_propagates_and_does_not_mark_completed()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunArgvCommandAsync(
+                Arg.Any<IReadOnlyList<string>>(),
+                Arg.Any<IReadOnlyDictionary<string, string>>(),
+                Arg.Any<CancellationToken>())
+            .Throws(new OperationCanceledException());
+
+        var checkpoint = new InMemoryScriptCheckpointStore();
+        var module = CreateModule(checkpoint);
+        var ctx = new TestModuleContext(os);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with { Scripts = [new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("# cancel"), "cancel.ps1")] };
+
+        await FluentActions
+            .Invoking(() => module.ApplyAsync(resolved, ctx, CancellationToken.None))
+            .Should()
+            .ThrowAsync<OperationCanceledException>();
+
+        var saved = await checkpoint.LoadAsync("test-instance", CancellationToken.None);
+        saved.Completed.Should().BeEmpty("cancellation must not poison the checkpoint with a fake completion");
+    }
+
     // A launch-failure that just `continue`d without persisting completion
     // would silently re-launch the failing script on every resume boot —
     // exactly the kind of infinite retry the checkpoint exists to prevent.

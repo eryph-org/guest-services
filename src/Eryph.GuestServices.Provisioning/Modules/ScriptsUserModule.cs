@@ -101,6 +101,13 @@ internal sealed class ScriptsUserModule(
                 await context.Os.WriteFileAsync(scriptPath, script.Body, append: false, cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is not a script-level failure — propagate so
+                // the run aborts cleanly instead of being silently persisted
+                // as a completed script.
+                throw;
+            }
             catch (Exception ex)
             {
                 // Mark as completed + persist so a transient or persistent
@@ -127,6 +134,11 @@ internal sealed class ScriptsUserModule(
             try
             {
                 result = await ExecuteAsync(scriptPath, script.Kind, envVars, context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation must propagate — see staging branch above.
+                throw;
             }
             catch (NotSupportedException ex)
             {
