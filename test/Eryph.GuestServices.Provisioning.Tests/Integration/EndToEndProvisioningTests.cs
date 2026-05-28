@@ -142,18 +142,21 @@ public sealed class EndToEndProvisioningTests : IDisposable
         await windowsOs.Received(1).SetComputerNameAsync("testhost", Arg.Any<CancellationToken>());
 
         // Second run after the (simulated) reboot — the StageRunner re-enters
-        // SetHostnameModule which sees AlreadySet and returns Completed. That
+        // SetHostnameModule which now treats the resume as one-shot: it reads
+        // the actual machine name, accepts whatever the OS settled on, and
+        // returns Completed without calling SetComputerNameAsync again. That
         // promotes the handler from PendingHandlers to CompletedHandlers.
         windowsOs.ClearReceivedCalls();
-        windowsOs.SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(SetComputerNameResult.AlreadySet);
+        windowsOs.GetComputerNameAsync(Arg.Any<CancellationToken>()).Returns("testhost");
 
         var outcome2 = await runner.RunAsync(CancellationToken.None);
         outcome2.Should().BeOfType<StageRunOutcome.Success>();
 
-        // SetHostnameModule is re-entered on resume; the second call confirms
-        // the rename completed during reboot (AlreadySet path).
-        await windowsOs.Received(1).SetComputerNameAsync("testhost", Arg.Any<CancellationToken>());
+        // Resume must NOT call SetComputerNameAsync again — the one-shot
+        // guard reads GetComputerNameAsync and trusts whatever Windows
+        // settled on, preventing rename-reboot loops on OS-normalized names.
+        await windowsOs.DidNotReceive().SetComputerNameAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await windowsOs.Received().GetComputerNameAsync(Arg.Any<CancellationToken>());
 
         state = await stateStore.LoadAsync(CancellationToken.None);
         state!.PendingHandlers.Should().NotContain(typeof(SetHostnameModule).FullName!);

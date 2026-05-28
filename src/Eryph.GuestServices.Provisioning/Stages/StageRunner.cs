@@ -88,7 +88,6 @@ public sealed class StageRunner(
             new ReportingEvent.ProvisioningStarted(data.InstanceId) { Origin = "stage-runner" },
             cancellationToken).ConfigureAwait(false);
 
-        var context = new ModuleContext(os, data);
         var buckets = BuildStageBuckets(modules, settings, logger);
 
         // userData is resolved lazily at the start of the Network stage so that
@@ -185,10 +184,19 @@ public sealed class StageRunner(
                     new ReportingEvent.ModuleStarted(moduleName) { Origin = $"module:{moduleName}" },
                     cancellationToken).ConfigureAwait(false);
 
+                // Per-module context so the module sees whether StageRunner is
+                // re-entering it after its own previous reboot request — lets
+                // one-shot modules (SetHostname) avoid rename-reboot loops when
+                // the OS normalized the requested value (length, case, chars).
+                var moduleContext = new ModuleContext(
+                    os,
+                    data,
+                    isRebootResume: existingOutcome == OutcomeRebootRequested);
+
                 ModuleOutcome outcome;
                 try
                 {
-                    outcome = await module.ApplyAsync(userDataForStage, context, cancellationToken).ConfigureAwait(false);
+                    outcome = await module.ApplyAsync(userDataForStage, moduleContext, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

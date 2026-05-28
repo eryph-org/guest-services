@@ -9,6 +9,14 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 [Stage(Stage.Network, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IModule
 {
+    // The Windows NetBIOS computer name is capped at 15 characters. A longer
+    // name silently truncates server-side, but Environment.MachineName then
+    // reports the 15-char form — so the "already set" check in the OS layer
+    // would never match a longer desired name, producing an endless
+    // rename-reboot loop. cloudbase-init's set_hostname module truncates here
+    // for the same reason; we mirror that behaviour.
+    private const int NetBiosNameMaxLength = 15;
+
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
         IModuleContext context,
@@ -25,6 +33,36 @@ internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IMo
         if (desired is null)
         {
             logger.LogDebug("No hostname or fqdn specified; nothing to do.");
+            return ModuleOutcome.Ok();
+        }
+
+        if (desired.Length > NetBiosNameMaxLength)
+        {
+            var truncated = desired[..NetBiosNameMaxLength];
+            logger.LogWarning(
+                "Hostname '{Hostname}' exceeds the Windows NetBIOS limit of {Max} characters; truncating to '{Truncated}'.",
+                desired, NetBiosNameMaxLength, truncated);
+            desired = truncated;
+        }
+
+        // One-shot guard: we already requested a rename + reboot for this
+        // instance. Don't compare-and-retry — any post-reboot mismatch
+        // (length truncation, case folding, character drops) would otherwise
+        // trigger another reboot, and so on until the per-module reboot cap
+        // aborts provisioning. Accept whatever the OS settled on.
+        if (context.IsRebootResume)
+        {
+            var actual = await context.Os.GetComputerNameAsync(cancellationToken).ConfigureAwait(false);
+            if (string.Equals(actual, desired, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation("Computer name is '{Name}' after reboot.", actual);
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Computer name is '{Actual}' after reboot; requested '{Desired}'. Accepting the OS-normalized value rather than triggering another rename.",
+                    actual, desired);
+            }
             return ModuleOutcome.Ok();
         }
 
