@@ -5,37 +5,63 @@ namespace Eryph.GuestServices.Service.Tests;
 
 public class ServiceControlFlagsTests
 {
-    // The pure value->bool interpretation is opt-out: only an explicit 0 /
-    // false turns a capability off. Everything else (missing value, unknown
-    // shape) is ON. Tested without touching the real registry or filesystem.
+    // Each backend has its own value→bool interpreter (kept separate so a
+    // mistyped REG_SZ on Windows cannot accidentally exercise the Linux
+    // string-parsing path). Both are opt-out: a capability is ON unless an
+    // explicit OFF value is present.
+
+    // ---- Windows registry shape (int / REG_DWORD only) ----
 
     [Fact]
-    public void InterpretFlag_NullValue_IsOn()
+    public void InterpretWindowsRegistryValue_NullValue_IsOn()
     {
-        PlatformServiceControlFlags.InterpretFlag(null).Should().BeTrue();
-    }
-
-    // ---- Windows REG_DWORD shape (int) ----
-
-    [Fact]
-    public void InterpretFlag_DwordZero_IsOff()
-    {
-        PlatformServiceControlFlags.InterpretFlag(0).Should().BeFalse();
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(null).Should().BeTrue();
     }
 
     [Fact]
-    public void InterpretFlag_DwordOne_IsOn()
+    public void InterpretWindowsRegistryValue_DwordZero_IsOff()
     {
-        PlatformServiceControlFlags.InterpretFlag(1).Should().BeTrue();
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(0).Should().BeFalse();
     }
 
     [Fact]
-    public void InterpretFlag_NonZeroDword_IsOn()
+    public void InterpretWindowsRegistryValue_DwordOne_IsOn()
     {
-        PlatformServiceControlFlags.InterpretFlag(42).Should().BeTrue();
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(1).Should().BeTrue();
+    }
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_NonZeroDword_IsOn()
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(42).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("false")]
+    [InlineData("False")]
+    public void InterpretWindowsRegistryValue_RegSzFalsy_IsStillOn(string regSzValue)
+    {
+        // Regression guard. The documented Windows control surface is
+        // REG_DWORD only. A REG_SZ shouldn't silently disable a flag — a
+        // user typing the wrong type means "I tried to set it but
+        // mistyped", not "disable this capability".
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(regSzValue).Should().BeTrue();
+    }
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_UnknownKind_IsOn()
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(new object()).Should().BeTrue();
     }
 
     // ---- Linux config-file shape (string) ----
+
+    [Fact]
+    public void InterpretLinuxConfigValue_NullValue_IsOn()
+    {
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(null).Should().BeTrue();
+    }
 
     [Theory]
     [InlineData("0")]
@@ -44,9 +70,9 @@ public class ServiceControlFlagsTests
     [InlineData("FALSE")]
     [InlineData("  0  ")]      // whitespace around the value
     [InlineData("  false ")]
-    public void InterpretFlag_StringFalsyValue_IsOff(string value)
+    public void InterpretLinuxConfigValue_FalsyValue_IsOff(string value)
     {
-        PlatformServiceControlFlags.InterpretFlag(value).Should().BeFalse();
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(value).Should().BeFalse();
     }
 
     [Theory]
@@ -57,18 +83,9 @@ public class ServiceControlFlagsTests
     [InlineData("yes")]        // not parseable as bool/int -> default ON
     [InlineData("")]            // empty string -> default ON
     [InlineData("garbage")]
-    public void InterpretFlag_StringTruthyOrUnknown_IsOn(string value)
+    public void InterpretLinuxConfigValue_TruthyOrUnknown_IsOn(string value)
     {
-        PlatformServiceControlFlags.InterpretFlag(value).Should().BeTrue();
-    }
-
-    [Fact]
-    public void InterpretFlag_UnknownKind_IsOn()
-    {
-        // A REG_SZ on Windows is not the opt-out shape we honor; tolerate by
-        // defaulting to ON. (REG_SZ is still a string after MZ; this guard is
-        // really about non-string/non-int CIM/registry types.)
-        PlatformServiceControlFlags.InterpretFlag(new object()).Should().BeTrue();
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(value).Should().BeTrue();
     }
 
     // ---- Linux config-file line parser ----

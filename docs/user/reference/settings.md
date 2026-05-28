@@ -138,10 +138,13 @@ read at service start, so restart `eryph-guest-services` after changing them.
 ### Windows
 
 Stored in the registry under `HKLM\SOFTWARE\eryph\guest-services` as
-`REG_DWORD` values (`0` = off, anything else = on).
+`REG_DWORD` values (`0` = off, anything else = on). REG_SZ and other value
+types are ignored — only REG_DWORD is the documented control surface.
 
 ```powershell
 New-Item -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Force | Out-Null
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'ProvisioningEnabled' -Type DWord -Value 0
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'RemoteAccessEnabled' -Type DWord -Value 0
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'KvpAuthEnabled' -Type DWord -Value 0
 Restart-Service -Name eryph-guest-services
 ```
@@ -155,9 +158,11 @@ missing file = on). Blank lines and `#` comments are ignored.
 ```bash
 sudo install -d /etc/opt/eryph/guest-services
 sudo tee /etc/opt/eryph/guest-services/service-control.conf <<EOF
+ProvisioningEnabled=0
+RemoteAccessEnabled=0
 KvpAuthEnabled=0
 EOF
 sudo systemctl restart eryph-guest-services
 ```
 
-Set the value back to `1` (or delete the value / file) and restart to re-enable.
+Set values back to `1` (or delete the value / file) and restart to re-enable.

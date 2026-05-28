@@ -73,19 +73,28 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     public bool IsKvpAuthEnabled() => ReadFlag(KvpAuthEnabledValue);
 
     /// <summary>
-    /// Pure value→bool interpretation for an opt-out flag. Accepts the value
-    /// shapes both backends can produce. Off iff the value is an integer
-    /// <c>0</c> (Windows REG_DWORD), the string <c>"0"</c>, or the string
-    /// <c>"false"</c> (case-insensitive). Anything else — including
-    /// <see langword="null"/>, unrecognised shapes, or unparseable strings —
-    /// yields <c>true</c> (default ON / fail-open).
+    /// Pure value→bool interpretation for a Windows REG_DWORD opt-out flag.
+    /// Off iff the registry value is the integer <c>0</c>. Anything else —
+    /// <see langword="null"/>, a REG_SZ string (even <c>"0"</c>), an
+    /// unrecognised kind — yields <c>true</c> (default ON / fail-open).
+    /// The documented Windows control surface is REG_DWORD only; honouring
+    /// strings would silently change long-standing behaviour.
     /// </summary>
-    internal static bool InterpretFlag(object? rawValue) => rawValue switch
+    internal static bool InterpretWindowsRegistryValue(object? regValue) =>
+        regValue is int i ? i != 0 : true;
+
+    /// <summary>
+    /// Pure value→bool interpretation for a Linux config-file opt-out flag.
+    /// Off iff the value is the literal string <c>"0"</c> or <c>"false"</c>
+    /// (case-insensitive, whitespace tolerated). Anything else — including
+    /// <see langword="null"/>, empty, or unparseable strings — yields
+    /// <c>true</c> (default ON / fail-open).
+    /// </summary>
+    internal static bool InterpretLinuxConfigValue(string? rawValue) => rawValue switch
     {
         null => true,
-        int i => i != 0,
-        string s when int.TryParse(s.Trim(), out var n) => n != 0,
-        string s when bool.TryParse(s.Trim(), out var b) => b,
+        var s when int.TryParse(s.Trim(), out var n) => n != 0,
+        var s when bool.TryParse(s.Trim(), out var b) => b,
         _ => true,
     };
 
@@ -112,7 +121,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     private static bool ReadWindowsFlag(string valueName)
     {
         using var key = Registry.LocalMachine.OpenSubKey(WindowsServiceControlKey);
-        return InterpretFlag(key?.GetValue(valueName));
+        return InterpretWindowsRegistryValue(key?.GetValue(valueName));
     }
 
     [SupportedOSPlatform("linux")]
@@ -128,7 +137,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
                 continue;
             if (!string.Equals(entry.Value.key, valueName, StringComparison.OrdinalIgnoreCase))
                 continue;
-            return InterpretFlag(entry.Value.value);
+            return InterpretLinuxConfigValue(entry.Value.value);
         }
 
         return true;
