@@ -159,14 +159,14 @@ public sealed class RuncmdModuleTests
     }
 
     [Fact]
-    public async Task Honors_script_emitted_EGS_RUNCMD_REBOOT_LIMIT_override()
+    public async Task Honors_script_emitted_directive_to_raise_per_entry_limit()
     {
-        // First attempt returns 1003 with stdout `EGS_RUNCMD_REBOOT_LIMIT=5`,
-        // bumping the limit past the configured default (2). The 3rd attempt
+        // First attempt returns 1003 with stdout `##egs.runcmd.reboot_limit=5`,
+        // raising the limit past the configured default (2). The 3rd attempt
         // — which would have failed at the default — succeeds.
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
-            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "EGS_RUNCMD_REBOOT_LIMIT=5\n", ""));
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=5\n", ""));
 
         var checkpointStore = new InMemoryRuncmdCheckpointStore();
         var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
@@ -189,13 +189,13 @@ public sealed class RuncmdModuleTests
     [Fact]
     public async Task Override_is_persisted_so_the_script_does_not_need_to_re_emit()
     {
-        // The marker is emitted only on the FIRST reboot iteration. Subsequent
-        // iterations don't print it, but the override survives because we
-        // persisted it in the checkpoint.
+        // The directive is emitted only on the FIRST reboot iteration.
+        // Subsequent iterations don't print it, but the override survives
+        // because we persisted it in the checkpoint.
         var os = Substitute.For<IWindowsOs>();
         os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
             .Returns(
-                new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "EGS_RUNCMD_REBOOT_LIMIT=4\n", ""),
+                new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=4\n", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""),
                 new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""));
@@ -214,6 +214,146 @@ public sealed class RuncmdModuleTests
             outcome.Should().BeOfType<ModuleOutcome.RebootRequested>(
                 "iteration {0}: limit of 4 survives across reboots", i);
         }
+    }
+
+    // Regression: the injected EGS_RUNCMD_REBOOT_LIMIT env var has the same
+    // shape as a `KEY=VALUE` line. If the directive token were also a
+    // KEY=VALUE line (the pre-fix marker), a script that dumps its
+    // environment would trip the parser and silently raise its own limit.
+    // The directive now uses a "##" prefix that no shell env-var assignment
+    // produces.
+    [Fact]
+    public async Task Marker_is_NOT_triggered_by_a_script_that_dumps_its_environment()
+    {
+        // Simulated env dump: the kind of output you'd get from `set` in cmd,
+        // `Get-ChildItem Env:` in PS, or `env` in bash. The injected
+        // EGS_RUNCMD_REBOOT_LIMIT=2 line MUST NOT be picked up as a directive.
+        const string fakeEnvDump = "PATH=C:\\Windows\nUSERPROFILE=C:\\Users\\test\nEGS_RUNCMD_ENTRY_INDEX=1\nEGS_RUNCMD_REBOOT_COUNT=0\nEGS_RUNCMD_REBOOT_LIMIT=2\n";
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, fakeEnvDump, ""));
+
+        var checkpointStore = new InMemoryRuncmdCheckpointStore();
+        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 2 } };
+        var module = CreateModule(settings, checkpointStore);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
+        {
+            Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "diag" }],
+        });
+
+        // Two reboots allowed by default; on the 3rd attempt the entry must
+        // Fail because nothing in the env dump should have raised the limit.
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.Failed>(
+                "an env dump must not silently raise the per-entry reboot limit");
+    }
+
+    // The directive only RAISES the limit. A lower value (whether intentional
+    // or from a stray output line) is logged and ignored so a single bad
+    // directive cannot kill an entry that's still within its prior budget.
+    [Fact]
+    public async Task Directive_below_current_limit_is_ignored()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=1\n", ""));
+
+        var checkpointStore = new InMemoryRuncmdCheckpointStore();
+        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 5 } };
+        var module = CreateModule(settings, checkpointStore);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
+        {
+            Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+        });
+
+        // Even though the script emits a "1" directive, the entry should be
+        // allowed 5 attempts because lowering is ignored.
+        for (var i = 0; i < 5; i++)
+        {
+            (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+                .Should().BeOfType<ModuleOutcome.RebootRequested>(
+                    "iteration {0}: lower-value directives must not lower the limit", i);
+        }
+    }
+
+    // OverrideLimit must only be persisted when the script actually emitted a
+    // raise directive. A 1003 with no directive must leave OverrideLimit = null
+    // so a later config change to MaxRebootsPerEntry takes effect.
+    [Fact]
+    public async Task OverrideLimit_stays_null_when_no_directive_was_emitted()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", ""));
+
+        var checkpointStore = new InMemoryRuncmdCheckpointStore();
+        var module = CreateModule(checkpointStore: checkpointStore);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
+        {
+            Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "step" }],
+        });
+
+        await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
+
+        var saved = await checkpointStore.LoadAsync("test-instance", CancellationToken.None);
+        saved.Progress.Should().HaveCount(1);
+        saved.Progress.Single().Value.OverrideLimit
+            .Should().BeNull("no directive was emitted, so OverrideLimit must remain null");
+    }
+
+    // When AllowScriptOverride=false the configured default is the hard cap;
+    // any emitted directive must be ignored.
+    [Fact]
+    public async Task Directive_is_ignored_when_AllowScriptOverride_is_false()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "##egs.runcmd.reboot_limit=99\n", ""));
+
+        var checkpointStore = new InMemoryRuncmdCheckpointStore();
+        var settings = new ProvisioningSettings
+        {
+            Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 1, AllowScriptOverride = false },
+        };
+        var module = CreateModule(settings, checkpointStore);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
+        {
+            Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+        });
+
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.Failed>(
+                "AllowScriptOverride=false ignores the directive; the configured cap of 1 applies");
+    }
+
+    // Directives must be read from stdout only — accepting them on stderr
+    // would let unrelated error text trip the parser.
+    [Fact]
+    public async Task Directive_on_stderr_is_ignored()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(RuncmdModule.RebootAndContinueExitCode, "", "##egs.runcmd.reboot_limit=99\n"));
+
+        var checkpointStore = new InMemoryRuncmdCheckpointStore();
+        var settings = new ProvisioningSettings { Runcmd = new RuncmdSettings { MaxRebootsPerEntry = 1 } };
+        var module = CreateModule(settings, checkpointStore);
+        var userData = ResolvedUserData.Empty(new CloudConfigModel
+        {
+            Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+        });
+
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.RebootRequested>();
+        (await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None))
+            .Should().BeOfType<ModuleOutcome.Failed>(
+                "stderr-emitted directives must not raise the limit");
     }
 
     [Fact]
@@ -307,6 +447,14 @@ public sealed class RuncmdModuleTests
         var result = await module.ApplyAsync(userData, new TestModuleContext(os), CancellationToken.None);
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RunShellCommandAsync(
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunShellCommandAsync(
+            Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunArgvCommandAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RunArgvCommandAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

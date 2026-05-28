@@ -26,10 +26,14 @@ internal sealed partial class RuncmdModule(
     public const int RerunOnNextBootExitCode = 1002;        // no reboot, re-run on next boot (NOT supported)
     public const int RebootAndContinueExitCode = 1003;      // reboot now, re-run same entry
 
-    // Marker the script can emit on stdout to bump its own per-entry limit.
-    // Last occurrence wins. Persisted in the entry's checkpoint progress so
-    // the override survives reboots and the script doesn't need to re-emit.
-    private const string LimitOverrideMarker = "EGS_RUNCMD_REBOOT_LIMIT";
+    // Marker the script can emit on stdout to raise its own per-entry limit.
+    // Uses a ## directive prefix (similar to Azure DevOps task commands) so a
+    // script that dumps its environment cannot accidentally trip this regex —
+    // the injected EGS_RUNCMD_REBOOT_LIMIT=N env var line would otherwise look
+    // identical to a directive. Last occurrence wins. Only RAISES the limit;
+    // a lower emitted value is logged and ignored. Persisted in the entry's
+    // checkpoint so the override survives reboots without re-emission.
+    private const string LimitDirectivePrefix = "##egs.runcmd.reboot_limit";
 
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
@@ -96,29 +100,37 @@ internal sealed partial class RuncmdModule(
             {
                 case RebootAndDoneExitCode:
                 {
-                    var newLimit = MaybeUpdateLimit(progress, result, settings, ordinal);
+                    // 1001 marks the entry done — the per-entry quota cannot
+                    // accumulate against an entry that won't re-enter, so we
+                    // don't consult it here (would be dead branch). Any
+                    // script-supplied limit directive on a 1001 line is
+                    // ignored: the entry is completing anyway.
                     var nextAttempts = progress.RebootAttempts + 1;
-                    if (nextAttempts > newLimit)
-                        return FailEntry(ordinal, nextAttempts, newLimit);
                     checkpoint = MarkCompleted(checkpoint, progressKey, ordinal, contentHash);
                     await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                     logger.LogInformation(
-                        "runcmd #{Index} returned 1001 (reboot, entry done); attempt {Attempt}/{Limit}.",
-                        ordinal, nextAttempts, newLimit);
+                        "runcmd #{Index} returned 1001 (reboot, entry done); attempt {Attempt}.",
+                        ordinal, nextAttempts);
                     return ModuleOutcome.RebootForUserScript(
                         $"runcmd entry #{ordinal} requested reboot (exit 1001, entry done).");
                 }
 
                 case RebootAndContinueExitCode:
                 {
-                    var newLimit = MaybeUpdateLimit(progress, result, settings, ordinal);
+                    var emittedOverride = ParseEmittedLimit(result.StdOut, ordinal, progress, settings);
+                    var newLimit = emittedOverride ?? effectiveLimit;
                     var nextAttempts = progress.RebootAttempts + 1;
                     if (nextAttempts > newLimit)
                         return FailEntry(ordinal, nextAttempts, newLimit);
                     var updatedProgress = progress with
                     {
                         RebootAttempts = nextAttempts,
-                        OverrideLimit = settings.Runcmd.AllowScriptOverride ? newLimit : progress.OverrideLimit,
+                        // Only PERSIST a new override when the script actually emitted
+                        // a directive on THIS run; otherwise keep whatever was already
+                        // stored (null = "no override, use configured default"). Writing
+                        // the resolved value unconditionally would pin the entry to a
+                        // snapshot of MaxRebootsPerEntry and break later config edits.
+                        OverrideLimit = emittedOverride ?? progress.OverrideLimit,
                     };
                     checkpoint = checkpoint with
                     {
@@ -180,40 +192,68 @@ internal sealed partial class RuncmdModule(
         return await context.Os.RunArgvCommandAsync(entry.Argv, environment, cancellationToken).ConfigureAwait(false);
     }
 
-    private int MaybeUpdateLimit(
+    // Returns the script-supplied new per-entry limit, or null when the script
+    // didn't emit a usable directive on this run. Only RAISES are honoured —
+    // a directive lower than the current effective limit is logged and ignored
+    // to keep the override semantics monotonic (matches the "bump your limit"
+    // contract; prevents a single bad output line from killing the current
+    // attempt). Only stdout is inspected: the doc'd interface is a stdout
+    // directive, and admitting stderr would let unrelated error text trip the
+    // parser.
+    private int? ParseEmittedLimit(
+        string stdout,
+        int ordinal,
         RuncmdEntryProgress progress,
-        RunCommandResult result,
-        ProvisioningSettings settings,
-        int ordinal)
+        ProvisioningSettings settings)
     {
-        var current = progress.OverrideLimit ?? settings.Runcmd.MaxRebootsPerEntry;
         if (!settings.Runcmd.AllowScriptOverride)
-            return current;
-        var emitted = ExtractLimit(result.StdOut) ?? ExtractLimit(result.StdErr);
-        if (emitted is null || emitted == current)
-            return current;
+            return null;
+        var emitted = ExtractDirective(stdout);
+        if (emitted is null)
+            return null;
+        var currentLimit = progress.OverrideLimit ?? settings.Runcmd.MaxRebootsPerEntry;
+        if (emitted <= currentLimit)
+        {
+            if (emitted < currentLimit)
+                logger.LogWarning(
+                    "runcmd #{Index} emitted {Directive}={Emitted} but the directive only raises the limit (current {Current}); ignoring.",
+                    ordinal, LimitDirectivePrefix, emitted, currentLimit);
+            return null;
+        }
         logger.LogInformation(
-            "runcmd #{Index} bumped its per-entry reboot limit to {NewLimit} via {Marker} marker.",
-            ordinal, emitted, LimitOverrideMarker);
-        return emitted.Value;
+            "runcmd #{Index} raised its per-entry reboot limit to {NewLimit} via {Directive} directive.",
+            ordinal, emitted, LimitDirectivePrefix);
+        return emitted;
     }
 
-    private static int? ExtractLimit(string output)
+    private static int? ExtractDirective(string output)
     {
         if (string.IsNullOrEmpty(output))
             return null;
         int? last = null;
-        foreach (Match match in LimitMarker().Matches(output))
+        foreach (Match match in LimitDirective().Matches(output))
         {
-            if (int.TryParse(match.Groups[1].Value, out var value) && value > 0)
+            if (int.TryParse(
+                    match.Groups[1].Value,
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var value)
+                && value > 0)
+            {
                 last = value;
+            }
         }
         return last;
     }
 
-    [GeneratedRegex(@"^\s*EGS_RUNCMD_REBOOT_LIMIT\s*=\s*(\d+)\s*$",
+    // [0-9]+ (not \d+) to match ASCII digits only — .NET's \d also matches
+    // Unicode digit categories which int.TryParse with InvariantCulture would
+    // then reject anyway. The "##" prefix disambiguates the directive from a
+    // shell env-var assignment, so a script that prints its environment cannot
+    // accidentally raise its own limit.
+    [GeneratedRegex(@"^\s*##egs\.runcmd\.reboot_limit\s*=\s*([0-9]+)\s*$",
         RegexOptions.Multiline | RegexOptions.CultureInvariant)]
-    private static partial Regex LimitMarker();
+    private static partial Regex LimitDirective();
 
     private static RuncmdCheckpoint MarkCompleted(
         RuncmdCheckpoint checkpoint,
