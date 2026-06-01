@@ -8,9 +8,14 @@ public static class SshConfigHelper
 {
     private const string Border = "# ------ eryph guest services ------";
 
+    // Test seam: overrides the config root so the writers and the alias-dedup
+    // sweep can be exercised against a temp directory instead of the real user
+    // profile. Null in production.
+    internal static string? RootPathOverride { get; set; }
+
     // The config should be in the local (non-roaming) profile as the connection
     // only works on the specific machine.
-    private static string EryphSshConfigPath => Path.Combine(
+    private static string EryphSshConfigPath => RootPathOverride ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         ".eryph",
         "guest-services",
@@ -102,13 +107,108 @@ public static class SshConfigHelper
            aliases = [alias, ..aliases];
 
         Directory.CreateDirectory(VmSshConfigPath);
+        var ownConfigPath = Path.Combine(VmSshConfigPath, $"{vmId}.config");
+
+        // An SSH alias must resolve to exactly one host. The user-supplied alias
+        // is not constrained to a single VM, so re-using it for another VM (or
+        // an alias that already names a catlet) would leave two 'Host <alias>'
+        // stanzas across the included config files. OpenSSH processes the
+        // Include glob in lexical order and the first match wins, so the alias
+        // could silently resolve to a different (often stale/stopped) VM and the
+        // ProxyCommand would connect to the wrong vmId. Evict the alias from any
+        // other config so the VM we are configuring now owns it.
+        await RemoveAliasesFromOtherConfigsAsync(aliases, ownConfigPath);
+
         await WriteConfig(
-            Path.Combine(VmSshConfigPath, $"{vmId}.config"),
+            ownConfigPath,
             aliases,
             vmId,
             keyFilePath);
 
         return aliases;
+    }
+
+    // Removes the given <paramref name="aliases"/> from every auto-generated VM
+    // and catlet config file except <paramref name="ownConfigPath"/>. A file
+    // that still has at least one alias left is rewritten; a file whose Host
+    // line would become empty is deleted. VM config files always retain their
+    // unique "&lt;vmId&gt;.hyper-v.alt" token, so they are only ever rewritten,
+    // never deleted, by this sweep.
+    private static async Task RemoveAliasesFromOtherConfigsAsync(
+        IReadOnlyList<string> aliases,
+        string ownConfigPath)
+    {
+        var aliasesToRemove = new HashSet<string>(aliases, StringComparer.Ordinal);
+        var ownFullPath = Path.GetFullPath(ownConfigPath);
+
+        foreach (var directory in new[] { VmSshConfigPath, CatletSshConfigPath })
+        {
+            if (!Directory.Exists(directory))
+                continue;
+
+            foreach (var file in Directory.EnumerateFiles(directory, "*.config", SearchOption.TopDirectoryOnly))
+            {
+                if (string.Equals(Path.GetFullPath(file), ownFullPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                await RemoveAliasesFromConfigFileAsync(file, aliasesToRemove);
+            }
+        }
+    }
+
+    private static async Task RemoveAliasesFromConfigFileAsync(
+        string file,
+        HashSet<string> aliasesToRemove)
+    {
+        string[] lines;
+        try
+        {
+            lines = await File.ReadAllLinesAsync(file);
+        }
+        catch
+        {
+            // A config we cannot read cannot be safely rewritten. Leaving it in
+            // place is no worse than the pre-existing state.
+            return;
+        }
+
+        var hostLineIndex = Array.FindIndex(
+            lines,
+            line => line.TrimStart().StartsWith("Host ", StringComparison.Ordinal));
+        if (hostLineIndex < 0)
+            return;
+
+        var tokens = lines[hostLineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // tokens[0] is the "Host" keyword; the remainder are the aliases.
+        var keptAliases = tokens.Skip(1).Where(t => !aliasesToRemove.Contains(t)).ToList();
+        if (keptAliases.Count == tokens.Length - 1)
+            return;
+
+        if (keptAliases.Count == 0)
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch
+            {
+                // An orphaned config with no aliases matches nothing, so a failed
+                // delete is harmless.
+            }
+
+            return;
+        }
+
+        lines[hostLineIndex] = "Host " + string.Join(' ', keptAliases);
+        try
+        {
+            await File.WriteAllLinesAsync(file, lines);
+        }
+        catch
+        {
+            // Ignore: failing to drop the alias here only means the duplicate
+            // persists, which is the pre-existing behaviour we are improving.
+        }
     }
 
     private static async Task WriteConfig(
