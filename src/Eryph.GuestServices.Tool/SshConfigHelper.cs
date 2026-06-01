@@ -117,7 +117,13 @@ public static class SshConfigHelper
         // could silently resolve to a different (often stale/stopped) VM and the
         // ProxyCommand would connect to the wrong vmId. Evict the alias from any
         // other config so the VM we are configuring now owns it.
-        await RemoveAliasesFromOtherConfigsAsync(aliases, ownConfigPath);
+        //
+        // Only the user-supplied alias is swept: the per-VM "<vmId>.hyper-v.alt"
+        // token is unique by construction and can never legitimately collide, so
+        // it must not be fed to the sweep (doing so could strip another VM's
+        // canonical token from its config).
+        if (!string.IsNullOrEmpty(alias))
+            await RemoveAliasesFromOtherConfigsAsync([alias], ownConfigPath);
 
         await WriteConfig(
             ownConfigPath,
@@ -130,10 +136,11 @@ public static class SshConfigHelper
 
     // Removes the given <paramref name="aliases"/> from every auto-generated VM
     // and catlet config file except <paramref name="ownConfigPath"/>. A file
-    // that still has at least one alias left is rewritten; a file whose Host
-    // line would become empty is deleted. VM config files always retain their
-    // unique "&lt;vmId&gt;.hyper-v.alt" token, so they are only ever rewritten,
-    // never deleted, by this sweep.
+    // that still has at least one alias left is rewritten. A file whose Host
+    // line would be emptied is left untouched: that only happens when the alias
+    // is that config's sole identity (e.g. a VM's "&lt;vmId&gt;.hyper-v.alt"
+    // token typed verbatim as another VM's alias), and silently deleting it
+    // would orphan an existing host. Keeping it preserves reachability.
     private static async Task RemoveAliasesFromOtherConfigsAsync(
         IReadOnlyList<string> aliases,
         string ownConfigPath)
@@ -185,19 +192,9 @@ public static class SshConfigHelper
             return;
 
         if (keptAliases.Count == 0)
-        {
-            try
-            {
-                File.Delete(file);
-            }
-            catch
-            {
-                // An orphaned config with no aliases matches nothing, so a failed
-                // delete is harmless.
-            }
-
+            // The alias is this config's only identity; stripping it would leave
+            // a dangling, unreachable host. Leave the file as-is.
             return;
-        }
 
         lines[hostLineIndex] = "Host " + string.Join(' ', keptAliases);
         try

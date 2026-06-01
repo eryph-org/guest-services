@@ -83,6 +83,24 @@ public class SshConfigHelperTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureVmConfigAsync_DoesNotStripAnotherVmsHyperVAliasOrDeleteItsConfig()
+    {
+        var vmA = Guid.NewGuid();
+        await SshConfigHelper.EnsureVmConfigAsync(vmA, alias: null, @"C:\key");
+
+        // Pathological: user passes VM A's unique canonical token as VM B's
+        // alias. The sweep must not strip A's only identity nor delete its
+        // config, which would orphan A.
+        var vmB = Guid.NewGuid();
+        await SshConfigHelper.EnsureVmConfigAsync(vmB, $"{vmA}.hyper-v.alt", @"C:\key");
+
+        var aPath = Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmA}.config");
+        File.Exists(aPath).Should().BeTrue();
+        var aHostLine = await ReadHostLineAsync(aPath);
+        aHostLine!.Split(' ').Should().Contain($"{vmA}.hyper-v.alt");
+    }
+
+    [Fact]
     public async Task EnsureVmConfigAsync_SameVmRewritten_RemainsSingleFile()
     {
         var vmId = Guid.NewGuid();
