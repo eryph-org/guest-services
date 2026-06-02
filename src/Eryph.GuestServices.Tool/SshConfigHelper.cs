@@ -187,10 +187,23 @@ public static class SshConfigHelper
 
         foreach (var directory in new[] { VmSshConfigPath, CatletSshConfigPath })
         {
-            if (!Directory.Exists(directory))
-                continue;
+            string[] files;
+            try
+            {
+                if (!Directory.Exists(directory))
+                    continue;
 
-            foreach (var file in Directory.EnumerateFiles(directory, "*.config", SearchOption.TopDirectoryOnly))
+                files = Directory.GetFiles(directory, "*.config", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                // Best-effort: a directory we cannot enumerate (permissions, or
+                // removed between the check and the call) just skips its
+                // de-duplication; it must never fail the command.
+                continue;
+            }
+
+            foreach (var file in files)
             {
                 if (string.Equals(Path.GetFullPath(file), ownFullPath, StringComparison.OrdinalIgnoreCase))
                     continue;

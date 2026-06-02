@@ -3,6 +3,7 @@ using Eryph.GuestServices.Tool;
 
 namespace Eryph.GuestServices.Tool.Tests;
 
+[Collection(nameof(SshConfigCollection))]
 public class SshConfigHelperTests : IDisposable
 {
     private readonly string _root;
@@ -98,7 +99,8 @@ public class SshConfigHelperTests : IDisposable
         var aPath = Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmA}.config");
         File.Exists(aPath).Should().BeTrue();
         var aHostLine = await ReadHostLineAsync(aPath);
-        aHostLine!.Split(' ').Should().Contain($"{vmA}.hyper-v.alt");
+        aHostLine!.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Should().Contain($"{vmA}.hyper-v.alt");
     }
 
     [Fact]
