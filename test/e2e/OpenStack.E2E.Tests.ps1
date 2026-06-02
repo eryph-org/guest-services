@@ -99,12 +99,11 @@ BeforeAll {
       $status = egs-tool get-status $sim.VmId
       if ($status -ne 'available') { throw "sim guest services not available: $status" }
     }
-    egs-tool update-ssh-config | Out-Null
     egs-tool add-ssh-config $sim.VmId | Out-Null
   }
   finally { $PSNativeCommandUseErrorActionPreference = $savedPref }
 
-  $simHost = "$($sim.Id).eryph.alt"
+  $simHost = "$($sim.VmId).hyper-v.alt"
 
   Write-Host "Uploading egs-openstack-sim + fixture tree to the simulator ..."
   egs-tool upload-directory $sim.VmId $resolvedSimPublishPath '/opt/egs-sim' --overwrite --recursive
@@ -181,10 +180,9 @@ BeforeAll {
       $status = egs-tool get-status $catlet.VmId
       if ($status -ne 'available') { throw "guest services not available: $status" }
     }
-    egs-tool update-ssh-config | Out-Null
     egs-tool add-ssh-config $catlet.VmId | Out-Null
     for ($i = 0; $i -lt 40; $i++) {
-      ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$($catlet.Id).eryph.alt" 'hostname' 2>$null | Out-Null
+      ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 "$($catlet.VmId).hyper-v.alt" 'hostname' 2>$null | Out-Null
       if ($LASTEXITCODE -eq 0) { break }
       Start-Sleep -Seconds 3
     }
@@ -237,7 +235,7 @@ Describe 'OpenStack metadata-service provisioning at first boot' {
     }
 
     It 'state.json records the simulator instance id and reached Final' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph\provisioning\state.json'
       $r.ExitCode | Should -Be 0
@@ -253,7 +251,7 @@ Describe 'OpenStack metadata-service provisioning at first boot' {
       # The simulator's user_data is "#cloud-config / write_files:
       # C:\eryph-openstack-e2e\hello.txt = from-userdata". Its presence proves
       # user_data flowed from the HTTP metadata service and was applied.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\eryph-openstack-e2e\hello.txt'
       $r.ExitCode | Should -Be 0
@@ -271,7 +269,7 @@ Describe 'OpenStack metadata-service provisioning at first boot' {
       # string is parsed as a statement separator by the powershell -Command
       # wrapper and splits the output). True only if osadmin is enabled AND an
       # Administrators member.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "[bool](Get-LocalUser osadmin -ErrorAction SilentlyContinue).Enabled -and [bool](Get-LocalGroupMember Administrators -Member osadmin -ErrorAction SilentlyContinue)"
       $r.ExitCode | Should -Be 0
@@ -282,7 +280,7 @@ Describe 'OpenStack metadata-service provisioning at first boot' {
       # ValidateCredentials returns true only when the password matches AND the
       # account is enabled, not locked, and not expired — the real "can log in"
       # proof, same bar as the Provisioning suite.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "Add-Type -AssemblyName System.DirectoryServices.AccountManagement; (New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine')).ValidateCredentials('osadmin','XyzqW3lc0me!2!')"
       $r.ExitCode | Should -Be 0
@@ -293,7 +291,7 @@ Describe 'OpenStack metadata-service provisioning at first boot' {
   Context 'CLI on the guest' {
 
     It 'egs-service status --json reports Final completed' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' status --json"
       $r.ExitCode | Should -Be 0

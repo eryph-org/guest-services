@@ -56,10 +56,13 @@ egs-tool get-status <vm-id>
 ```
 
 When it returns `completed`, the agent has finished the Final stage.
-Alternatively, SSH into the guest and inspect `state.json`:
+Alternatively, SSH into the guest and inspect `state.json`. Set up the SSH
+config once for the VM (use the VM id shown by `get-status`), giving it the
+alias `demo`, then connect by that alias:
 
 ```powershell
-ssh demo.eryph.alt
+egs-tool add-ssh-config <vm-id> demo
+ssh demo
 Get-Content C:\ProgramData\eryph\provisioning\state.json
 ```
 
@@ -69,7 +72,7 @@ modules that ran for this instance.
 ## Step 4 — verify the run
 
 ```powershell
-ssh demo.eryph.alt
+ssh demo
 hostname                          # demo-guest
 Get-Content C:\demo\hello.txt     # hello from cloud-config
 Get-LocalUser alice               # exists, in Administrators
@@ -82,7 +85,7 @@ the fodder and reloading the catlet doesn't re-run the per-instance
 modules — reset state inside the guest first:
 
 ```powershell
-ssh demo.eryph.alt
+ssh demo
 egs-service reset
 egs-service run
 ```

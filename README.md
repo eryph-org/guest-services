@@ -110,8 +110,9 @@ Start-Catlet -Name my-vm
 The agent runs on first boot, applies the cloud-config, and reports `eryph.provisioning.state = completed` via KVP. Connect:
 
 ```powershell
-egs-tool update-ssh-config
-ssh my-vm.<project>.eryph.alt
+$vmId = (Get-Catlet -Name my-vm).VmId
+egs-tool add-ssh-config $vmId my-vm
+ssh my-vm
 ```
 
 → See [Tutorial: first catlet with cloud-config](docs/user/tutorial/first-catlet-with-cloud-config.md) for a full walkthrough.
@@ -150,12 +151,9 @@ egs-tool get-status <VM-ID>
 # Add a single VM to the SSH config
 egs-tool add-ssh-config <VM-ID> [alias]
 
-# Refresh the SSH config for all VMs / catlets
-egs-tool update-ssh-config
-
 # Connect
-ssh <VM-ID>.hyper-v.alt          # standalone
-ssh <catlet>.<project>.eryph.alt # eryph
+ssh <VM-ID>.hyper-v.alt   # by VM id
+ssh <alias>               # if an alias was given to add-ssh-config
 ```
 
 ### Configure the shell
@@ -225,7 +223,6 @@ egs-tool initialize    # regenerate keys if needed
 | `get-status <VM-ID>` | Check whether the guest agent is reachable |
 | `get-ssh-key` | Print the host's SSH public key |
 | `add-ssh-config <VM-ID> [alias]` | Add one VM to the SSH config |
-| `update-ssh-config` | Refresh SSH config for every VM / catlet |
 | `upload-file` / `upload-directory` | Push file(s) to a VM |
 | `download-file` / `download-directory` | Pull file(s) from a VM |
 | `set-shell <VM-ID>` | Override the interactive shell |

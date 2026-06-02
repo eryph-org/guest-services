@@ -39,7 +39,7 @@ BeforeAll {
 
   $catlet = New-Catlet -Config $catletConfig -Name $catletName `
     -ProjectName $project.Name -SkipVariablesPrompt
-  $hostName = "$($catlet.Id).eryph.alt"
+  $hostName = "$($catlet.VmId).hyper-v.alt"
 
   Connect-Catlet -Id $catlet.Id
   Update-EgsService -Catlet $catlet -PublishPath $resolvedPublishPath

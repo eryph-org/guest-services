@@ -91,11 +91,11 @@ BeforeAll {
       $status = egs-tool get-status $catlet.VmId
       if ($status -ne 'available') { throw "guest services not available: $status" }
     }
-    Write-Host "egs-service is available — refreshing SSH config aliases ..."
-    # Refreshes ~/.ssh/config entries (IdentityFile pointing at the host's
-    # local egs-tool private key). No KVP write here — that lives in
-    # add-ssh-config and the per-test contexts decide whether to call it.
-    egs-tool update-ssh-config | Out-Null
+    Write-Host "egs-service is available."
+    # No SSH-config alias / KVP key write here — these tests connect via the
+    # egs proxy with an explicit -i identity and -F NUL (bypassing
+    # ~/.ssh/config). The per-test contexts decide whether to call
+    # add-ssh-config, which performs the KVP client-key push.
   }
   finally {
     $PSNativeCommandUseErrorActionPreference = $savedPref
