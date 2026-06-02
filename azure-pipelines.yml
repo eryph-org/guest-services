@@ -95,6 +95,32 @@ jobs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(toolArtifactName)'
       artifactName: tool
 
+  # Library packages consumed by eryph (hvsocket + KVP). Only the four
+  # IsPackable=true libraries emit a .nupkg; everything else in src/ is
+  # IsPackable=false (set in src/Directory.Build.props), so the glob is
+  # safe. Version comes from GitVersion.MsBuild in the projects.
+  - task: DotNetCoreCLI@2
+    displayName: dotnet pack (libraries)
+    inputs:
+      command: pack
+      packagesToPack: 'src/**/*.csproj'
+      configuration: $(buildConfiguration)
+      packDirectory: '$(Build.ArtifactStagingDirectory)/packages'
+
+  - task: NuGetAuthenticate@1
+    displayName: NuGet authenticate
+
+  - task: NuGetCommand@2
+    displayName: nuget push (libraries)
+    inputs:
+      command: push
+      packagesToPush: '$(Build.ArtifactStagingDirectory)/packages/*.nupkg'
+      nuGetFeedType: internal
+      publishVstsFeed: 'public/Public'
+      # CI publishes prerelease packages on every build; tolerate a
+      # re-pushed version on build re-runs instead of failing.
+      allowPackageConflicts: true
+
 - job: linux
   pool:
     vmImage: ubuntu-22.04
