@@ -106,8 +106,7 @@ BeforeAll {
       $status = egs-tool get-status $catlet.VmId
       if ($status -ne 'available') { throw "guest services not available: $status" }
     }
-    Write-Host "egs-service is available — refreshing SSH config aliases ..."
-    egs-tool update-ssh-config | Out-Null
+    Write-Host "egs-service is available — writing SSH config for the VM ..."
     egs-tool add-ssh-config $catlet.VmId | Out-Null
   }
   finally {
@@ -136,7 +135,7 @@ BeforeAll {
   try {
     for ($i = 0; $i -lt 40; $i++) {
       $probe = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=5 `
-        "$($catlet.Id).eryph.alt" 'hostname' 2>$null
+        "$($catlet.VmId).hyper-v.alt" 'hostname' 2>$null
       if ($LASTEXITCODE -eq 0) {
         Write-Host "SSH ready after $i probe(s) — hostname=$probe"
         break
@@ -192,7 +191,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'wrote the state file inside the guest' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph\provisioning\state.json'
       $r.ExitCode | Should -Be 0
@@ -202,7 +201,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'is running the patched binary (egs-service commit SHA matches host build)' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       # ProductVersion carries the GitVersion InformationalVersion with the SHA
       # baked in (e.g. "0.3.1-provisioning-agent.21+Branch.X.Sha.abcdef..."). The
       # SHA is the discriminating bit — assembly version stays 0.3.0.0 across
@@ -219,7 +218,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'did not run cloudbase-init' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-Service cloudbase-init -ErrorAction SilentlyContinue).Status'
       if ($r.Output) { $r.Output | Should -Not -Be 'Running' }
@@ -229,14 +228,14 @@ Describe 'Embedded provisioning at first boot' {
   Context 'cloud-config payload was applied' {
 
     It 'SetHostnameModule set the computer name to egs-prov-e2e' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName -Script '$env:COMPUTERNAME'
       $r.ExitCode | Should -Be 0
       $r.Output | Should -Be 'egs-prov-e2e'
     }
 
     It 'UsersGroupsModule created prov_test_user in Administrators' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-LocalGroupMember -Group Administrators -Member prov_test_user -ErrorAction SilentlyContinue).Name'
       $r.ExitCode | Should -Be 0
@@ -250,7 +249,7 @@ Describe 'Embedded provisioning at first boot' {
       # log the user in. ValidateCredentials returns true only when the password
       # matches AND the account is enabled, not locked, and NOT expired — so this
       # also guards the level-1017/acct_expires regression end-to-end.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "Add-Type -AssemblyName System.DirectoryServices.AccountManagement; (New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Machine')).ValidateCredentials('prov_test_user','XyzqW3lc0me!2!')"
       $r.ExitCode | Should -Be 0
@@ -261,7 +260,7 @@ Describe 'Embedded provisioning at first boot' {
       # The users: block never forces a change, so usri4_password_expired must be
       # 0. WinNT's PasswordExpired exposes that flag; read .Value, because the raw
       # property accessor does not reliably surface the integer.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "([ADSI]'WinNT://./prov_test_user,user').PasswordExpired.Value"
       $r.ExitCode | Should -Be 0
@@ -269,7 +268,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'left prov_test_user enabled' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-LocalUser prov_test_user).Enabled'
       $r.ExitCode | Should -Be 0
@@ -278,7 +277,7 @@ Describe 'Embedded provisioning at first boot' {
 
     It 'did NOT expire prov_test_user''s account' {
       # Get-LocalUser reports a never-expiring account as $null/empty.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-LocalUser prov_test_user).AccountExpires'
       $r.ExitCode | Should -Be 0
@@ -291,7 +290,7 @@ Describe 'Embedded provisioning at first boot' {
       # chpasswd.expire:true sets usri4_password_expired = 1 via level 4. This is
       # the correct field; the old code wrote level 1017 (acct_expires) here and
       # expired the whole account instead.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "([ADSI]'WinNT://./prov_expire_user,user').PasswordExpired.Value"
       $r.ExitCode | Should -Be 0
@@ -301,7 +300,7 @@ Describe 'Embedded provisioning at first boot' {
     It 'did NOT expire prov_expire_user''s ACCOUNT (must-change is not account expiry)' {
       # The crux of the bug: forcing a password change must NOT expire the
       # account. Even with must-change set, AccountExpires must stay "never".
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-LocalUser prov_expire_user).AccountExpires'
       $r.ExitCode | Should -Be 0
@@ -309,7 +308,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'left prov_expire_user enabled' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-LocalUser prov_expire_user).Enabled'
       $r.ExitCode | Should -Be 0
@@ -317,7 +316,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'WriteFilesModule produced the plain marker file' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph-e2e\marker-plain.txt'
       $r.ExitCode | Should -Be 0
@@ -325,7 +324,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'WriteFilesModule decoded the base64 marker file' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph-e2e\marker-b64.txt'
       $r.ExitCode | Should -Be 0
@@ -333,7 +332,7 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'RuncmdModule executed the runcmd entry' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph-e2e\runcmd-marker.txt'
       $r.ExitCode | Should -Be 0
@@ -348,7 +347,7 @@ Describe 'Embedded provisioning at first boot' {
     # OS partition into that space on first boot.
 
     It 'extended the OS partition by at least 2 GiB versus its offline size' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-Partition -DriveLetter C).Size'
       $r.ExitCode | Should -Be 0
@@ -363,7 +362,7 @@ Describe 'Embedded provisioning at first boot' {
     It 'has the OS partition close to the requested 64 GB disk size' {
       # 64 GB request minus a few hundred MB for reserved / recovery /
       # MSR partitions. 60 GB is a safe floor that catches "growpart no-op".
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script '(Get-Partition -DriveLetter C).Size'
       $r.ExitCode | Should -Be 0
@@ -376,7 +375,7 @@ Describe 'Embedded provisioning at first boot' {
       # is per-boot so it lives under the global sem/ dir, not the
       # per-instance one — a regression that wires the module as
       # per-instance would land it in the wrong path.
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "Get-Content -Raw -LiteralPath 'C:\ProgramData\eryph\provisioning\sem\Eryph.GuestServices.Provisioning.Modules.GrowpartModule.per-boot'"
       $r.ExitCode | Should -Be 0
@@ -387,7 +386,7 @@ Describe 'Embedded provisioning at first boot' {
   Context 'CLI on the guest' {
 
     It 'egs-service status --json reports Final completed' {
-      $hostName = "$($catlet.Id).eryph.alt"
+      $hostName = "$($catlet.VmId).hyper-v.alt"
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' status --json"
       $r.ExitCode | Should -Be 0

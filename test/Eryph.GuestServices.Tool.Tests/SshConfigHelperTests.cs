@@ -65,26 +65,6 @@ public class SshConfigHelperTests : IDisposable
     }
 
     [Fact]
-    public async Task EnsureVmConfigAsync_AliasCollidesWithCatlet_AliasIsRemovedFromCatletConfig()
-    {
-        var catletVmId = Guid.NewGuid();
-        // Project "default" yields the bare "<name>.eryph.alt" alias.
-        await SshConfigHelper.EnsureCatletConfigAsync(
-            "catlet-1", "web", "default", catletVmId, @"C:\key");
-
-        var vmId = Guid.NewGuid();
-        await SshConfigHelper.EnsureVmConfigAsync(vmId, "web.eryph.alt", @"C:\key");
-
-        var catletOwners = await FindHostFilesContainingAliasAsync(
-            SshConfigHelper.CatletSshConfigPath, "web.eryph.alt");
-        var vmOwners = await FindHostFilesContainingAliasAsync(
-            SshConfigHelper.VmSshConfigPath, "web.eryph.alt");
-
-        catletOwners.Should().BeEmpty();
-        vmOwners.Should().ContainSingle();
-    }
-
-    [Fact]
     public async Task EnsureVmConfigAsync_DoesNotStripAnotherVmsHyperVAliasOrDeleteItsConfig()
     {
         var vmA = Guid.NewGuid();

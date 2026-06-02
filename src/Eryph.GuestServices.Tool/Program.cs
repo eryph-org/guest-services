@@ -46,10 +46,6 @@ app.Configure(config =>
         .WithDescription(
             "Adds the necessary config for connecting to the given VM.");
 
-    config.AddCommand<UpdateSshConfigCommand>("update-ssh-config")
-        .WithDescription(
-            "Updates the SSH config to allow connecting to the catlets.");
-
     config.AddCommand<InitializeCommand>("initialize")
         .WithDescription(
             "Initializes the eryph guest services on the Hyper-V host.");

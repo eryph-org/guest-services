@@ -122,8 +122,6 @@ function Connect-Catlet {
     }
   }
 
-  egs-tool update-ssh-config
-
   $success = $false
   Write-Verbose "Waiting for catlet to be ready..."
   while (-not $success) {
@@ -142,7 +140,7 @@ function Connect-Catlet {
 
       # Quick connectivity probe
       $sshProcess = Start-Process -FilePath 'ssh.exe' `
-        -ArgumentList "$($catlet.Id).eryph.alt hostname" `
+        -ArgumentList "$($catlet.VmId).hyper-v.alt hostname" `
         -Wait -PassThru -WindowStyle Hidden
       if ($sshProcess.ExitCode -ne 0) {
         throw "ssh probe failed: $($sshProcess.ExitCode)"
@@ -227,7 +225,7 @@ try {
   }
 
   Write-Verbose "Triggering detached deploy task ..."
-  $hostName = "$($Catlet.Id).eryph.alt"
+  $hostName = "$($Catlet.VmId).hyper-v.alt"
   ssh.exe -o StrictHostKeyChecking=no $hostName `
     'schtasks.exe /create /tn EgsDeploy /tr "powershell.exe -ExecutionPolicy Bypass -File C:\egs-staging\deploy.ps1" /sc once /st 23:59:59 /ru SYSTEM /f' | Out-Null
   ssh.exe -o StrictHostKeyChecking=no $hostName 'schtasks.exe /run /tn EgsDeploy' | Out-Null
@@ -679,9 +677,8 @@ function Install-GuestMetadataRoute {
       $status = egs-tool get-status $VmId
       if ($status -ne 'available') { throw "guest services not available yet: $status" }
     }
-    egs-tool update-ssh-config | Out-Null
     egs-tool add-ssh-config $VmId | Out-Null
-    $hostName = "$CatletId.eryph.alt"
+    $hostName = "$VmId.hyper-v.alt"
 
     # Route script: wait for the overlay default gateway (DHCP), then add the
     # ACTIVE /32 route to the metadata IP via it. Idempotent — re-runs each boot.
@@ -833,9 +830,22 @@ function Save-GuestDiagnostics {
     [Parameter(Mandatory)][string] $OutputDir
   )
 
-  # The guest's eryph.alt alias is keyed on the catlet id (NOT the Hyper-V
-  # VmId) — the same name the test's SSH probes connect to.
-  $hostName = "$CatletId.eryph.alt"
+  # The guest's hyper-v.alt alias is keyed on the Hyper-V VmId — the same name
+  # the test's SSH probes connect to. Best-effort and non-throwing: resolve the
+  # VmId and (re)write the SSH config, but never let a failure here turn a real
+  # test failure into a cleanup error.
+  try {
+    $vmId = (Get-Catlet -Id $CatletId).VmId
+    egs-tool add-ssh-config $vmId | Out-Null
+  } catch {
+    Write-Host "Could not prepare SSH config for diagnostics: $_"
+    return
+  }
+  if (-not $vmId) {
+    Write-Host "No VmId for catlet $CatletId; skipping guest diagnostics."
+    return
+  }
+  $hostName = "$vmId.hyper-v.alt"
   try { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null } catch { }
   Write-Host "Collecting guest diagnostics to $OutputDir ..."
 
@@ -976,8 +986,8 @@ function Test-CatletSshWithKey {
     # an opaque exit-255. Pester redirection / variable-scope differences
     # have bitten us before; the log file makes both rerunnable and easy
     # to diff against an interactive ssh probe.
-    # `-F NUL` ignores ~/.ssh/config entirely. Without it, the catlet's
-    # Host block (written by egs-tool update-ssh-config) matches the
+    # `-F NUL` ignores ~/.ssh/config entirely. Without it, the VM's
+    # Host block (written by egs-tool add-ssh-config) matches the
     # *.hyper-v.alt target and silently adds `IdentityFile
     # C:\ProgramData\eryph\guest-services\private\id_egs` to the list of
     # keys ssh.exe offers — even with IdentitiesOnly=yes, because that
@@ -1268,7 +1278,7 @@ function Invoke-CatletAdminSshLinux {
   }
   $idEgs = Join-Path $env:ProgramData 'eryph\guest-services\private\id_egs'
   # -F NUL to bypass any local ssh_config Host blocks (egs-tool
-  # update-ssh-config writes *.eryph.alt/*.hyper-v.alt patterns, but the
+  # add-ssh-config writes *.hyper-v.alt patterns, but the
   # IP target shouldn't match — be defensive).
   return & $script:WinSshExe `
     -F NUL `
