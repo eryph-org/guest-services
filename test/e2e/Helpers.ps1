@@ -830,10 +830,21 @@ function Save-GuestDiagnostics {
     [Parameter(Mandatory)][string] $OutputDir
   )
 
-  # The guest's hyper-v.alt alias is keyed on the Hyper-V VmId — the same
-  # name the test's SSH probes connect to.
-  $vmId = (Get-Catlet -Id $CatletId).VmId
-  egs-tool add-ssh-config $vmId | Out-Null
+  # The guest's hyper-v.alt alias is keyed on the Hyper-V VmId — the same name
+  # the test's SSH probes connect to. Best-effort and non-throwing: resolve the
+  # VmId and (re)write the SSH config, but never let a failure here turn a real
+  # test failure into a cleanup error.
+  try {
+    $vmId = (Get-Catlet -Id $CatletId).VmId
+    egs-tool add-ssh-config $vmId | Out-Null
+  } catch {
+    Write-Host "Could not prepare SSH config for diagnostics: $_"
+    return
+  }
+  if (-not $vmId) {
+    Write-Host "No VmId for catlet $CatletId; skipping guest diagnostics."
+    return
+  }
   $hostName = "$vmId.hyper-v.alt"
   try { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null } catch { }
   Write-Host "Collecting guest diagnostics to $OutputDir ..."

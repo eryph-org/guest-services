@@ -57,8 +57,8 @@ egs-tool get-status <vm-id>
 
 When it returns `completed`, the agent has finished the Final stage.
 Alternatively, SSH into the guest and inspect `state.json`. Set up the SSH
-config once for the VM (use the VM id shown by `get-status`), giving it the
-alias `demo`, then connect by that alias:
+config once for the VM — pass the same `<vm-id>` you used with `get-status`
+above — giving it the alias `demo`, then connect by that alias:
 
 ```powershell
 egs-tool add-ssh-config <vm-id> demo
