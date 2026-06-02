@@ -24,12 +24,15 @@ public static class SshConfigHelper
     // Returns a human-readable error, or null when the alias is acceptable.
     public static string? GetAliasValidationError(string alias)
     {
-        // Whitespace/control characters would split into multiple host patterns
-        // or, in the case of a newline, inject arbitrary directives into the
-        // generated SSH config. Do not echo the alias here: a control character
-        // (e.g. ESC) in it could inject terminal escape sequences when printed.
-        if (alias.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
-            return "The alias must not contain whitespace or control characters.";
+        // Restrict to a safe host-token charset. Anything outside it could change
+        // how the generated 'Host' line is parsed: whitespace splits it into
+        // multiple patterns, a newline injects arbitrary directives, and
+        // ssh_config metacharacters such as '#' (comment), '!' (negation) and
+        // '*'/'?' (patterns) alter its meaning. Do not echo the alias in this
+        // message: a control character (e.g. ESC) in it could inject terminal
+        // escape sequences when printed.
+        if (!alias.All(IsAllowedAliasChar))
+            return "The alias may only contain letters, digits, '.', '-' and '_'.";
 
         if (IsReservedAlias(alias))
             return $"The alias '{alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) "
@@ -37,6 +40,9 @@ public static class SshConfigHelper
 
         return null;
     }
+
+    private static bool IsAllowedAliasChar(char c) =>
+        char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_';
 
     // Test seam: overrides the config root so the writers and the alias-dedup
     // sweep can be exercised against a temp directory instead of the real user

@@ -156,6 +156,7 @@ public class SshConfigHelperTests : IDisposable
     [Theory]
     [InlineData("myalias")]
     [InlineData("web-01.local")]
+    [InlineData("my_alias")]
     public void GetAliasValidationError_AcceptsPlainAliases(string alias)
     {
         SshConfigHelper.GetAliasValidationError(alias).Should().BeNull();
@@ -165,6 +166,10 @@ public class SshConfigHelperTests : IDisposable
     [InlineData("has space")]
     [InlineData("has\ttab")]
     [InlineData("line\ninject")]
+    [InlineData("a#comment")]
+    [InlineData("!negated")]
+    [InlineData("glob*")]
+    [InlineData("question?")]
     [InlineData("web.eryph.alt")]
     [InlineData("x.hyper-v.alt")]
     public void GetAliasValidationError_RejectsInvalidAliases(string alias)
