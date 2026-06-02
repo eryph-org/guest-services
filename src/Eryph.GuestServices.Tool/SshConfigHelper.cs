@@ -32,7 +32,7 @@ public static class SshConfigHelper
         // message: a control character (e.g. ESC) in it could inject terminal
         // escape sequences when printed.
         if (!alias.All(IsAllowedAliasChar))
-            return "The alias may only contain letters, digits, '.', '-' and '_'.";
+            return "The alias may only contain ASCII letters, digits, '.', '-' and '_'.";
 
         if (IsReservedAlias(alias))
             return $"The alias '{alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) "
