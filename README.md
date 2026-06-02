@@ -142,7 +142,7 @@ What's **not** supported (yet): jinja2 templating, part-handler, boothook execut
 
 ## SSH access
 
-The guest exposes a dedicated SSH server on the Hyper-V socket (service ID `0000138a-facb-11e6-bd58-64006a7986d3` / Linux vsock port 5002). The host tool writes an SSH config that uses `hvc nc -t vsock <vmid> 5002` as the proxy command. Key exchange happens through Hyper-V KVP so no manual `ssh-copy-id` is needed.
+The guest exposes a dedicated SSH server on the Hyper-V socket (service ID `0000138a-facb-11e6-bd58-64006a7986d3` / Linux vsock port 5002). The host tool writes an SSH config that uses `egs-tool.exe proxy <vmid>` as the proxy command. Key exchange happens through Hyper-V KVP so no manual `ssh-copy-id` is needed.
 
 ```powershell
 # Status of the guest agent in a VM
