@@ -340,6 +340,122 @@ public class ClientKeyProviderTests
         (await provider.IsAuthorizedAsync(ecdsaP384)).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithFutureExpiry_Authorizes()
+    {
+        var key = GenerateKey();
+        var line = $"expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(1))}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithPastExpiry_Rejected()
+    {
+        var key = GenerateKey();
+        var line = $"expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(-1))}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithFutureExpiry_OpenSshCompactForm_Authorizes()
+    {
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddDays(1).ToString("yyyyMMddHHmmss") + "Z";
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithPastExpiry_OpenSshCompactForm_Rejected()
+    {
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddDays(-1).ToString("yyyyMMddHHmmss") + "Z";
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithMalformedExpiry_Rejected()
+    {
+        // Fail-closed: a key that declared an expiry we cannot read must not be
+        // honored as if it never expired.
+        var key = GenerateKey();
+        var line = $"expiry-time=\"not-a-timestamp\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_KeyWithOptionsButNoExpiry_Authorizes()
+    {
+        // Other authorized_keys options (no expiry-time) must not block the key.
+        var key = GenerateKey();
+        var line = $"no-port-forwarding,no-agent-forwarding {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_ExpiryAmongMultipleOptions_FutureAuthorizes()
+    {
+        var key = GenerateKey();
+        var line = $"no-pty,expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(1))}\",no-agent-forwarding {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_ExpiryAmongMultipleOptions_PastRejected()
+    {
+        var key = GenerateKey();
+        var line = $"no-pty,expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(-1))}\",no-agent-forwarding {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_OptionWithQuotedSpaces_DoesNotBreakKeyParsing()
+    {
+        // A quoted option value may contain spaces; the option list still ends
+        // at the first UNQUOTED whitespace, so the key body parses correctly.
+        var key = GenerateKey();
+        var line = $"command=\"echo hello world\",expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(1))}\" {ExportSsh(key)} operator@host";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_ExpiredKeyInNamedSlot_DoesNotAuthorize_ButOtherSlotDoes()
+    {
+        var expired = GenerateKey();
+        var live = GenerateKey();
+        var dataExchange = new StubDataExchange();
+        dataExchange.External[$"{Constants.ClientAuthKeyPrefix}sub-expired"] =
+            $"expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(-1))}\" {ExportSsh(expired)}";
+        dataExchange.External[$"{Constants.ClientAuthKeyPrefix}sub-live"] =
+            $"expiry-time=\"{Iso(DateTimeOffset.UtcNow.AddHours(1))}\" {ExportSsh(live)}";
+        var provider = NewProvider(dataExchange: dataExchange);
+
+        (await provider.IsAuthorizedAsync(expired)).Should().BeFalse();
+        (await provider.IsAuthorizedAsync(live)).Should().BeTrue();
+    }
+
+    private static string Iso(DateTimeOffset value)
+        => value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ");
+
     private static IKeyPair GenerateKey()
         => SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
 

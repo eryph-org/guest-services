@@ -1,5 +1,7 @@
 ﻿using Eryph.GuestServices.Sockets;
 using Eryph.GuestServices.Tool.Commands;
+using Eryph.GuestServices.Tool.Commands.Eryph;
+using Eryph.GuestServices.Tool.Eryph;
 using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -57,6 +59,28 @@ app.Configure(config =>
     config.AddCommand<SetShellCommand>("set-shell")
         .WithDescription(
             "Configures the shell that interactive SSH sessions spawn in the VM.");
+
+    config.AddBranch("eryph", eryph =>
+    {
+        eryph.SetDescription(
+            "Remote access to eryph catlets through the eryph-authorized channel.");
+
+        eryph.AddCommand<EryphAddSshConfigCommand>("add-ssh-config")
+            .WithDescription(
+                "Adds an SSH config alias for connecting to the given catlet via eryph.");
+
+        eryph.AddCommand<EryphGetClientKeyCommand>("get-client-key")
+            .WithDescription(
+                "Prints the managed client public key for pre-injecting into a catlet.");
+
+        eryph.AddCommand<EryphAddKeyCommand>("add-key")
+            .WithDescription(
+                "Pushes a public key to the given catlet's guest via eryph.");
+
+        eryph.AddCommand<EryphRemoveKeyCommand>("remove-key")
+            .WithDescription(
+                "Revokes the caller's key on the given catlet via eryph.");
+    });
 });
 
 
@@ -85,6 +109,16 @@ if (args is ["proxy", var vmId])
         socketStream.CopyToAsync(stdout));
 
     return 0;
+}
+
+// The eryph data-plane proxy is, like the VM-level proxy above, kept out of
+// Spectre.Console.Cli so nothing interferes with the redirected stdin/stdout it
+// bridges to the eryph channel. Unlike the VM proxy it must NOT require host
+// admin: it runs on the operator's machine and authenticates with the
+// operator's eryph identity.
+if (args is ["eryph", "proxy", var catletId])
+{
+    return await EryphProxy.RunAsync(catletId);
 }
 
 #if DEBUG

@@ -6,6 +6,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Consumed by eryph (host agent) to write the client-key KVP slot via WMI. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.HvDataExchange.Host</PackageId>
+    <Description>Host-side Hyper-V data exchange (KVP) writer for eryph guest services. Uses WMI and is Windows-only.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>

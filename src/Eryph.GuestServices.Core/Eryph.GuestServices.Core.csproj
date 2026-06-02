@@ -6,6 +6,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Consumed by eryph: the egs service id / KVP key names and PortNumberConverter. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.Core</PackageId>
+    <Description>Shared constants (eryph guest services Hyper-V service id, KVP key names) and helpers used across eryph guest services and its consumers.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Eryph.GuestServices.Service.Tests" />
   </ItemGroup>
