@@ -8,6 +8,18 @@ public static class SshConfigHelper
 {
     private const string Border = "# ------ eryph guest services ------";
 
+    // Suffixes reserved for the auto-generated canonical hosts:
+    // "<vmId>.hyper-v.alt" for VMs and "<...>.eryph.alt" for catlets. A
+    // user-supplied alias must not use them: a "*.hyper-v.alt" alias could
+    // shadow another VM's canonical token, and a "*.eryph.alt" alias collides
+    // with catlet hosts that update-ssh-config regenerates (and catlet.d is
+    // Included before vm.d, so the catlet would even shadow the VM). Rejecting
+    // these keeps every user alias outside the generated namespaces.
+    private static readonly string[] ReservedAliasSuffixes = [".hyper-v.alt", ".eryph.alt"];
+
+    public static bool IsReservedAlias(string alias) =>
+        ReservedAliasSuffixes.Any(suffix => alias.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+
     // Test seam: overrides the config root so the writers and the alias-dedup
     // sweep can be exercised against a temp directory instead of the real user
     // profile. Null in production.

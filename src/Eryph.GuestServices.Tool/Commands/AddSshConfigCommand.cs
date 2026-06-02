@@ -18,6 +18,13 @@ public class AddSshConfigCommand : AsyncCommand<AddSshConfigCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
+        if (!string.IsNullOrEmpty(settings.Alias) && SshConfigHelper.IsReservedAlias(settings.Alias))
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]The alias '{settings.Alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) that is managed by the eryph guest services. Please choose a different alias.[/]");
+            return -1;
+        }
+
         var keyPair = await ClientKeyHelper.GetKeyPairAsync();
         if (keyPair is null)
         {

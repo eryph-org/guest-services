@@ -113,6 +113,19 @@ public class SshConfigHelperTests : IDisposable
         owners.Should().ContainSingle();
     }
 
+    [Theory]
+    [InlineData("web.eryph.alt", true)]
+    [InlineData("some-vm.hyper-v.alt", true)]
+    [InlineData("00000000-0000-0000-0000-000000000000.hyper-v.alt", true)]
+    [InlineData("WEB.ERYPH.ALT", true)]
+    [InlineData("myalias", false)]
+    [InlineData("alias.local", false)]
+    [InlineData("eryph.alt", false)]
+    public void IsReservedAlias_DetectsGeneratedNamespaces(string alias, bool expected)
+    {
+        SshConfigHelper.IsReservedAlias(alias).Should().Be(expected);
+    }
+
     private static async Task<IReadOnlyList<string>> FindHostFilesContainingAliasAsync(
         string directory,
         string alias)
