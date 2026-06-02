@@ -138,6 +138,16 @@ public static class SshConfigHelper
         Directory.CreateDirectory(VmSshConfigPath);
         var ownConfigPath = Path.Combine(VmSshConfigPath, $"{vmId}.config");
 
+        // Write our own config before sweeping the others. If WriteConfig fails,
+        // having already stripped the alias from its previous owner would lose
+        // it entirely; doing this first means a later sweep failure only leaves
+        // the pre-existing duplicate behind.
+        await WriteConfig(
+            ownConfigPath,
+            aliases,
+            vmId,
+            keyFilePath);
+
         // An SSH alias must resolve to exactly one host. The user-supplied alias
         // is not constrained to a single VM, so re-using it for another VM (or
         // an alias that already names a catlet) would leave two 'Host <alias>'
@@ -153,12 +163,6 @@ public static class SshConfigHelper
         // canonical token from its config).
         if (!string.IsNullOrEmpty(alias))
             await RemoveAliasesFromOtherConfigsAsync([alias], ownConfigPath);
-
-        await WriteConfig(
-            ownConfigPath,
-            aliases,
-            vmId,
-            keyFilePath);
 
         return aliases;
     }
