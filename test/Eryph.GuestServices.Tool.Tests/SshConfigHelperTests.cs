@@ -126,6 +126,43 @@ public class SshConfigHelperTests : IDisposable
         SshConfigHelper.IsReservedAlias(alias).Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData("myalias")]
+    [InlineData("web-01.local")]
+    public void GetAliasValidationError_AcceptsPlainAliases(string alias)
+    {
+        SshConfigHelper.GetAliasValidationError(alias).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("has space")]
+    [InlineData("has\ttab")]
+    [InlineData("line\ninject")]
+    [InlineData("web.eryph.alt")]
+    [InlineData("x.hyper-v.alt")]
+    public void GetAliasValidationError_RejectsInvalidAliases(string alias)
+    {
+        SshConfigHelper.GetAliasValidationError(alias).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task EnsureVmConfigAsync_AliasReusedWithDifferentCasing_LeavesAliasInExactlyOneFile()
+    {
+        var vmA = Guid.NewGuid();
+        var vmB = Guid.NewGuid();
+
+        await SshConfigHelper.EnsureVmConfigAsync(vmA, "shared", @"C:\key");
+        await SshConfigHelper.EnsureVmConfigAsync(vmB, "SHARED", @"C:\key");
+
+        var lowerOwners = await FindHostFilesContainingAliasAsync(SshConfigHelper.VmSshConfigPath, "shared");
+        var upperOwners = await FindHostFilesContainingAliasAsync(SshConfigHelper.VmSshConfigPath, "SHARED");
+
+        // Case-only difference must still be treated as the same alias.
+        lowerOwners.Should().BeEmpty();
+        upperOwners.Should().ContainSingle()
+            .Which.Should().Be(Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmB}.config"));
+    }
+
     private static async Task<IReadOnlyList<string>> FindHostFilesContainingAliasAsync(
         string directory,
         string alias)

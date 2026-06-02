@@ -20,6 +20,23 @@ public static class SshConfigHelper
     public static bool IsReservedAlias(string alias) =>
         ReservedAliasSuffixes.Any(suffix => alias.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
 
+    // Validates a user-supplied alias before it is written into a 'Host' line.
+    // Returns a human-readable error, or null when the alias is acceptable.
+    public static string? GetAliasValidationError(string alias)
+    {
+        // Whitespace/control characters would split into multiple host patterns
+        // or, in the case of a newline, inject arbitrary directives into the
+        // generated SSH config.
+        if (alias.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
+            return $"The alias '{alias}' must not contain whitespace or control characters.";
+
+        if (IsReservedAlias(alias))
+            return $"The alias '{alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) "
+                + "that is managed by the eryph guest services.";
+
+        return null;
+    }
+
     // Test seam: overrides the config root so the writers and the alias-dedup
     // sweep can be exercised against a temp directory instead of the real user
     // profile. Null in production.
@@ -157,7 +174,10 @@ public static class SshConfigHelper
         IReadOnlyList<string> aliases,
         string ownConfigPath)
     {
-        var aliasesToRemove = new HashSet<string>(aliases, StringComparer.Ordinal);
+        // Match case-insensitively: SSH host aliases are effectively
+        // case-insensitive, so 'web' and 'WEB' must be treated as the same
+        // alias or the sweep would leave a casing-only duplicate behind.
+        var aliasesToRemove = new HashSet<string>(aliases, StringComparer.OrdinalIgnoreCase);
         var ownFullPath = Path.GetFullPath(ownConfigPath);
 
         foreach (var directory in new[] { VmSshConfigPath, CatletSshConfigPath })
@@ -197,7 +217,10 @@ public static class SshConfigHelper
         if (hostLineIndex < 0)
             return;
 
-        var tokens = lines[hostLineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Split on any whitespace (space or tab, both valid ssh-config
+        // separators) so the sweep is robust to hand-edited files.
+        var tokens = lines[hostLineIndex].Split(
+            (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         // tokens[0] is the "Host" keyword; the remainder are the aliases.
         var keptAliases = tokens.Skip(1).Where(t => !aliasesToRemove.Contains(t)).ToList();
         if (keptAliases.Count == tokens.Length - 1)
