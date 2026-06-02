@@ -199,8 +199,9 @@ public class SshConfigHelperTests : IDisposable
         foreach (var file in Directory.GetFiles(directory, "*.config"))
         {
             var hostLine = await ReadHostLineAsync(file);
-            // Mirror production parsing: split on any whitespace and drop the
-            // leading "Host" keyword before matching aliases.
+            // Tokenize like production (split on any whitespace, drop the leading
+            // "Host" keyword). The alias match is intentionally case-sensitive so
+            // the casing tests can assert the exact surviving casing.
             if (hostLine is not null
                 && hostLine.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Skip(1).Contains(alias))
                 result.Add(file);

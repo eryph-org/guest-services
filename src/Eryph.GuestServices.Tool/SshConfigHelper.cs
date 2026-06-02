@@ -26,9 +26,10 @@ public static class SshConfigHelper
     {
         // Whitespace/control characters would split into multiple host patterns
         // or, in the case of a newline, inject arbitrary directives into the
-        // generated SSH config.
+        // generated SSH config. Do not echo the alias here: a control character
+        // (e.g. ESC) in it could inject terminal escape sequences when printed.
         if (alias.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
-            return $"The alias '{alias}' must not contain whitespace or control characters.";
+            return "The alias must not contain whitespace or control characters.";
 
         if (IsReservedAlias(alias))
             return $"The alias '{alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) "
