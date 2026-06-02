@@ -35,6 +35,17 @@ internal sealed class LicensingModule(ILogger<LicensingModule> logger) : IModule
         IModuleContext context,
         CancellationToken cancellationToken)
     {
+        // One-shot guard: the only path in this module that requests a reboot
+        // is rearm. After the reboot, IsEvaluationLicenseAsync still reports
+        // true (rearm extends the grace timer; it does not change the SKU),
+        // so re-running would rearm again, burning another of Windows' finite
+        // rearm slots and eventually tripping the per-module reboot cap.
+        if (context.IsRebootResume)
+        {
+            logger.LogInformation("Resuming after rearm-triggered reboot; licensing module is done for this instance.");
+            return ModuleOutcome.Ok();
+        }
+
         var license = userData.CloudConfig.License ?? new LicenseConfig();
 
         var explicitKey = NonBlank(license.ProductKey);
