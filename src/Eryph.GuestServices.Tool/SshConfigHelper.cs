@@ -8,9 +8,50 @@ public static class SshConfigHelper
 {
     private const string Border = "# ------ eryph guest services ------";
 
+    // Suffixes reserved for the auto-generated canonical hosts:
+    // "<vmId>.hyper-v.alt" for VMs and "<...>.eryph.alt" for catlets. A
+    // user-supplied alias must not use them: a "*.hyper-v.alt" alias could
+    // shadow another VM's canonical token, and a "*.eryph.alt" alias collides
+    // with catlet hosts that update-ssh-config regenerates (and catlet.d is
+    // Included before vm.d, so the catlet would even shadow the VM). Rejecting
+    // these keeps every user alias outside the generated namespaces.
+    private static readonly string[] ReservedAliasSuffixes = [".hyper-v.alt", ".eryph.alt"];
+
+    public static bool IsReservedAlias(string alias) =>
+        ReservedAliasSuffixes.Any(suffix => alias.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+
+    // Validates a user-supplied alias before it is written into a 'Host' line.
+    // Returns a human-readable error, or null when the alias is acceptable.
+    public static string? GetAliasValidationError(string alias)
+    {
+        // Restrict to a safe host-token charset. Anything outside it could change
+        // how the generated 'Host' line is parsed: whitespace splits it into
+        // multiple patterns, a newline injects arbitrary directives, and
+        // ssh_config metacharacters such as '#' (comment), '!' (negation) and
+        // '*'/'?' (patterns) alter its meaning. Do not echo the alias in this
+        // message: a control character (e.g. ESC) in it could inject terminal
+        // escape sequences when printed.
+        if (!alias.All(IsAllowedAliasChar))
+            return "The alias may only contain ASCII letters, digits, '.', '-' and '_'.";
+
+        if (IsReservedAlias(alias))
+            return $"The alias '{alias}' uses a reserved suffix (.hyper-v.alt or .eryph.alt) "
+                + "that is managed by the eryph guest services.";
+
+        return null;
+    }
+
+    private static bool IsAllowedAliasChar(char c) =>
+        char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_';
+
+    // Test seam: overrides the config root so the writers and the alias-dedup
+    // sweep can be exercised against a temp directory instead of the real user
+    // profile. Null in production.
+    internal static string? RootPathOverride { get; set; }
+
     // The config should be in the local (non-roaming) profile as the connection
     // only works on the specific machine.
-    private static string EryphSshConfigPath => Path.Combine(
+    private static string EryphSshConfigPath => RootPathOverride ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         ".eryph",
         "guest-services",
@@ -102,13 +143,137 @@ public static class SshConfigHelper
            aliases = [alias, ..aliases];
 
         Directory.CreateDirectory(VmSshConfigPath);
+        var ownConfigPath = Path.Combine(VmSshConfigPath, $"{vmId}.config");
+
+        // Write our own config before sweeping the others. If WriteConfig fails,
+        // having already stripped the alias from its previous owner would lose
+        // it entirely; doing this first means a later sweep failure only leaves
+        // the pre-existing duplicate behind.
         await WriteConfig(
-            Path.Combine(VmSshConfigPath, $"{vmId}.config"),
+            ownConfigPath,
             aliases,
             vmId,
             keyFilePath);
 
+        // An SSH alias must resolve to exactly one host. The user-supplied alias
+        // is not constrained to a single VM, so re-using it for another VM (or
+        // an alias that already names a catlet) would leave two 'Host <alias>'
+        // stanzas across the included config files. OpenSSH processes the
+        // Include glob in lexical order and the first match wins, so the alias
+        // could silently resolve to a different (often stale/stopped) VM and the
+        // ProxyCommand would connect to the wrong vmId. Evict the alias from any
+        // other config so the VM we are configuring now owns it.
+        //
+        // Only the user-supplied alias is swept: the per-VM "<vmId>.hyper-v.alt"
+        // token is unique by construction and can never legitimately collide, so
+        // it must not be fed to the sweep (doing so could strip another VM's
+        // canonical token from its config).
+        if (!string.IsNullOrEmpty(alias))
+            await RemoveAliasesFromOtherConfigsAsync([alias], ownConfigPath);
+
         return aliases;
+    }
+
+    // Removes the given <paramref name="aliases"/> from every auto-generated VM
+    // and catlet config file except <paramref name="ownConfigPath"/>. A file
+    // that still has at least one alias left is rewritten. A file whose Host
+    // line would be emptied is left untouched: that only happens when the alias
+    // is that config's sole identity (e.g. a VM's "&lt;vmId&gt;.hyper-v.alt"
+    // token typed verbatim as another VM's alias), and silently deleting it
+    // would orphan an existing host. Keeping it preserves reachability.
+    private static async Task RemoveAliasesFromOtherConfigsAsync(
+        IReadOnlyList<string> aliases,
+        string ownConfigPath)
+    {
+        // Match case-insensitively: SSH host aliases are effectively
+        // case-insensitive, so 'web' and 'WEB' must be treated as the same
+        // alias or the sweep would leave a casing-only duplicate behind.
+        var aliasesToRemove = new HashSet<string>(aliases, StringComparer.OrdinalIgnoreCase);
+        var ownFullPath = Path.GetFullPath(ownConfigPath);
+
+        foreach (var directory in new[] { VmSshConfigPath, CatletSshConfigPath })
+        {
+            string[] files;
+            try
+            {
+                if (!Directory.Exists(directory))
+                    continue;
+
+                files = Directory.GetFiles(directory, "*.config", SearchOption.TopDirectoryOnly);
+            }
+            catch
+            {
+                // Best-effort: a directory we cannot enumerate (permissions, or
+                // removed between the check and the call) just skips its
+                // de-duplication; it must never fail the command.
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                if (string.Equals(Path.GetFullPath(file), ownFullPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                await RemoveAliasesFromConfigFileAsync(file, aliasesToRemove);
+            }
+        }
+    }
+
+    private static async Task RemoveAliasesFromConfigFileAsync(
+        string file,
+        HashSet<string> aliasesToRemove)
+    {
+        string[] lines;
+        try
+        {
+            lines = await File.ReadAllLinesAsync(file);
+        }
+        catch
+        {
+            // A config we cannot read cannot be safely rewritten. Leaving it in
+            // place is no worse than the pre-existing state.
+            return;
+        }
+
+        var hostLineIndex = Array.FindIndex(lines, IsHostLine);
+        if (hostLineIndex < 0)
+            return;
+
+        // Split on any whitespace (space or tab, both valid ssh-config
+        // separators) so the sweep is robust to hand-edited files.
+        var tokens = lines[hostLineIndex].Split(
+            (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        // tokens[0] is the "Host" keyword; the remainder are the aliases.
+        var keptAliases = tokens.Skip(1).Where(t => !aliasesToRemove.Contains(t)).ToList();
+        if (keptAliases.Count == tokens.Length - 1)
+            return;
+
+        if (keptAliases.Count == 0)
+            // The alias is this config's only identity; stripping it would leave
+            // a dangling, unreachable host. Leave the file as-is.
+            return;
+
+        lines[hostLineIndex] = "Host " + string.Join(' ', keptAliases);
+        try
+        {
+            await File.WriteAllLinesAsync(file, lines);
+        }
+        catch
+        {
+            // Ignore: failing to drop the alias here only means the duplicate
+            // persists, which is the pre-existing behaviour we are improving.
+        }
+    }
+
+    // A 'Host' stanza: the keyword (case-insensitive, per ssh_config) followed
+    // by any whitespace (space or tab). Matching only "Host " would miss a
+    // tab-separated line in a hand-edited config.
+    private static bool IsHostLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length > 4
+            && trimmed.StartsWith("Host", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed[4]);
     }
 
     private static async Task WriteConfig(
