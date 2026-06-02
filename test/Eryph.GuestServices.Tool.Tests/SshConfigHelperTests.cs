@@ -58,7 +58,8 @@ public class SshConfigHelperTests : IDisposable
         var oldHostLine = await ReadHostLineAsync(
             Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmA}.config"));
         oldHostLine.Should().NotBeNull();
-        oldHostLine!.Split(' ').Should().Contain($"{vmA}.hyper-v.alt")
+        oldHostLine!.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Should().Contain($"{vmA}.hyper-v.alt")
             .And.NotContain("shared");
     }
 
@@ -198,7 +199,10 @@ public class SshConfigHelperTests : IDisposable
         foreach (var file in Directory.GetFiles(directory, "*.config"))
         {
             var hostLine = await ReadHostLineAsync(file);
-            if (hostLine is not null && hostLine.Split(' ').Contains(alias))
+            // Mirror production parsing: split on any whitespace and drop the
+            // leading "Host" keyword before matching aliases.
+            if (hostLine is not null
+                && hostLine.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Skip(1).Contains(alias))
                 result.Add(file);
         }
 
@@ -208,6 +212,12 @@ public class SshConfigHelperTests : IDisposable
     private static async Task<string?> ReadHostLineAsync(string file)
     {
         var lines = await File.ReadAllLinesAsync(file);
-        return lines.FirstOrDefault(l => l.StartsWith("Host ", StringComparison.Ordinal));
+        return lines.FirstOrDefault(l =>
+        {
+            var trimmed = l.TrimStart();
+            return trimmed.Length > 4
+                && trimmed.StartsWith("Host", StringComparison.OrdinalIgnoreCase)
+                && char.IsWhiteSpace(trimmed[4]);
+        });
     }
 }
