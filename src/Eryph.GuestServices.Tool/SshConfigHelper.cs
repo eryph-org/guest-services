@@ -211,9 +211,7 @@ public static class SshConfigHelper
             return;
         }
 
-        var hostLineIndex = Array.FindIndex(
-            lines,
-            line => line.TrimStart().StartsWith("Host ", StringComparison.Ordinal));
+        var hostLineIndex = Array.FindIndex(lines, IsHostLine);
         if (hostLineIndex < 0)
             return;
 
@@ -241,6 +239,17 @@ public static class SshConfigHelper
             // Ignore: failing to drop the alias here only means the duplicate
             // persists, which is the pre-existing behaviour we are improving.
         }
+    }
+
+    // A 'Host' stanza: the keyword (case-insensitive, per ssh_config) followed
+    // by any whitespace (space or tab). Matching only "Host " would miss a
+    // tab-separated line in a hand-edited config.
+    private static bool IsHostLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length > 4
+            && trimmed.StartsWith("Host", StringComparison.OrdinalIgnoreCase)
+            && char.IsWhiteSpace(trimmed[4]);
     }
 
     private static async Task WriteConfig(

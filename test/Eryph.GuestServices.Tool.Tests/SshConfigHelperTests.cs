@@ -101,6 +101,30 @@ public class SshConfigHelperTests : IDisposable
     }
 
     [Fact]
+    public async Task EnsureVmConfigAsync_StripsAliasFromTabSeparatedHandEditedHostLine()
+    {
+        // A hand-edited config using a tab after Host and between aliases must
+        // still be detected and de-duplicated.
+        Directory.CreateDirectory(SshConfigHelper.VmSshConfigPath);
+        var staleVm = Guid.NewGuid();
+        var stalePath = Path.Combine(SshConfigHelper.VmSshConfigPath, $"{staleVm}.config");
+        await File.WriteAllTextAsync(
+            stalePath,
+            $"Host\tshared\t{staleVm}.hyper-v.alt\n    HostName {staleVm}.hyper-v.alt\n");
+
+        var newVm = Guid.NewGuid();
+        await SshConfigHelper.EnsureVmConfigAsync(newVm, "shared", @"C:\key");
+
+        var owners = await FindHostFilesContainingAliasAsync(SshConfigHelper.VmSshConfigPath, "shared");
+        owners.Should().ContainSingle()
+            .Which.Should().Be(Path.Combine(SshConfigHelper.VmSshConfigPath, $"{newVm}.config"));
+
+        // The stale file keeps its unique token, just loses the stolen alias.
+        var staleHost = await ReadHostLineAsync(stalePath);
+        staleHost!.Should().Contain($"{staleVm}.hyper-v.alt");
+    }
+
+    [Fact]
     public async Task EnsureVmConfigAsync_SameVmRewritten_RemainsSingleFile()
     {
         var vmId = Guid.NewGuid();
