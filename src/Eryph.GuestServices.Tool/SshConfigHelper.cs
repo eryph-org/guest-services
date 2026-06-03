@@ -213,6 +213,19 @@ public static class SshConfigHelper
                 "The catlet id contains characters that are not valid for an ssh_config host or file name.",
                 nameof(catletId));
 
+        // The selectors are embedded into the generated ProxyCommand. Enforce the
+        // safe token set here too (not only in the CLI settings layer): this is a
+        // public method, so a caller bypassing the CLI must not be able to produce
+        // an invalid or injectable stanza.
+        if (!string.IsNullOrEmpty(clientId) && !IsSafeHostToken(clientId))
+            throw new ArgumentException(
+                "The client id contains characters that are not valid for an ssh_config argument.",
+                nameof(clientId));
+        if (!string.IsNullOrEmpty(configurationName) && !IsSafeHostToken(configurationName))
+            throw new ArgumentException(
+                "The configuration name contains characters that are not valid for an ssh_config argument.",
+                nameof(configurationName));
+
         var aliases = GetCatletAliases(catletId, catletName, projectName);
 
         Directory.CreateDirectory(CatletSshConfigPath);
