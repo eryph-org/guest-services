@@ -7,4 +7,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Consumed by eryph (host agent) to open the guest hvsocket. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.Sockets</PackageId>
+    <Description>Socket factory and Hyper-V endpoint for connecting to eryph guest services over an AF_HYPERV (Windows) or vsock (Linux) socket.</Description>
+  </PropertyGroup>
+
 </Project>

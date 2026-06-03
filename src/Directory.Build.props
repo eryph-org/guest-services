@@ -24,6 +24,15 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- Most projects in this repo ship as the egs service / egs-tool apps,
+         not as NuGet packages. Default to non-packable so `dotnet pack` on the
+         solution never accidentally publishes an internal library. The handful
+         of libraries eryph consumes opt back in with <IsPackable>true</IsPackable>
+         (and a <PackageId>) in their own csproj. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup>
     <ContinuousIntegrationBuild Condition="'$(TF_BUILD)' == 'true'">True</ContinuousIntegrationBuild>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">True</ContinuousIntegrationBuild>
   </PropertyGroup>

@@ -6,4 +6,14 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Not in the RFC's headline list, but Eryph.GuestServices.HvDataExchange.Host
+         has a ProjectReference to this assembly (DataValidator / DataExchangeException)
+         and emits it as a NuGet dependency. It must therefore be packable too, or the
+         Host package would reference a package that does not exist on the feed. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.HvDataExchange.Common</PackageId>
+    <Description>Shared Hyper-V data exchange (KVP) validation and exceptions for eryph guest services. Transitive dependency of Eryph.GuestServices.HvDataExchange.Host.</Description>
+  </PropertyGroup>
+
 </Project>

@@ -1,5 +1,8 @@
 ﻿using Eryph.GuestServices.Sockets;
+using Eryph.GuestServices.Tool;
 using Eryph.GuestServices.Tool.Commands;
+using Eryph.GuestServices.Tool.Commands.Eryph;
+using Eryph.GuestServices.Tool.Eryph;
 using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -57,6 +60,28 @@ app.Configure(config =>
     config.AddCommand<SetShellCommand>("set-shell")
         .WithDescription(
             "Configures the shell that interactive SSH sessions spawn in the VM.");
+
+    config.AddBranch("eryph", eryph =>
+    {
+        eryph.SetDescription(
+            "Remote access to eryph catlets through the eryph-authorized channel.");
+
+        eryph.AddCommand<EryphAddSshConfigCommand>("add-ssh-config")
+            .WithDescription(
+                "Adds an SSH config alias for connecting to the given catlet via eryph.");
+
+        eryph.AddCommand<EryphGetClientKeyCommand>("get-client-key")
+            .WithDescription(
+                "Prints the managed client public key for pre-injecting into a catlet.");
+
+        eryph.AddCommand<EryphAddKeyCommand>("add-key")
+            .WithDescription(
+                "Pushes a public key to the given catlet's guest via eryph.");
+
+        eryph.AddCommand<EryphRemoveKeyCommand>("remove-key")
+            .WithDescription(
+                "Revokes the caller's key on the given catlet via eryph.");
+    });
 });
 
 
@@ -85,6 +110,66 @@ if (args is ["proxy", var vmId])
         socketStream.CopyToAsync(stdout));
 
     return 0;
+}
+
+// The eryph data-plane proxy is, like the VM-level proxy above, kept out of
+// Spectre.Console.Cli so nothing interferes with the redirected stdin/stdout it
+// bridges to the eryph channel. Unlike the VM proxy it must NOT require host
+// admin: it runs on the operator's machine and authenticates with the
+// operator's eryph identity.
+if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
+{
+    var catletId = args[2];
+    // Validate the id even though the generated alias only ever writes a safe one:
+    // this entry point can be invoked directly, and the Spectre.Console.Cli
+    // validation layer is bypassed here. Mirrors the VM-proxy GUID check above.
+    if (!SshConfigHelper.IsSafeHostToken(catletId))
+    {
+        await Console.Error.WriteLineAsync("Invalid catlet id.");
+        return unchecked((int)0x80070057);
+    }
+
+    // The generated ssh_config alias may append the operator's connection
+    // selectors (see SshConfigHelper.WriteCatletConfig). Parse them here so the
+    // proxy resolves the same client/configuration; parsing stays manual because
+    // this branch deliberately bypasses Spectre.Console.Cli.
+    string? proxyConfiguration = null;
+    string? proxyClientId = null;
+    for (var i = 3; i < args.Length; i++)
+    {
+        var option = args[i];
+        if (option is "--configuration" or "--client-id")
+        {
+            // Fail loudly on a flag without a value: silently falling back to the
+            // default connection would run the proxy under the wrong identity.
+            if (i + 1 >= args.Length)
+            {
+                await Console.Error.WriteLineAsync($"Missing value for {option}.");
+                return unchecked((int)0x80070057);
+            }
+
+            var value = args[++i];
+            // Apply the same safe-token rule the CLI settings layer enforces, so a
+            // direct invocation cannot smuggle an unsafe selector past validation.
+            if (!SshConfigHelper.IsSafeHostToken(value))
+            {
+                await Console.Error.WriteLineAsync($"Invalid value for {option}.");
+                return unchecked((int)0x80070057);
+            }
+
+            if (option == "--configuration")
+                proxyConfiguration = value;
+            else
+                proxyClientId = value;
+        }
+        else
+        {
+            await Console.Error.WriteLineAsync($"Unknown proxy argument '{option}'.");
+            return unchecked((int)0x80070057);
+        }
+    }
+
+    return await EryphProxy.RunAsync(catletId, proxyClientId, proxyConfiguration);
 }
 
 #if DEBUG
