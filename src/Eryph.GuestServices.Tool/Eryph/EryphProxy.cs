@@ -59,7 +59,17 @@ public static class EryphProxy
         }
 
         // 3. Open the data-plane WebSocket with the token and bridge stdio.
-        var token = await connection.GetAccessTokenAsync();
+        string token;
+        try
+        {
+            token = await connection.GetAccessTokenAsync();
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"Failed to acquire an access token: {ex.Message}");
+            return -1;
+        }
+
         var connectUri = connection.BuildComputeUri(
             $"catlets/{Uri.EscapeDataString(catletId)}/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
         var wsUri = new UriBuilder(connectUri)
@@ -155,6 +165,11 @@ public static class EryphProxy
         {
             // The other pump completed and cancelled us; nothing to do.
         }
+        catch (Exception ex) when (ex is WebSocketException or IOException)
+        {
+            // The peer closed/aborted the socket or stdio broke during shutdown;
+            // treat as end-of-stream rather than faulting the proxy.
+        }
         finally
         {
             await cts.CancelAsync();
@@ -183,6 +198,11 @@ public static class EryphProxy
         catch (OperationCanceledException)
         {
             // The other pump completed and cancelled us; nothing to do.
+        }
+        catch (Exception ex) when (ex is WebSocketException or IOException)
+        {
+            // A normal remote close or a broken pipe to stdout surfaces here;
+            // exit the pump cleanly instead of faulting the proxy.
         }
         finally
         {
