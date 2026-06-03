@@ -97,8 +97,8 @@ public sealed class EryphConnection
     }
 
     // Builds an absolute API URI for a path relative to the compute endpoint,
-    // including the v1 version segment, e.g. catlets/<id>/ssh-keys ->
-    // https://host/compute/v1/catlets/<id>/ssh-keys.
+    // including the v1 version segment, e.g. catlets/<id>/guest-services/ssh-channel/connect ->
+    // https://host/compute/v1/catlets/<id>/guest-services/ssh-channel/connect.
     public Uri BuildComputeUri(string relativePath)
     {
         var baseUri = ComputeEndpoint.AbsoluteUri.TrimEnd('/');
