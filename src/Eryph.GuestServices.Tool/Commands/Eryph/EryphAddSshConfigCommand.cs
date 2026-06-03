@@ -98,7 +98,7 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
         AnsiConsole.Write(new Rows(
             new Text("An SSH configuration for the catlet has been generated here:"),
             new Text(SshConfigHelper.CatletSshConfigPath),
-            new Text("The configuration has been included in your sshconfig."),
+            new Text("The configuration has been included in your SSH config."),
             new Text(""),
             new Text("You can connect to the catlet as follows:"),
             new Padder(new Rows(aliases.Select(a => new Text($"ssh {a}"))), new Padding(4, 0, 0, 0))));
