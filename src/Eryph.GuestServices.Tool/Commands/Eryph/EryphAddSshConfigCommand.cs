@@ -46,15 +46,15 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]The catlet '{settings.CatletId}' could not be retrieved: {ex.Message}[/]");
+            AnsiConsole.MarkupLine(
+                $"[red]The catlet '{settings.CatletId.EscapeMarkup()}' could not be retrieved: {ex.Message.EscapeMarkup()}[/]");
             return -1;
         }
 
         if (catlet is null)
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]The catlet '{settings.CatletId}' could not be found.[/]");
+            AnsiConsole.MarkupLine(
+                $"[red]The catlet '{settings.CatletId.EscapeMarkup()}' could not be found.[/]");
             return -1;
         }
 
@@ -64,24 +64,34 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
         // non-obvious error.
         if (!string.IsNullOrEmpty(settings.Identity) && !File.Exists(settings.Identity))
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]The identity file '{settings.Identity}' does not exist.[/]");
+            AnsiConsole.MarkupLine(
+                $"[red]The identity file '{settings.Identity.EscapeMarkup()}' does not exist.[/]");
             return -1;
         }
 
-        // Without --identity the alias points at the managed key. If it has not
-        // been created yet, fail now rather than write an alias that ssh cannot
-        // use (the managed key is created by 'egs-tool initialize').
-        if (string.IsNullOrEmpty(settings.Identity) && !File.Exists(ClientKeyHelper.PrivateKeyPath))
+        string keyFilePath;
+        if (!string.IsNullOrEmpty(settings.Identity))
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]No managed client key was found. Run 'egs-tool initialize' first, or pass --identity.[/]");
-            return -1;
+            keyFilePath = settings.Identity;
         }
+        else
+        {
+            // No --identity: use the per-user managed key, creating it on demand.
+            // It lives in the operator's profile with a user-only ACL, so Windows
+            // OpenSSH will load it (unlike the admin/SYSTEM-scoped service key).
+            try
+            {
+                await UserClientKeyHelper.EnsureKeyPairAsync();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[red]The managed client key could not be created: {ex.Message.EscapeMarkup()}[/]");
+                return -1;
+            }
 
-        var keyFilePath = !string.IsNullOrEmpty(settings.Identity)
-            ? settings.Identity
-            : ClientKeyHelper.PrivateKeyPath;
+            keyFilePath = UserClientKeyHelper.PrivateKeyPath;
+        }
 
         await SshConfigHelper.EnsureSshConfigAsync();
         // Persist the connection selectors into the generated ProxyCommand: the
@@ -108,8 +118,8 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
                 addKeyPublicKey = settings.Identity + ".pub";
                 if (!File.Exists(addKeyPublicKey))
                 {
-                    AnsiConsole.MarkupLineInterpolated(
-                        $"[red]Cannot push the key: the public key '{addKeyPublicKey}' was not found next to the identity file.[/]");
+                    AnsiConsole.MarkupLine(
+                        $"[red]Cannot push the key: the public key '{addKeyPublicKey.EscapeMarkup()}' was not found next to the identity file.[/]");
                     return -1;
                 }
             }

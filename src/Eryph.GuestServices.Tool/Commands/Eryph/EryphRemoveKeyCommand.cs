@@ -33,7 +33,7 @@ public class EryphRemoveKeyCommand : AsyncCommand<EryphRemoveKeyCommand.Settings
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove the key: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Failed to remove the key: {ex.Message.EscapeMarkup()}[/]");
             return -1;
         }
 

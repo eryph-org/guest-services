@@ -17,23 +17,17 @@ public class EryphGetClientKeyCommand : AsyncCommand<EryphGetClientKeyCommand.Se
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        IKeyPair? keyPair;
+        IKeyPair keyPair;
         try
         {
-            keyPair = await ClientKeyHelper.GetKeyPairAsync();
+            // The per-user managed key, created on demand so there is always a key
+            // to print for pre-injection.
+            keyPair = await UserClientKeyHelper.EnsureKeyPairAsync();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]The managed client key could not be read: {ex.Message}[/]");
-            return -1;
-        }
-
-        if (keyPair is null)
-        {
-            // Only 'initialize' creates the managed key (add-ssh-config does not).
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]No managed client key found. Run 'egs-tool initialize' first.[/]");
+            AnsiConsole.MarkupLine(
+                $"[red]The managed client key could not be created: {ex.Message.EscapeMarkup()}[/]");
             return -1;
         }
 

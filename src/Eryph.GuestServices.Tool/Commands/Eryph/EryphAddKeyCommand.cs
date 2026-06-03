@@ -63,8 +63,8 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
         {
             if (!DurationParser.TryParse(ttl, out var parsed))
             {
-                AnsiConsole.MarkupLineInterpolated(
-                    $"[red]Invalid --ttl '{ttl}'. Use a duration such as 8h, 30m or 1d12h.[/]");
+                AnsiConsole.MarkupLine(
+                    $"[red]Invalid --ttl '{ttl.EscapeMarkup()}'. Use a duration such as 8h, 30m or 1d12h.[/]");
                 return -1;
             }
 
@@ -86,13 +86,13 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLineInterpolated($"[red]Failed to add the key: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Failed to add the key: {ex.Message.EscapeMarkup()}[/]");
             return -1;
         }
 
         if (expiresAt is { } e)
-            AnsiConsole.MarkupLineInterpolated(
-                $"[green]The key was added and expires at {e.UtcDateTime:u}.[/]");
+            AnsiConsole.MarkupLine(
+                $"[green]The key was added and expires at {e.UtcDateTime.ToString("u").EscapeMarkup()}.[/]");
         else
             AnsiConsole.MarkupLine("[green]The key was added.[/]");
 
