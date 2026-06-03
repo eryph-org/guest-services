@@ -38,7 +38,7 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
             return -1;
         }
 
-        var catletsClient = connection.CreateCatletsClient();
+        var catletsClient = connection.CreateCatletsClient(EryphConnection.CatletsReadScope);
         Catlet? catlet;
         try
         {
@@ -87,10 +87,25 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
 
         if (settings.AddKey)
         {
-            // Push the managed public key (no --public-key here; --identity is a
-            // private-key selector for the alias, not a public key to install).
+            // Authorize the key the generated alias will actually present. With
+            // --identity (BYOK) that is the identity's public half (<identity>.pub
+            // by ssh convention); otherwise it is the managed client key. Pushing
+            // the managed key while the alias uses a different --identity key would
+            // leave the guest authorizing a key the operator never presents.
+            string? addKeyPublicKey = null;
+            if (!string.IsNullOrEmpty(settings.Identity))
+            {
+                addKeyPublicKey = settings.Identity + ".pub";
+                if (!File.Exists(addKeyPublicKey))
+                {
+                    AnsiConsole.MarkupLineInterpolated(
+                        $"[red]Cannot push the key: the public key '{addKeyPublicKey}' was not found next to the identity file.[/]");
+                    return -1;
+                }
+            }
+
             var keyResult = await EryphAddKeyCommand.PushKeyAsync(
-                connection, catlet.Id, publicKeyOption: null, ttl: null);
+                connection, catlet.Id, addKeyPublicKey, ttl: null);
             if (keyResult != 0)
                 return keyResult;
         }

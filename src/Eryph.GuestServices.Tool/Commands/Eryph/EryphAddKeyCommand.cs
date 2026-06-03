@@ -81,7 +81,8 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
 
         try
         {
-            await connection.CreateCatletsClient().AddSshKeyAsync(catletId, body);
+            await connection.CreateCatletsClient(EryphConnection.RemoteAccessScope)
+                .AddSshKeyAsync(catletId, body);
         }
         catch (Exception ex)
         {

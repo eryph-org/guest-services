@@ -19,6 +19,15 @@ namespace Eryph.GuestServices.Tool.Eryph;
 // here; there is no user-only overload in this version of the client library.
 public sealed class EryphConnection
 {
+    // OAuth scopes enforced by the compute API (eryph's EryphConstants). They are
+    // requested explicitly and per-call (least privilege): a restricted operator
+    // client granted exactly these scopes then receives a token the server
+    // accepts. The local system client is granted every scope regardless, so this
+    // is a no-op for eryph-zero. The catlet lookup needs read; opening the SSH
+    // channel and pushing/removing keys need remote-access.
+    public const string CatletsReadScope = "compute:catlets:read";
+    public const string RemoteAccessScope = "compute:catlets:remote-access";
+
     private EryphConnection(ClientCredentials credentials, Uri computeEndpoint)
     {
         Credentials = credentials;
@@ -69,13 +78,18 @@ public sealed class EryphConnection
     private ComputeClientsFactory CreateClientsFactory() =>
         new(new EryphComputeClientOptions(Credentials), ComputeEndpoint);
 
-    public CatletsClient CreateCatletsClient() => CreateClientsFactory().CreateCatletsClient();
+    // The catlets client is scoped per use: pass CatletsReadScope for a catlet
+    // lookup and RemoteAccessScope for the SSH-channel / key routes.
+    public CatletsClient CreateCatletsClient(string? scope = null) =>
+        CreateClientsFactory().CreateCatletsClient(scope);
 
+    // The operation poll only requires an authenticated user (no scope), so the
+    // operations client is left unscoped.
     public OperationsClient CreateOperationsClient() => CreateClientsFactory().CreateOperationsClient();
 
-    // Mints a bearer access token for the resolved connection. The scopes are
-    // requested explicitly so the channel/key routes get a token carrying the
-    // remote-access permission once the server enforces it.
+    // Mints a bearer access token for the resolved connection. The data-plane
+    // WebSocket leg passes RemoteAccessScope so the token carries the permission
+    // the connect route enforces.
     public async Task<string> GetAccessTokenAsync(IReadOnlyList<string>? scopes = null)
     {
         var response = await Credentials.GetAccessToken(scopes);

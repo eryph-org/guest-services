@@ -34,7 +34,7 @@ public static class EryphProxy
             return -1;
         }
 
-        var catlets = connection.CreateCatletsClient();
+        var catlets = connection.CreateCatletsClient(EryphConnection.RemoteAccessScope);
         var operations = connection.CreateOperationsClient();
 
         // 1. Start the control-plane operation. The agent (via the saga) prepares the hvsocket and
@@ -62,7 +62,7 @@ public static class EryphProxy
         string token;
         try
         {
-            token = await connection.GetAccessTokenAsync();
+            token = await connection.GetAccessTokenAsync([EryphConnection.RemoteAccessScope]);
         }
         catch (Exception ex)
         {
