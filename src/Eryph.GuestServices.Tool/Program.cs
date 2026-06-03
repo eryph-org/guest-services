@@ -126,12 +126,30 @@ if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
     // this branch deliberately bypasses Spectre.Console.Cli.
     string? proxyConfiguration = null;
     string? proxyClientId = null;
-    for (var i = 3; i < args.Length - 1; i++)
+    for (var i = 3; i < args.Length; i++)
     {
-        if (args[i] == "--configuration")
-            proxyConfiguration = args[++i];
-        else if (args[i] == "--client-id")
-            proxyClientId = args[++i];
+        var option = args[i];
+        if (option is "--configuration" or "--client-id")
+        {
+            // Fail loudly on a flag without a value: silently falling back to the
+            // default connection would run the proxy under the wrong identity.
+            if (i + 1 >= args.Length)
+            {
+                await Console.Error.WriteLineAsync($"Missing value for {option}.");
+                return unchecked((int)0x80070057);
+            }
+
+            var value = args[++i];
+            if (option == "--configuration")
+                proxyConfiguration = value;
+            else
+                proxyClientId = value;
+        }
+        else
+        {
+            await Console.Error.WriteLineAsync($"Unknown proxy argument '{option}'.");
+            return unchecked((int)0x80070057);
+        }
     }
 
     return await EryphProxy.RunAsync(catletId, proxyClientId, proxyConfiguration);
