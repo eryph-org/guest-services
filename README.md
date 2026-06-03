@@ -2,83 +2,42 @@
 
 [![License](https://img.shields.io/github/license/eryph-org/guest-services.svg)](LICENSE)
 
-Eryph Guest Services (EGS) is a small service that runs **inside** a Windows or Linux VM. It bundles two independent capabilities in one binary:
+Eryph Guest Services (EGS) is a small service that runs **inside** a Windows or Linux VM. One binary, two capabilities:
 
-1. **Userless SSH login over the Hyper-V socket** — a dedicated SSH server bound to the Hyper-V socket. Connect from the Hyper-V host with no IP, no firewall holes, no shared password. **Hyper-V only** — uses the Hyper-V socket directly, not the network.
-2. **A cloud-init-compatible provisioning agent** — reads `#cloud-config` user-data from NoCloud / ConfigDrive / Azure / Hyper-V KVP on first boot and applies it (hostname, users, SSH keys, files, scripts, network). **Works on any Windows VM**; the datasources determine where the data comes from, the hypervisor doesn't matter.
+1. **A cloud-init-compatible provisioning agent** — reads `#cloud-config` user-data (NoCloud / ConfigDrive / Azure / Hyper-V KVP) on first boot and applies it (hostname, users, SSH keys, files, scripts, network).
+2. **Userless SSH to the guest** — a dedicated SSH server you reach either over the **Hyper-V socket** (from the host, no IP/firewall/password) or, with eryph, over an **authorized channel through the eryph API** (from any machine, no host access).
 
-The two capabilities share a binary but can be used independently. EGS is the runtime baked into every [eryph](https://www.eryph.io) catlet, where both run together; either capability can also be used on its own.
-
----
-
-## Three use cases
-
-EGS is shaped around three deployment shapes — pick the one that matches yours.
-
-### (a) Hyper-V standalone — userless SSH, optional provisioning
-
-You have a Hyper-V VM (no eryph) and want to talk to it without setting up networking. Install the ISO, run the host tool, and you have SSH over the Hyper-V socket. The provisioning agent ships in the same binary but you don't have to use it — your VM is already configured by whatever you used to build it.
-
-→ [Quick start (standalone)](#quick-start-a-hyper-v-standalone)
-
-### (b) Eryph — provisioning is the standard path
-
-eryph injects a ConfigDrive ISO into every catlet at create time. The provisioning agent picks that up on first boot, applies your cloud-config fodder, and reports state back to the host via Hyper-V KVP. Userless SSH is enabled the same way as standalone. This is the path the project is built for.
-
-→ [Quick start (eryph)](#quick-start-b-eryph)
-
-### (c) Windows cloud-init alternative (WIP)
-
-EGS as a general-purpose replacement for cloudbase-init on Windows VMs in scenarios outside eryph (OpenStack, custom KVM, hand-rolled NoCloud images). **This is work in progress and not fully supported yet.** The core RFCs (network-config, frequencies, semaphores, scripts, datasource lifecycle) are landed; the longer tail (jinja2, part-handler, boothook, OpenStack-specific quirks) is not. See [Windows cloud-init status](docs/user/explanation/windows-cloud-init-status.md) before relying on this in production.
+EGS is the runtime baked into every [eryph](https://www.eryph.io) catlet, where both run together; either capability also works on its own.
 
 ---
 
-## Components
+## Pick your path
+
+| Path | You have… | Start here |
+|---|---|---|
+| **eryph** | eryph catlets | [With eryph](#with-eryph-the-standard-path) |
+| **Hyper-V** | a plain Hyper-V VM, no eryph | [Standalone on Hyper-V](#standalone-on-hyper-v) |
+| **Other** | a non-eryph Windows VM needing cloud-init | [Windows cloud-init alternative](#windows-cloud-init-alternative-wip) |
+
+### Components
 
 | Binary | Where it runs | What it does |
 |---|---|---|
-| `egs-service` | Inside the VM (Windows service / systemd unit) | SSH server over Hyper-V socket + provisioning agent |
-| `egs-tool` | On the Hyper-V host | SSH config writer, file transfer, status, key exchange |
-
-The provisioning side of `egs-service` is a library; the CLI subcommands (`run`, `status`, `reset`, `validate`, `collect-logs`, `version`) are surfaced on the same `egs-service.exe` binary.
+| `egs-service` | Inside the VM (Windows service / systemd unit) | SSH server + provisioning agent |
+| `egs-tool` | On the Hyper-V host, **or** (for the `eryph` subcommands) any machine with an eryph connection | SSH config writer, file transfer, status, key exchange |
 
 ---
 
-## Quick start (a) — Hyper-V standalone
+## With eryph (the standard path)
 
-### Install the host tool
+eryph bakes EGS into every catlet, so there is nothing to install. Provisioning and SSH access are part of the normal catlet workflow.
 
-```powershell
-iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/eryph-org/guest-services/main/src/Eryph.GuestServices.Tool/install.ps1'))
-egs-tool initialize
-```
+### Provisioning
 
-### Install the guest
+eryph injects a ConfigDrive ISO into every catlet at create time; the EGS agent applies that cloud-config fodder on first boot and reports `eryph.provisioning.state = completed` via Hyper-V KVP. The fodder normally comes from your **catlet spec, packs, or genes** — so for the eryph path provisioning "just happens", no EGS configuration involved.
 
-Download the installer ISO from [releases.dbosoft.eu/eryph/guest-services/](https://releases.dbosoft.eu/eryph/guest-services/), mount it in the VM, then:
 
-```powershell
-# Windows guest, as Administrator
-D:\install.ps1
-```
-
-```bash
-# Linux guest, as root
-sudo /media/cdrom/install.sh
-```
-
-### Connect
-
-```powershell
-egs-tool add-ssh-config <VM-ID>
-ssh <VM-ID>.hyper-v.alt
-```
-
-That's it — no IP, no firewall, no password. The provisioning agent is present but only runs if you feed it a datasource (NoCloud ConfigDrive ISO, Hyper-V KVP user-data, etc.); see [User docs](docs/user/index.md).
-
-## Quick start (b) — eryph
-
-### Build a catlet with cloud-config fodder
+The default is to compose catlets from specs/packs/genes. When you are authoring or testing directly, you can also create one from an inline spec (its fodder included):
 
 ```yaml
 name: my-vm
@@ -107,19 +66,136 @@ New-Catlet -Config (Get-Content .\my-vm.yaml -Raw) -Name my-vm
 Start-Catlet -Name my-vm
 ```
 
-The agent runs on first boot, applies the cloud-config, and reports `eryph.provisioning.state = completed` via KVP. Connect:
+→ Full walkthrough: [Tutorial: first catlet with cloud-config](docs/user/tutorial/first-catlet-with-cloud-config.md).
+
+→ [What the provisioning agent supports](#what-the-provisioning-agent-supports)
+
+### Remote SSH access
+
+Reach a catlet's guest SSH **from any machine** — the `egs-tool eryph` commands tunnel the same guest SSH server through eryph's authorized compute API (the bytes are relayed host-side over the Hyper-V socket; SSH runs end-to-end). No Hyper-V host access and **no administrator rights** are needed: the commands run as the operator and authenticate with the operator's eryph identity. The eryph client must hold the `compute:catlets:remote-access` scope.
 
 ```powershell
-$vmId = (Get-Catlet -Name my-vm).VmId
-egs-tool add-ssh-config $vmId my-vm
-ssh my-vm
+# Write an SSH alias for a catlet that tunnels through eryph
+egs-tool eryph add-ssh-config <catlet-id>
+
+# Connect (the alias's ProxyCommand bridges through eryph)
+ssh <catlet>.<project>.eryph.alt
+ssh <catlet>.eryph.alt          # short form, for the 'default' project
+ssh <catlet-id>.eryph.alt       # canonical, always unique
 ```
 
-→ See [Tutorial: first catlet with cloud-config](docs/user/tutorial/first-catlet-with-cloud-config.md) for a full walkthrough.
+**Keys.** By default the alias uses a **per-user managed key**, created on demand and stored in your own profile with a user-only ACL (so Windows OpenSSH will load it). Bring your own key with `--identity`:
 
-## Quick start (c) — Windows cloud-init alternative (WIP)
+```powershell
+egs-tool eryph add-ssh-config <catlet-id> --identity C:\Users\me\.ssh\id_ed25519
+```
 
-See [Windows cloud-init status](docs/user/explanation/windows-cloud-init-status.md) for what works today, what doesn't, and how to file feedback.
+The public key still has to be authorized in the guest — pre-inject it at build time, or push it at runtime.
+
+**Build time** — set the `sshPublicKey` variable of the [`dbosoft/guest-services`](https://genepool.eryph.io/b/dbosoft/guest-services) install gene in the catlet spec. Use the output of `egs-tool eryph get-client-key`:
+
+```yaml
+name: my-vm
+parent: dbosoft/winsrv2022-standard/starter
+fodder:
+  - source: gene:dbosoft/guest-services:win-install   # use linux-install on Linux
+    variables:
+      - name: sshPublicKey
+        value: 'ecdsa-sha2-nistp256 AAAA... egs'        # from: egs-tool eryph get-client-key
+```
+
+**Runtime** — authorize a key on a running catlet:
+
+```powershell
+# Authorize the alias's key in the guest immediately
+egs-tool eryph add-ssh-config <catlet-id> --add-key
+
+# Or manage authorized keys directly (optionally with an expiry)
+egs-tool eryph add-key    <catlet-id> [--public-key <path|->] [--ttl 8h]
+egs-tool eryph remove-key <catlet-id>
+```
+
+Select a specific eryph client / configuration with `--client-id <id>` and `--configuration <name>`; otherwise the default eryph connection is used.
+
+> On the Hyper-V host you can also reach the catlet over the Hyper-V socket, exactly like a standalone VM — see [Standalone on Hyper-V](#standalone-on-hyper-v). File transfer (`upload-file` / `download-file`) uses that socket transport.
+
+---
+
+## Standalone on Hyper-V
+
+You have a Hyper-V VM (no eryph) and want to talk to it without setting up networking.
+
+### Install
+
+Host tool:
+
+```powershell
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/eryph-org/guest-services/main/src/Eryph.GuestServices.Tool/install.ps1'))
+egs-tool initialize
+```
+
+Guest — download the installer ISO from [releases.dbosoft.eu/eryph/guest-services/](https://releases.dbosoft.eu/eryph/guest-services/), mount it in the VM, then:
+
+```powershell
+# Windows guest, as Administrator
+D:\install.ps1
+```
+
+```bash
+# Linux guest, as root
+sudo /media/cdrom/install.sh
+```
+
+### Userless SSH over the Hyper-V socket
+
+The guest exposes a dedicated SSH server on the Hyper-V socket (service ID `0000138a-facb-11e6-bd58-64006a7986d3` / Linux vsock port 5002). The host tool writes an SSH config that uses `egs-tool.exe proxy <vmid>` as the proxy command, and key exchange happens through Hyper-V KVP — no manual `ssh-copy-id`.
+
+```powershell
+# Check whether the guest agent is reachable
+egs-tool get-status <VM-ID>
+
+# Add a single VM to the SSH config
+egs-tool add-ssh-config <VM-ID> [alias]
+
+# Connect
+ssh <VM-ID>.hyper-v.alt   # by VM id
+ssh <alias>               # if an alias was given
+```
+
+No IP, no firewall, no password.
+
+#### Configure the shell
+
+By default interactive sessions land in `powershell.exe` (Windows) or `$SHELL` / `/bin/bash` (Linux). Override per-VM:
+
+```powershell
+egs-tool set-shell <VM-ID> --command pwsh.exe
+egs-tool set-shell <VM-ID> --command pwsh.exe --arguments="-NoLogo -NoProfile"
+egs-tool set-shell <VM-ID> --reset
+```
+
+SSH clients can also send `SHELL` / `SHELL_ARGS` env vars; the per-VM override always wins.
+
+#### File transfer
+
+```powershell
+egs-tool upload-file        <VM-ID> <local> <remote>  [--overwrite]
+egs-tool upload-directory   <VM-ID> <local> <remote>  [--recursive] [--overwrite]
+egs-tool download-file      <VM-ID> <remote> <local>  [--overwrite]
+egs-tool download-directory <VM-ID> <remote> <local>  [--recursive] [--overwrite]
+```
+
+No `scp` — the channel is built on the same SSH-over-Hyper-V-socket transport. For interactive sync, use `unison` over the SSH tunnel.
+
+### Provisioning (optional)
+
+The provisioning agent ships in the same binary but you don't have to use it — your VM is already configured by whatever you used to build it. It only runs if you feed it a datasource (NoCloud ConfigDrive ISO, Hyper-V KVP user-data, etc.); see the [user docs](docs/user/index.md) and [What the provisioning agent supports](#what-the-provisioning-agent-supports).
+
+---
+
+## Windows cloud-init alternative (WIP)
+
+EGS as a general-purpose replacement for cloudbase-init on Windows VMs outside eryph (OpenStack, custom KVM, hand-rolled NoCloud images). **This is work in progress and not fully supported yet.** The core RFCs (network-config, frequencies, semaphores, scripts, datasource lifecycle) are landed; the longer tail (jinja2, part-handler, boothook, OpenStack-specific quirks) is not. See [Windows cloud-init status](docs/user/explanation/windows-cloud-init-status.md) before relying on this in production.
 
 ---
 
@@ -140,47 +216,6 @@ What's **not** supported (yet): jinja2 templating, part-handler, boothook execut
 
 ---
 
-## SSH access
-
-The guest exposes a dedicated SSH server on the Hyper-V socket (service ID `0000138a-facb-11e6-bd58-64006a7986d3` / Linux vsock port 5002). The host tool writes an SSH config that uses `egs-tool.exe proxy <vmid>` as the proxy command. Key exchange happens through Hyper-V KVP so no manual `ssh-copy-id` is needed.
-
-```powershell
-# Status of the guest agent in a VM
-egs-tool get-status <VM-ID>
-
-# Add a single VM to the SSH config
-egs-tool add-ssh-config <VM-ID> [alias]
-
-# Connect
-ssh <VM-ID>.hyper-v.alt   # by VM id
-ssh <alias>               # if an alias was given to add-ssh-config
-```
-
-### Configure the shell
-
-By default interactive sessions land in `powershell.exe` (Windows) or `$SHELL` / `/bin/bash` (Linux). Override per-VM:
-
-```powershell
-egs-tool set-shell <VM-ID> --command pwsh.exe
-egs-tool set-shell <VM-ID> --command pwsh.exe --arguments="-NoLogo -NoProfile"
-egs-tool set-shell <VM-ID> --reset
-```
-
-SSH clients can also send `SHELL` / `SHELL_ARGS` env vars; the per-VM override always wins.
-
-### File transfer
-
-```powershell
-egs-tool upload-file      <VM-ID> <local> <remote>  [--overwrite]
-egs-tool upload-directory <VM-ID> <local> <remote>  [--recursive] [--overwrite]
-egs-tool download-file    <VM-ID> <remote> <local>  [--overwrite]
-egs-tool download-directory <VM-ID> <remote> <local> [--recursive] [--overwrite]
-```
-
-No `scp` — the channel is built on the same SSH-over-Hyper-V-socket transport. For interactive sync, use `unison` over the SSH tunnel.
-
----
-
 ## Why this exists
 
 - Windows Server 2025 ships OpenSSH but [still no Hyper-V socket support](https://github.com/PowerShell/Win32-OpenSSH/issues/2200).
@@ -192,7 +227,7 @@ No `scp` — the channel is built on the same SSH-over-Hyper-V-socket transport.
 
 ## Requirements
 
-**Host**: Windows 10/11 Pro/Enterprise/Education or Windows Server 2016+, Hyper-V enabled, administrator privileges.
+**Host**: Windows 10/11 Pro/Enterprise/Education or Windows Server 2016+, Hyper-V enabled, administrator privileges. (The `egs-tool eryph` subcommands instead run on any machine with an eryph connection, without admin.)
 
 **Guest**: Windows Server 2016+ / Windows 10+ or a modern Linux distribution with systemd. Hyper-V integration services enabled.
 
@@ -200,21 +235,22 @@ No `scp` — the channel is built on the same SSH-over-Hyper-V-socket transport.
 
 ## Authentication
 
-- Username: `egs` (don't change it)
-- SSH public key authentication only — passwords disabled
-- Keys exchanged via Hyper-V data-exchange service
-- Host keys trusted automatically (transport is isolated to the Hyper-V socket)
+The guest SSH server uses public-key authentication only — passwords are disabled — with the fixed username `egs`. Host keys are trusted automatically because the transport is isolated (the Hyper-V socket) or authorized end-to-end (the eryph channel). How the key reaches the guest differs by path:
 
-```powershell
-egs-tool get-ssh-key   # show the host-side public key
-egs-tool initialize    # regenerate keys if needed
-```
+- **Hyper-V socket flow** — the host key is exchanged via the Hyper-V data-exchange service (KVP); `egs-tool initialize` generates the admin/SYSTEM-scoped host key.
+
+  ```powershell
+  egs-tool get-ssh-key   # show the host-side public key
+  egs-tool initialize    # regenerate keys if needed
+  ```
+
+- **eryph remote flow** — the operator's key is authorized through the compute API. The default is a per-user managed key (user-only ACL, created on demand); `egs-tool eryph get-client-key` prints its public key for fodder pre-injection, and `--identity` selects your own key. See [Remote SSH access](#remote-ssh-access).
 
 ---
 
 ## CLI quick reference
 
-### `egs-tool` (host)
+### `egs-tool` (Hyper-V host)
 
 | Command | What |
 |---|---|
@@ -222,13 +258,26 @@ egs-tool initialize    # regenerate keys if needed
 | `unregister` | Remove the Hyper-V integration service |
 | `get-status <VM-ID>` | Check whether the guest agent is reachable |
 | `get-ssh-key` | Print the host's SSH public key |
-| `add-ssh-config <VM-ID> [alias]` | Add one VM to the SSH config |
+| `add-ssh-config <VM-ID> [alias]` | Add one VM to the SSH config (Hyper-V socket) |
 | `upload-file` / `upload-directory` | Push file(s) to a VM |
 | `download-file` / `download-directory` | Pull file(s) from a VM |
 | `set-shell <VM-ID>` | Override the interactive shell |
 | `get-data --json <VM-ID>` | Dump Hyper-V KVP for the VM |
 
 Flags: `--overwrite`, `--recursive` (directory commands), `--reset` (`set-shell`).
+
+### `egs-tool eryph` (remote access over eryph)
+
+Run on any machine with an eryph connection — not just the Hyper-V host — and authenticate with the operator's eryph identity (no admin rights).
+
+| Command | What |
+|---|---|
+| `eryph add-ssh-config <catlet-id> [--identity <key>] [--add-key]` | Write an SSH alias that tunnels through eryph |
+| `eryph add-key <catlet-id> [--public-key <path\|->] [--ttl <dur>]` | Authorize a public key in the guest (optionally expiring) |
+| `eryph remove-key <catlet-id>` | Revoke the caller's authorized key |
+| `eryph get-client-key` | Print the per-user managed public key (for fodder pre-injection) |
+
+Common flags: `--client-id <id>`, `--configuration <name>` to select the eryph connection. Requires the `compute:catlets:remote-access` scope.
 
 ### `egs-service` (guest)
 
@@ -246,15 +295,17 @@ Flags: `--overwrite`, `--recursive` (directory commands), `--reset` (`set-shell`
 
 ---
 
-## Finding VM IDs
+## Finding IDs
 
 ```powershell
-# Plain Hyper-V
+# Plain Hyper-V — VM ids
 Get-VM | Select-Object Name, Id
 
-# eryph
-Get-Catlet | Select-Object Name, VmId
+# eryph — catlet ids (and VM ids)
+Get-Catlet | Select-Object Name, Id, VmId
 ```
+
+The `egs-tool eryph` commands take a **catlet id**; the Hyper-V socket commands take a **VM id**.
 
 ---
 
@@ -262,6 +313,7 @@ Get-Catlet | Select-Object Name, VmId
 
 - **`get-status` returns `unknown`** — agent not running or Hyper-V integration services disabled in the VM.
 - **SSH `Connection refused` / banner timeout** — the agent crashed; check `Get-EventLog -LogName Application -Source egs-service` in the VM.
+- **`egs-tool eryph` cannot connect** — confirm an eryph connection is configured (or eryph-zero is running) and the client has the `compute:catlets:remote-access` scope; select a specific one with `--configuration` / `--client-id`.
 - **Provisioning reports `failed`** — read `eryph.provisioning.error` via `egs-tool get-data --json <VM-ID>`; the agent also writes `%ProgramData%\eryph\provisioning\state.json` and per-script logs under `%ProgramData%\eryph\provisioning\logs\`.
 - **Re-running provisioning** — `egs-service reset` (then reboot the VM, or use `egs-service run` for a one-shot synchronous run). See [docs/user/howto/reset-and-rerun.md](docs/user/howto/reset-and-rerun.md).
 
@@ -308,3 +360,5 @@ MIT — see [LICENSE](LICENSE).
 - Issues: [GitHub Issues](https://github.com/eryph-org/guest-services/issues)
 - eryph docs: [eryph.io/docs](https://eryph.io/docs)
 - Community: [eryph Discussions](https://github.com/eryph-org/eryph/discussions)
+</content>
+</invoke>
