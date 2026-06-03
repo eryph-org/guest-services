@@ -32,6 +32,11 @@ public class DurationParserTests
     // Zero duration is not a valid TTL.
     [InlineData("0s")]
     [InlineData("0h0m")]
+    // An out-of-range component must fail gracefully, not throw: int.Parse
+    // overflow ("99999999999d") and TimeSpan overflow ("1000000000d") are both
+    // just invalid durations.
+    [InlineData("99999999999d")]
+    [InlineData("1000000000d")]
     public void TryParse_InvalidDurations_ReturnsFalse(string? input)
     {
         DurationParser.TryParse(input, out var result).Should().BeFalse();

@@ -1,6 +1,5 @@
 using Eryph.ComputeClient.Models;
 using Eryph.GuestServices.Tool.Eryph;
-using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -13,7 +12,7 @@ namespace Eryph.GuestServices.Tool.Commands.Eryph;
 // when omitted, and sent through the typed compute client.
 public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
 {
-    public class Settings : CommandSettings, IElevationExempt
+    public class Settings : EryphConnectionSettings
     {
         [CommandArgument(0, "<CatletId>")]
         public string CatletId { get; set; } = string.Empty;
@@ -31,7 +30,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var connection = EryphConnection.Resolve();
+        var connection = EryphConnection.Resolve(settings.ClientId, settings.Configuration);
         if (connection is null)
         {
             AnsiConsole.MarkupLineInterpolated(

@@ -21,9 +21,12 @@ public static class EryphProxy
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(30);
 
-    public static async Task<int> RunAsync(string catletId)
+    public static async Task<int> RunAsync(
+        string catletId,
+        string? clientId = null,
+        string? configurationName = null)
     {
-        var connection = EryphConnection.Resolve();
+        var connection = EryphConnection.Resolve(clientId, configurationName);
         if (connection is null)
         {
             await Console.Error.WriteLineAsync(
@@ -66,7 +69,17 @@ public static class EryphProxy
 
         using var webSocket = new ClientWebSocket();
         webSocket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
-        await webSocket.ConnectAsync(wsUri, CancellationToken.None);
+        try
+        {
+            await webSocket.ConnectAsync(wsUri, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // DNS/TLS/401/upgrade failure: emit one concise stderr line for the
+            // SSH client rather than letting a stack trace reach it.
+            await Console.Error.WriteLineAsync($"Failed to open the SSH channel connection: {ex.Message}");
+            return -1;
+        }
 
         var stdin = Console.OpenStandardInput();
         var stdout = Console.OpenStandardOutput();
@@ -88,7 +101,18 @@ public static class EryphProxy
         var deadline = DateTimeOffset.UtcNow + PollTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            var operation = (await operations.GetAsync(operationId)).Value;
+            Operation operation;
+            try
+            {
+                operation = (await operations.GetAsync(operationId)).Value;
+            }
+            catch (Exception)
+            {
+                // A transient network/auth blip must not crash the proxy. Keep
+                // polling until the deadline; a persistent failure simply times out.
+                await Task.Delay(PollInterval);
+                continue;
+            }
 
             if (operation.Status == OperationStatus.Failed)
                 return null;

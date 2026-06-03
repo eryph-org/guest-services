@@ -28,17 +28,33 @@ public static partial class DurationParser
                  || match.Groups["m"].Success || match.Groups["s"].Success))
             return false;
 
-        var days = ParseGroup(match, "d");
-        var hours = ParseGroup(match, "h");
-        var minutes = ParseGroup(match, "m");
-        var seconds = ParseGroup(match, "s");
+        // A user can type an absurdly large component ("999999999999d"). That is
+        // just an invalid duration, not an exception: int.TryParse rejects the
+        // overflow and the TimeSpan constructor is guarded below.
+        if (!TryParseGroup(match, "d", out var days)
+            || !TryParseGroup(match, "h", out var hours)
+            || !TryParseGroup(match, "m", out var minutes)
+            || !TryParseGroup(match, "s", out var seconds))
+            return false;
 
-        duration = new TimeSpan(days, hours, minutes, seconds);
+        try
+        {
+            duration = new TimeSpan(days, hours, minutes, seconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            duration = TimeSpan.Zero;
+            return false;
+        }
+
         return duration > TimeSpan.Zero;
     }
 
-    private static int ParseGroup(Match match, string name) =>
-        match.Groups[name].Success
-            ? int.Parse(match.Groups[name].Value, CultureInfo.InvariantCulture)
-            : 0;
+    private static bool TryParseGroup(Match match, string name, out int value)
+    {
+        value = 0;
+        return !match.Groups[name].Success
+            || int.TryParse(match.Groups[name].Value, NumberStyles.None,
+                CultureInfo.InvariantCulture, out value);
+    }
 }

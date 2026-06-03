@@ -31,14 +31,30 @@ public sealed class EryphConnection
     // segments below are appended to this with the API version prefix.
     public Uri ComputeEndpoint { get; }
 
-    // Resolves the configured eryph connection. Returns null when no connection
-    // can be found, mirroring the lookup contract; the caller turns that into a
-    // user-facing error.
-    public static EryphConnection? Resolve()
+    // Resolves the eryph connection. With no arguments it mirrors the eryph CLI:
+    // the default client of the first matching configuration, falling back to the
+    // local system client (elevated callers only). When a clientId and/or
+    // configurationName is given, exactly that client is resolved and the
+    // system-client fallback is dropped: the operator asked for a specific
+    // identity, so silently dropping to the elevated local system client would be
+    // wrong. Returns null when no connection can be found; the caller turns that
+    // into a user-facing error.
+    public static EryphConnection? Resolve(
+        string? clientId = null,
+        string? configurationName = null)
     {
         var environment = new DefaultEnvironment();
+        var lookup = new ClientCredentialsLookup(environment);
 
-        var credentials = new ClientCredentialsLookup(environment).FindCredentials();
+        ClientCredentials? credentials;
+        if (clientId is not null)
+            credentials = lookup.GetCredentialsByClientId(
+                clientId, configurationName ?? ConfigurationNames.Default);
+        else if (configurationName is not null)
+            credentials = lookup.GetDefaultCredentials(configurationName);
+        else
+            credentials = lookup.FindCredentials();
+
         if (credentials is null)
             return null;
 

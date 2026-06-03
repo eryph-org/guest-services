@@ -36,4 +36,20 @@ public class CatletAliasTests
 
         aliases.Should().AllSatisfy(a => SshConfigHelper.IsReservedAlias(a).Should().BeTrue());
     }
+
+    [Theory]
+    // A name carrying whitespace/comment/glob characters cannot be a safe
+    // ssh_config Host token, so only the canonical catletId alias is emitted.
+    [InlineData("web server", "default")]
+    [InlineData("web", "proj#1")]
+    [InlineData("web*", "default")]
+    [InlineData("", "default")]
+    public void GetCatletAliases_UnsafeNameComponents_OnlyEmitsCanonicalAlias(
+        string catletName, string projectName)
+    {
+        var aliases = SshConfigHelper.GetCatletAliases(
+            "abcd-1234", catletName, projectName);
+
+        aliases.Should().Equal("abcd-1234.eryph.alt");
+    }
 }

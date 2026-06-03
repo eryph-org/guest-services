@@ -1,5 +1,5 @@
+using Eryph.ComputeClient.Models;
 using Eryph.GuestServices.Tool.Eryph;
-using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -12,7 +12,7 @@ namespace Eryph.GuestServices.Tool.Commands.Eryph;
 // the eryph channel. Per-catlet and on demand; never enumerates all catlets.
 public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Settings>
 {
-    public class Settings : CommandSettings, IElevationExempt
+    public class Settings : EryphConnectionSettings
     {
         [CommandArgument(0, "<CatletId>")]
         public string CatletId { get; set; } = string.Empty;
@@ -30,7 +30,7 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var connection = EryphConnection.Resolve();
+        var connection = EryphConnection.Resolve(settings.ClientId, settings.Configuration);
         if (connection is null)
         {
             AnsiConsole.MarkupLineInterpolated(
@@ -39,7 +39,18 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
         }
 
         var catletsClient = connection.CreateCatletsClient();
-        var catlet = (await catletsClient.GetAsync(settings.CatletId)).Value;
+        Catlet? catlet;
+        try
+        {
+            catlet = (await catletsClient.GetAsync(settings.CatletId)).Value;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]The catlet '{settings.CatletId}' could not be retrieved: {ex.Message}[/]");
+            return -1;
+        }
+
         if (catlet is null)
         {
             AnsiConsole.MarkupLineInterpolated(
@@ -48,17 +59,31 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
         }
 
         // --identity selects the operator's own private key (BYOK); otherwise
-        // the alias points at the managed client key.
+        // the alias points at the managed client key. Validate it up front: an
+        // alias whose IdentityFile does not exist fails later inside ssh with a
+        // non-obvious error.
+        if (!string.IsNullOrEmpty(settings.Identity) && !File.Exists(settings.Identity))
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]The identity file '{settings.Identity}' does not exist.[/]");
+            return -1;
+        }
+
         var keyFilePath = !string.IsNullOrEmpty(settings.Identity)
             ? settings.Identity
             : ClientKeyHelper.PrivateKeyPath;
 
         await SshConfigHelper.EnsureSshConfigAsync();
+        // Persist the connection selectors into the generated ProxyCommand: the
+        // alias is used non-interactively by ssh later, so the proxy must resolve
+        // the same client/configuration the operator selected here.
         var aliases = await SshConfigHelper.EnsureCatletConfigAsync(
             catlet.Id,
             catlet.Name,
             catlet.Project.Name,
-            keyFilePath);
+            keyFilePath,
+            settings.ClientId,
+            settings.Configuration);
 
         if (settings.AddKey)
         {

@@ -116,9 +116,25 @@ if (args is ["proxy", var vmId])
 // bridges to the eryph channel. Unlike the VM proxy it must NOT require host
 // admin: it runs on the operator's machine and authenticates with the
 // operator's eryph identity.
-if (args is ["eryph", "proxy", var catletId])
+if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
 {
-    return await EryphProxy.RunAsync(catletId);
+    var catletId = args[2];
+
+    // The generated ssh_config alias may append the operator's connection
+    // selectors (see SshConfigHelper.WriteCatletConfig). Parse them here so the
+    // proxy resolves the same client/configuration; parsing stays manual because
+    // this branch deliberately bypasses Spectre.Console.Cli.
+    string? proxyConfiguration = null;
+    string? proxyClientId = null;
+    for (var i = 3; i < args.Length - 1; i++)
+    {
+        if (args[i] == "--configuration")
+            proxyConfiguration = args[++i];
+        else if (args[i] == "--client-id")
+            proxyClientId = args[++i];
+    }
+
+    return await EryphProxy.RunAsync(catletId, proxyClientId, proxyConfiguration);
 }
 
 #if DEBUG

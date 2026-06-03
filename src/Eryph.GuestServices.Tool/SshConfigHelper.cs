@@ -165,13 +165,29 @@ public static class SshConfigHelper
         string catletName,
         string projectName)
     {
-        IReadOnlyList<string> aliases =
-            [$"{catletId}.eryph.alt", $"{catletName}.{projectName}.eryph.alt"];
-        if (string.Equals(projectName, "default", StringComparison.Ordinal))
-            aliases = [..aliases, $"{catletName}.eryph.alt"];
+        // The canonical alias is built from the catletId (a GUID) and is always a
+        // safe Host token. The friendly aliases embed the server-provided name
+        // strings, so only emit them when both components are safe ssh_config Host
+        // tokens — a name carrying whitespace/comment/glob characters could
+        // otherwise break the 'Host' line or inject extra patterns/directives.
+        // eryph already constrains catlet/project names; this is defense in depth.
+        var aliases = new List<string> { $"{catletId}.eryph.alt" };
+        if (IsSafeHostToken(catletName) && IsSafeHostToken(projectName))
+        {
+            aliases.Add($"{catletName}.{projectName}.eryph.alt");
+            if (string.Equals(projectName, "default", StringComparison.Ordinal))
+                aliases.Add($"{catletName}.eryph.alt");
+        }
 
         return aliases;
     }
+
+    // A single bare ssh_config Host token: no whitespace (would split it into
+    // several patterns), no '#' (comment), and no glob/negation metacharacters
+    // ('*', '?', '!') that change matching.
+    private static bool IsSafeHostToken(string value) =>
+        !string.IsNullOrEmpty(value)
+        && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
     // Writes a single per-catlet SSH config whose ProxyCommand bridges to the
     // eryph channel (egs-tool eryph proxy <catletId>) rather than a local
@@ -181,7 +197,9 @@ public static class SshConfigHelper
         string catletId,
         string catletName,
         string projectName,
-        string keyFilePath)
+        string keyFilePath,
+        string? clientId = null,
+        string? configurationName = null)
     {
         var aliases = GetCatletAliases(catletId, catletName, projectName);
 
@@ -190,7 +208,9 @@ public static class SshConfigHelper
             Path.Combine(CatletSshConfigPath, $"{catletId}.config"),
             aliases,
             catletId,
-            keyFilePath);
+            keyFilePath,
+            clientId,
+            configurationName);
 
         return aliases;
     }
@@ -336,7 +356,9 @@ public static class SshConfigHelper
         string path,
         IReadOnlyList<string> aliases,
         string catletId,
-        string keyFilePath)
+        string keyFilePath,
+        string? clientId,
+        string? configurationName)
     {
         var builder = new StringBuilder();
 
@@ -359,8 +381,15 @@ public static class SshConfigHelper
         // Prefer the GCM ciphers as they are significantly faster in
         // Microsoft.DevTunnels.SSH (the guest's SSH server).
         builder.AppendLine($"    Ciphers aes128-gcm@openssh.com,aes256-gcm@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr");
-        // The data plane: SSH pipes its traffic through the eryph channel.
-        builder.AppendLine($"    ProxyCommand egs-tool.exe eryph proxy {catletId}");
+        // The data plane: SSH pipes its traffic through the eryph channel. Carry
+        // the operator's connection selectors so the non-interactive proxy
+        // resolves the same client/configuration that generated this alias.
+        var proxyCommand = new StringBuilder($"egs-tool.exe eryph proxy {catletId}");
+        if (!string.IsNullOrEmpty(configurationName))
+            proxyCommand.Append($" --configuration {configurationName}");
+        if (!string.IsNullOrEmpty(clientId))
+            proxyCommand.Append($" --client-id {clientId}");
+        builder.AppendLine($"    ProxyCommand {proxyCommand}");
         builder.AppendLine("");
 
         await File.WriteAllTextAsync(path, builder.ToString());

@@ -137,8 +137,10 @@ public class ClientKeyProvider : IClientKeyProvider
 
             if (options is not null && IsExpired(options))
             {
+                // IsExpired is fail-closed: it rejects both a past expiry and a
+                // malformed/unparseable expiry-time, so the message covers both.
                 _logger.LogInformation(
-                    "Skipping authorized client key entry: its expiry-time is in the past.");
+                    "Skipping authorized client key entry: its expiry-time has passed or could not be parsed.");
                 return null;
             }
 
