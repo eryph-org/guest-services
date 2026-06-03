@@ -12,9 +12,18 @@ public static class PublicKeyReader
     {
         if (publicKeyOption == "-")
         {
-            using var reader = new StreamReader(Console.OpenStandardInput());
-            var fromStdin = (await reader.ReadToEndAsync()).Trim();
-            return string.IsNullOrEmpty(fromStdin) ? null : fromStdin;
+            try
+            {
+                using var reader = new StreamReader(Console.OpenStandardInput());
+                var fromStdin = (await reader.ReadToEndAsync()).Trim();
+                return string.IsNullOrEmpty(fromStdin) ? null : fromStdin;
+            }
+            catch (IOException)
+            {
+                // stdin broke; treat as "could not read" so the caller emits its
+                // friendly message instead of a stack trace.
+                return null;
+            }
         }
 
         if (!string.IsNullOrEmpty(publicKeyOption))
@@ -22,7 +31,15 @@ public static class PublicKeyReader
             if (!File.Exists(publicKeyOption))
                 return null;
 
-            return (await File.ReadAllTextAsync(publicKeyOption)).Trim();
+            try
+            {
+                return (await File.ReadAllTextAsync(publicKeyOption)).Trim();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // ACL/locked/unreadable file: same "could not read" outcome.
+                return null;
+            }
         }
 
         // No option: fall back to the managed client key.

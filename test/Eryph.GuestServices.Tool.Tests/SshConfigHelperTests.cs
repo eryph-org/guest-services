@@ -214,6 +214,20 @@ public class SshConfigHelperTests : IDisposable
         content.Should().NotContain("--client-id");
     }
 
+    [Theory]
+    [InlineData("../evil")]
+    [InlineData(@"..\evil")]
+    [InlineData("a/b")]
+    [InlineData("has space")]
+    [InlineData("")]
+    public async Task EnsureCatletConfigAsync_UnsafeCatletId_Throws(string catletId)
+    {
+        var act = () => SshConfigHelper.EnsureCatletConfigAsync(
+            catletId, "web", "default", @"C:\key");
+
+        await act.Should().ThrowAsync<ArgumentException>();
+    }
+
     private static async Task<IReadOnlyList<string>> FindHostFilesContainingAliasAsync(
         string directory,
         string alias)

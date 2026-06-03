@@ -204,6 +204,15 @@ public static class SshConfigHelper
         string? clientId = null,
         string? configurationName = null)
     {
+        // The catletId is used as the config file name and embedded into the
+        // HostName/ProxyCommand. Reject anything that is not a safe token before
+        // touching the filesystem: a value with path separators or '..' could
+        // write outside catlet.d, and whitespace would produce an invalid stanza.
+        if (!IsSafeHostToken(catletId))
+            throw new ArgumentException(
+                "The catlet id contains characters that are not valid for an ssh_config host or file name.",
+                nameof(catletId));
+
         var aliases = GetCatletAliases(catletId, catletName, projectName);
 
         Directory.CreateDirectory(CatletSshConfigPath);
