@@ -238,8 +238,14 @@ public class ClientKeyProvider : IClientKeyProvider
                 continue;
 
             var rest = option[name.Length..].TrimStart();
-            if (rest.Length == 0 || rest[0] != '=')
-                continue; // a different option that merely starts with the same text
+            // A bare "expiry-time" with no '=' value is a malformed declaration:
+            // fail closed (treat as expired) rather than honoring the key forever.
+            if (rest.Length == 0)
+                return true;
+            // A different option that merely starts with the same text
+            // (e.g. "expiry-time-zone=..."): not our option, keep scanning.
+            if (rest[0] != '=')
+                continue;
 
             var rawValue = rest[1..].Trim();
             // Strip surrounding quotes if present.

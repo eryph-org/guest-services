@@ -395,6 +395,31 @@ public class ClientKeyProviderTests
     }
 
     [Fact]
+    public async Task IsAuthorizedAsync_BareExpiryTimeWithoutValue_Rejected()
+    {
+        // A malformed "expiry-time" with no '=' value must fail closed, not be
+        // honored as a never-expiring key.
+        var key = GenerateKey();
+        var line = $"expiry-time {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_DifferentOptionStartingWithExpiryTime_Authorizes()
+    {
+        // An option that merely starts with the same text (e.g. a hypothetical
+        // "expiry-time-zone") is a different option, not a malformed expiry, so
+        // it must not block the key.
+        var key = GenerateKey();
+        var line = $"expiry-time-zone=\"utc\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task IsAuthorizedAsync_KeyWithOptionsButNoExpiry_Authorizes()
     {
         // Other authorized_keys options (no expiry-time) must not block the key.
