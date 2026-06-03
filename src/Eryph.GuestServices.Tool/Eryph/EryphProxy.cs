@@ -61,7 +61,7 @@ public static class EryphProxy
         // 3. Open the data-plane WebSocket with the token and bridge stdio.
         var token = await connection.GetAccessTokenAsync();
         var connectUri = connection.BuildComputeUri(
-            $"catlets/{catletId}/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
+            $"catlets/{Uri.EscapeDataString(catletId)}/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
         var wsUri = new UriBuilder(connectUri)
         {
             Scheme = connectUri.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",

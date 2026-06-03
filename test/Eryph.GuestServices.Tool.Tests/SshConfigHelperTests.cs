@@ -175,6 +175,45 @@ public class SshConfigHelperTests : IDisposable
             .Which.Should().Be(Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmB}.config"));
     }
 
+    [Fact]
+    public async Task EnsureCatletConfigAsync_QuotesIdentityFileAndConnectionSelectors()
+    {
+        var catletId = Guid.NewGuid().ToString();
+
+        await SshConfigHelper.EnsureCatletConfigAsync(
+            catletId,
+            "web",
+            "default",
+            @"C:\Users\Jane Doe\.ssh\id_eryph",
+            clientId: "my client",
+            configurationName: "my config");
+
+        var content = await File.ReadAllTextAsync(
+            Path.Combine(SshConfigHelper.CatletSshConfigPath, $"{catletId}.config"));
+
+        // Paths/selectors with spaces must be quoted, otherwise ssh splits them
+        // into multiple tokens.
+        content.Should().Contain("IdentityFile \"C:\\Users\\Jane Doe\\.ssh\\id_eryph\"");
+        content.Should().Contain($"ProxyCommand egs-tool.exe eryph proxy {catletId} "
+            + "--configuration \"my config\" --client-id \"my client\"");
+    }
+
+    [Fact]
+    public async Task EnsureCatletConfigAsync_NoSelectors_OmitsSelectorOptions()
+    {
+        var catletId = Guid.NewGuid().ToString();
+
+        await SshConfigHelper.EnsureCatletConfigAsync(
+            catletId, "web", "default", @"C:\key");
+
+        var content = await File.ReadAllTextAsync(
+            Path.Combine(SshConfigHelper.CatletSshConfigPath, $"{catletId}.config"));
+
+        content.Should().Contain($"ProxyCommand egs-tool.exe eryph proxy {catletId}");
+        content.Should().NotContain("--configuration");
+        content.Should().NotContain("--client-id");
+    }
+
     private static async Task<IReadOnlyList<string>> FindHostFilesContainingAliasAsync(
         string directory,
         string alias)
