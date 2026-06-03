@@ -181,12 +181,19 @@ internal static class ProvisioningContainerBuilder
         // Reporting framework.
         container.Register<IGuestDataExchange, WindowsGuestDataExchange>(Lifestyle.Singleton);
         container.Register<IReportingDispatcher, ReportingDispatcher>(Lifestyle.Singleton);
+        container.Register<IVmIdProvider, WmiVmIdProvider>(Lifestyle.Singleton);
         container.Collection.Append<IReportingHandler, LogReportingHandler>(Lifestyle.Singleton);
 
         // KVP reporting is disabled in dry-run mode so a what-if run does not
         // overwrite the host-visible KVP state of a real provisioning attempt.
+        // KvpReportingHandler writes the eryph.provisioning.* snapshot;
+        // CloudInitKvpReportingHandler writes the cloud-init-compatible
+        // CLOUD_INIT|... event stream. Both share the guest KVP pool.
         if (!options.DryRun)
+        {
             container.Collection.Append<IReportingHandler, KvpReportingHandler>(Lifestyle.Singleton);
+            container.Collection.Append<IReportingHandler, CloudInitKvpReportingHandler>(Lifestyle.Singleton);
+        }
 
         // User-data pipeline.
         container.Register<IUrlHelper, UrlHelper>(Lifestyle.Singleton);
