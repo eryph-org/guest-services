@@ -29,7 +29,7 @@ public class EryphRemoveKeyCommand : AsyncCommand<EryphRemoveKeyCommand.Settings
         try
         {
             await connection.CreateCatletsClient(EryphConnection.RemoteAccessScope)
-                .RemoveSshKeyAsync(settings.CatletId);
+                .RemoveAccessKeyAsync(settings.CatletId);
         }
         catch (Exception ex)
         {

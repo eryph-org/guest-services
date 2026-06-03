@@ -10,7 +10,7 @@ namespace Eryph.GuestServices.Tool.Eryph;
 //   1. CatletsClient.OpenSshChannel  -> starts the OpenSshChannel operation.
 //   2. poll OperationsClient.Get     -> until it completes; read the one-time
 //                                       channel token from the SshChannelOperationResult.
-//   3. GET catlets/{id}/ssh-channel/connect?token=...  (WebSocket) -> bridge the
+//   3. GET catlets/{id}/guest-services/ssh-channel/connect?token=...  (WebSocket) -> bridge the
 //      local stdin/stdout to that socket. The WebSocket leg is a raw ClientWebSocket
 //      because OpenAPI/the generated client does not model WebSocket upgrades.
 // Protocol-agnostic: SSH runs end-to-end over the channel, eryph only relays the
@@ -71,7 +71,7 @@ public static class EryphProxy
         }
 
         var connectUri = connection.BuildComputeUri(
-            $"catlets/{Uri.EscapeDataString(catletId)}/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
+            $"catlets/{Uri.EscapeDataString(catletId)}/guest-services/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
         var wsUri = new UriBuilder(connectUri)
         {
             Scheme = connectUri.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",

@@ -10,7 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Eryph.ClientRuntime.Configuration" Version="0.10.0" />
-    <PackageReference Include="Eryph.ComputeClient" Version="0.15.0-beta.20" />
+    <PackageReference Include="Eryph.ComputeClient" Version="0.15.0-beta.21" />
     <PackageReference Include="Eryph.IdentityModel.Clients" Version="0.7.0" />
     <!-- Eryph.ComputeClient (built for older TFMs) compiles against
          Microsoft.Bcl.AsyncInterfaces 8.0.0. Bumping the explicit ref to the

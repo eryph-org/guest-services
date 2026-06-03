@@ -81,6 +81,14 @@ app.Configure(config =>
         eryph.AddCommand<EryphRemoveKeyCommand>("remove-key")
             .WithDescription(
                 "Revokes the caller's key on the given catlet via eryph.");
+
+        eryph.AddCommand<EryphGetStatusCommand>("get-status")
+            .WithDescription(
+                "Prints the guest services and provisioning status of the given catlet.");
+
+        eryph.AddCommand<EryphSetShellCommand>("set-shell")
+            .WithDescription(
+                "Sets the SSH session shell on the given catlet via eryph.");
     });
 });
 

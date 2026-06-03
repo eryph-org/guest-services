@@ -73,7 +73,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
             expiresAt = DateTimeOffset.UtcNow.Add(parsed);
         }
 
-        var body = new AddSshKeyRequestBody(publicKey)
+        var body = new AddAccessKeyRequestBody(publicKey)
         {
             Ttl = ttlIso,
             ExpiresAt = expiresAt,
@@ -82,7 +82,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
         try
         {
             await connection.CreateCatletsClient(EryphConnection.RemoteAccessScope)
-                .AddSshKeyAsync(catletId, body);
+                .AddAccessKeyAsync(catletId, body);
         }
         catch (Exception ex)
         {
