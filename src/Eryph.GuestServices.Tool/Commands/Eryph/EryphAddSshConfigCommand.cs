@@ -69,6 +69,16 @@ public class EryphAddSshConfigCommand : AsyncCommand<EryphAddSshConfigCommand.Se
             return -1;
         }
 
+        // Without --identity the alias points at the managed key. If it has not
+        // been created yet, fail now rather than write an alias that ssh cannot
+        // use (the managed key is created by 'egs-tool initialize').
+        if (string.IsNullOrEmpty(settings.Identity) && !File.Exists(ClientKeyHelper.PrivateKeyPath))
+        {
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]No managed client key was found. Run 'egs-tool initialize' first, or pass --identity.[/]");
+            return -1;
+        }
+
         var keyFilePath = !string.IsNullOrEmpty(settings.Identity)
             ? settings.Identity
             : ClientKeyHelper.PrivateKeyPath;

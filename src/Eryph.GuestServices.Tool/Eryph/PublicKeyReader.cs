@@ -42,11 +42,20 @@ public static class PublicKeyReader
             }
         }
 
-        // No option: fall back to the managed client key.
-        var keyPair = await ClientKeyHelper.GetKeyPairAsync();
-        if (keyPair is null)
-            return null;
+        // No option: fall back to the managed client key. Reading it can fail
+        // (e.g. an ACL-restricted ProgramData key); treat that as "could not read"
+        // like the other sources so the caller emits its friendly message.
+        try
+        {
+            var keyPair = await ClientKeyHelper.GetKeyPairAsync();
+            if (keyPair is null)
+                return null;
 
-        return KeyPair.ExportPublicKey(keyPair, keyFormat: KeyFormat.Ssh).Trim();
+            return KeyPair.ExportPublicKey(keyPair, keyFormat: KeyFormat.Ssh).Trim();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 }

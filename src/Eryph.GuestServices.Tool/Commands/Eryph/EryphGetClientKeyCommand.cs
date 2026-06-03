@@ -1,5 +1,6 @@
 using Eryph.GuestServices.Tool.Interceptors;
 using Microsoft.DevTunnels.Ssh;
+using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Keys;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -16,11 +17,23 @@ public class EryphGetClientKeyCommand : AsyncCommand<EryphGetClientKeyCommand.Se
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
     {
-        var keyPair = await ClientKeyHelper.GetKeyPairAsync();
-        if (keyPair is null)
+        IKeyPair? keyPair;
+        try
+        {
+            keyPair = await ClientKeyHelper.GetKeyPairAsync();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             AnsiConsole.MarkupLineInterpolated(
-                $"[red]No client key found. Run 'egs-tool eryph add-ssh-config' or 'initialize' first.[/]");
+                $"[red]The managed client key could not be read: {ex.Message}[/]");
+            return -1;
+        }
+
+        if (keyPair is null)
+        {
+            // Only 'initialize' creates the managed key (add-ssh-config does not).
+            AnsiConsole.MarkupLineInterpolated(
+                $"[red]No managed client key found. Run 'egs-tool initialize' first.[/]");
             return -1;
         }
 
