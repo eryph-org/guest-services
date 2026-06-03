@@ -50,12 +50,12 @@ public sealed class EryphConnection
         return new EryphConnection(credentials, computeEndpoint);
     }
 
-    public CatletsClient CreateCatletsClient()
-    {
-        var factory = new ComputeClientsFactory(
-            new EryphComputeClientOptions(Credentials), ComputeEndpoint);
-        return factory.CreateCatletsClient();
-    }
+    private ComputeClientsFactory CreateClientsFactory() =>
+        new(new EryphComputeClientOptions(Credentials), ComputeEndpoint);
+
+    public CatletsClient CreateCatletsClient() => CreateClientsFactory().CreateCatletsClient();
+
+    public OperationsClient CreateOperationsClient() => CreateClientsFactory().CreateOperationsClient();
 
     // Mints a bearer access token for the resolved connection. The scopes are
     // requested explicitly so the channel/key routes get a token carrying the

@@ -7,8 +7,8 @@ namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
 // egs-tool eryph remove-key <catletId>
 //
-// Revokes the caller's own key: DELETE the key-install route. The server
-// derives the subject from the bearer token, so no key is sent.
+// Revokes the caller's own key via the compute client. The server derives the
+// subject from the bearer token, so no key is sent.
 public class EryphRemoveKeyCommand : AsyncCommand<EryphRemoveKeyCommand.Settings>
 {
     public class Settings : CommandSettings, IElevationExempt
@@ -27,17 +27,13 @@ public class EryphRemoveKeyCommand : AsyncCommand<EryphRemoveKeyCommand.Settings
             return -1;
         }
 
-        using var httpClient = new HttpClient();
-        var token = await connection.GetAccessTokenAsync();
-        httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-        var uri = connection.BuildComputeUri($"catlets/{settings.CatletId}/ssh-keys");
-        var response = await httpClient.DeleteAsync(uri);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]Failed to remove the key ({(int)response.StatusCode} {response.ReasonPhrase}).[/]");
+            await connection.CreateCatletsClient().RemoveSshKeyAsync(settings.CatletId);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to remove the key: {ex.Message}[/]");
             return -1;
         }
 

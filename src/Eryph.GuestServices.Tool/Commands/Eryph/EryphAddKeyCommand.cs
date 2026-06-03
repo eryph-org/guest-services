@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using Eryph.ComputeClient.Models;
 using Eryph.GuestServices.Tool.Eryph;
 using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
@@ -10,7 +10,7 @@ namespace Eryph.GuestServices.Tool.Commands.Eryph;
 //
 // Pushes a public key to the catlet's guest via eryph (the runtime flow). The
 // key is read from --public-key (a path, or "-" for stdin) or the managed key
-// when omitted, and POSTed to the compute API key-install route.
+// when omitted, and sent through the typed compute client.
 public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
 {
     public class Settings : CommandSettings, IElevationExempt
@@ -43,7 +43,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
     }
 
     // Shared by add-key and add-ssh-config --add-key. Resolves the public key,
-    // parses the TTL into an absolute expiry, and POSTs the install request.
+    // parses the TTL into an absolute expiry, and installs it via the compute client.
     public static async Task<int> PushKeyAsync(
         EryphConnection connection,
         string catletId,
@@ -58,7 +58,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
             return -1;
         }
 
-        TimeSpan? duration = null;
+        string? ttlIso = null;
         DateTimeOffset? expiresAt = null;
         if (!string.IsNullOrEmpty(ttl))
         {
@@ -69,30 +69,24 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
                 return -1;
             }
 
-            duration = parsed;
+            // ISO 8601 duration (informational) plus the absolute expiry the server applies.
+            ttlIso = System.Xml.XmlConvert.ToString(parsed);
             expiresAt = DateTimeOffset.UtcNow.Add(parsed);
         }
 
-        using var httpClient = new HttpClient();
-        var token = await connection.GetAccessTokenAsync();
-        httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-
-        var uri = connection.BuildComputeUri($"catlets/{catletId}/ssh-keys");
-        var body = new SshKeyInstallRequest
+        var body = new AddSshKeyRequestBody(publicKey)
         {
-            PublicKey = publicKey,
-            // Send the TTL as an ISO 8601 duration so the value is unambiguous,
-            // plus the absolute expiry computed locally.
-            Ttl = duration is { } d ? System.Xml.XmlConvert.ToString(d) : null,
+            Ttl = ttlIso,
             ExpiresAt = expiresAt,
         };
 
-        var response = await httpClient.PostAsJsonAsync(uri, body);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            AnsiConsole.MarkupLineInterpolated(
-                $"[red]Failed to add the key ({(int)response.StatusCode} {response.ReasonPhrase}).[/]");
+            await connection.CreateCatletsClient().AddSshKeyAsync(catletId, body);
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLineInterpolated($"[red]Failed to add the key: {ex.Message}[/]");
             return -1;
         }
 
@@ -103,16 +97,5 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
             AnsiConsole.MarkupLine("[green]The key was added.[/]");
 
         return 0;
-    }
-
-    // JSON body for POST /v1/catlets/{id}/ssh-keys. The compute route does not
-    // exist in the generated client yet, so it is called with a raw HttpClient.
-    private sealed class SshKeyInstallRequest
-    {
-        public string PublicKey { get; init; } = string.Empty;
-
-        public string? Ttl { get; init; }
-
-        public DateTimeOffset? ExpiresAt { get; init; }
     }
 }
