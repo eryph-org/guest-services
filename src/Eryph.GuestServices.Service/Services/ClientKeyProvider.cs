@@ -139,7 +139,9 @@ public class ClientKeyProvider : IClientKeyProvider
             {
                 // IsExpired is fail-closed: it rejects both a past expiry and a
                 // malformed/unparseable expiry-time, so the message covers both.
-                _logger.LogInformation(
+                // Debug, not Information: this runs on every auth attempt, so an
+                // expired-but-not-yet-cleaned-up slot would otherwise spam the log.
+                _logger.LogDebug(
                     "Skipping authorized client key entry: its expiry-time has passed or could not be parsed.");
                 return null;
             }
@@ -148,8 +150,9 @@ public class ClientKeyProvider : IClientKeyProvider
         }
         catch (Exception ex)
         {
-            // One malformed entry must not lock out the rest of the set.
-            _logger.LogInformation(ex, "Skipping unparseable authorized client key entry.");
+            // One malformed entry must not lock out the rest of the set. Debug for
+            // the same per-auth-attempt reason as the expiry skip above.
+            _logger.LogDebug(ex, "Skipping unparseable authorized client key entry.");
             return null;
         }
     }
