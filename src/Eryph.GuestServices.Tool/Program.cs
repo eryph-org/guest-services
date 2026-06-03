@@ -1,4 +1,5 @@
 ﻿using Eryph.GuestServices.Sockets;
+using Eryph.GuestServices.Tool;
 using Eryph.GuestServices.Tool.Commands;
 using Eryph.GuestServices.Tool.Commands.Eryph;
 using Eryph.GuestServices.Tool.Eryph;
@@ -119,6 +120,14 @@ if (args is ["proxy", var vmId])
 if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
 {
     var catletId = args[2];
+    // Validate the id even though the generated alias only ever writes a safe one:
+    // this entry point can be invoked directly, and the Spectre.Console.Cli
+    // validation layer is bypassed here. Mirrors the VM-proxy GUID check above.
+    if (!SshConfigHelper.IsSafeHostToken(catletId))
+    {
+        await Console.Error.WriteLineAsync("Invalid catlet id.");
+        return unchecked((int)0x80070057);
+    }
 
     // The generated ssh_config alias may append the operator's connection
     // selectors (see SshConfigHelper.WriteCatletConfig). Parse them here so the
@@ -140,6 +149,14 @@ if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
             }
 
             var value = args[++i];
+            // Apply the same safe-token rule the CLI settings layer enforces, so a
+            // direct invocation cannot smuggle an unsafe selector past validation.
+            if (!SshConfigHelper.IsSafeHostToken(value))
+            {
+                await Console.Error.WriteLineAsync($"Invalid value for {option}.");
+                return unchecked((int)0x80070057);
+            }
+
             if (option == "--configuration")
                 proxyConfiguration = value;
             else

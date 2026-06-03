@@ -185,10 +185,13 @@ public static class SshConfigHelper
         return aliases;
     }
 
-    // A single bare ssh_config Host token: no whitespace (would split it into
-    // several patterns), no '#' (comment), and no glob/negation metacharacters
-    // ('*', '?', '!') that change matching.
-    private static bool IsSafeHostToken(string value) =>
+    // A safe single bare token for an ssh_config host/argument or a file name:
+    // letters, digits, '.', '-' and '_' only. Excludes whitespace (would split
+    // into multiple patterns/args), '#' (comment), glob/negation metacharacters
+    // ('*', '?', '!'), quotes/backslashes (would break a quoted argument) and path
+    // separators (path traversal). Used for catlet ids and the connection
+    // selectors that are embedded into the generated ssh_config.
+    public static bool IsSafeHostToken(string value) =>
         !string.IsNullOrEmpty(value)
         && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 

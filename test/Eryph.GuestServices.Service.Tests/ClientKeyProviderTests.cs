@@ -383,6 +383,55 @@ public class ClientKeyProviderTests
     }
 
     [Fact]
+    public async Task IsAuthorizedAsync_FutureExpiry_DateOnlyCompactForm_Authorizes()
+    {
+        // The date-only "yyyyMMdd" compact form is parsed as UTC midnight.
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddDays(2).ToString("yyyyMMdd");
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_PastExpiry_DateOnlyCompactForm_Rejected()
+    {
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddDays(-2).ToString("yyyyMMdd");
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_FutureExpiry_IsoWithNonUtcOffset_NormalizesToUtc()
+    {
+        // An ISO-8601 timestamp with an explicit offset must be normalized to UTC
+        // before comparison. 1 hour from now expressed as -05:00 is still future.
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddHours(1).ToOffset(TimeSpan.FromHours(-5))
+            .ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task IsAuthorizedAsync_PastExpiry_IsoWithNonUtcOffset_NormalizesToUtc()
+    {
+        var key = GenerateKey();
+        var stamp = DateTimeOffset.UtcNow.AddHours(-1).ToOffset(TimeSpan.FromHours(5))
+            .ToString("yyyy-MM-ddTHH:mm:sszzz");
+        var line = $"expiry-time=\"{stamp}\" {ExportSsh(key)}";
+        var provider = NewProvider(kvpValue: line);
+
+        (await provider.IsAuthorizedAsync(key)).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task IsAuthorizedAsync_KeyWithMalformedExpiry_Rejected()
     {
         // Fail-closed: a key that declared an expiry we cannot read must not be

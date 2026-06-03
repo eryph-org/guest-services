@@ -1,6 +1,7 @@
 using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using Eryph.GuestServices.Tool;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
@@ -29,15 +30,11 @@ public class EryphConnectionSettings : CommandSettings, IElevationExempt
     {
         foreach (var (name, value) in new[] { ("--configuration", Configuration), ("--client-id", ClientId) })
         {
-            if (value is not null && !IsSafeSelector(value))
+            if (value is not null && !SshConfigHelper.IsSafeHostToken(value))
                 return ValidationResult.Error(
                     $"The value for {name} may only contain letters, digits, '.', '-' and '_'.");
         }
 
         return ValidationResult.Success();
     }
-
-    private static bool IsSafeSelector(string value) =>
-        value.Length > 0
-        && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 }

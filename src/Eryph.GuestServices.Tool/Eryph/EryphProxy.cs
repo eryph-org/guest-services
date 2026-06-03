@@ -77,6 +77,13 @@ public static class EryphProxy
             Scheme = connectUri.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",
         }.Uri;
 
+        if (wsUri.Scheme == "ws")
+            // The compute endpoint is not using TLS (e.g. a dev/local eryph). The
+            // bearer token below is then sent in clear text; warn so a misconfigured
+            // endpoint does not silently leak it.
+            await Console.Error.WriteLineAsync(
+                "Warning: connecting over an unencrypted channel; the access token is not protected.");
+
         using var webSocket = new ClientWebSocket();
         webSocket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
         try
