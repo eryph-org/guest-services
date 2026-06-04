@@ -52,11 +52,16 @@ public static class UserClientKeyHelper
 
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
 
-        var privateKeyBytes = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
+        // Normalize CRLF -> LF: DevTunnels exports the key with Windows line
+        // endings, which the MSYS ssh in embedded shells cannot load. See
+        // OpenSshKeyBytes.
+        var privateKeyBytes = OpenSshKeyBytes.NormalizeLineEndingsToLf(
+            KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh));
         await File.WriteAllBytesAsync(PrivateKeyPath, privateKeyBytes);
 
         // OpenSSH wants the public key alongside the private key.
-        var publicKeyBytes = KeyPair.ExportPublicKeyBytes(keyPair, keyFormat: KeyFormat.Ssh);
+        var publicKeyBytes = OpenSshKeyBytes.NormalizeLineEndingsToLf(
+            KeyPair.ExportPublicKeyBytes(keyPair, keyFormat: KeyFormat.Ssh));
         await File.WriteAllBytesAsync(PublicKeyPath, publicKeyBytes);
 
         return keyPair;

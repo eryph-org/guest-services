@@ -34,11 +34,16 @@ public static class ClientKeyHelper
         EnsurePrivateDirectory();
 
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
-        var privateKeyBytes = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
+        // Normalize CRLF -> LF: DevTunnels exports the key with Windows line
+        // endings, which the MSYS ssh in embedded shells cannot load. See
+        // OpenSshKeyBytes.
+        var privateKeyBytes = OpenSshKeyBytes.NormalizeLineEndingsToLf(
+            KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh));
         await File.WriteAllBytesAsync(PrivateKeyPath, privateKeyBytes);
 
         // Also export the public key as OpenSSH requires it
-        var publicKeyBytes = KeyPair.ExportPublicKeyBytes(keyPair, keyFormat: KeyFormat.Ssh);
+        var publicKeyBytes = OpenSshKeyBytes.NormalizeLineEndingsToLf(
+            KeyPair.ExportPublicKeyBytes(keyPair, keyFormat: KeyFormat.Ssh));
         await File.WriteAllBytesAsync(PublicKeyPath, publicKeyBytes);
         
         return keyPair;
