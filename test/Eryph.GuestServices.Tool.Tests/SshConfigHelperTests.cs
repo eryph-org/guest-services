@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Eryph.GuestServices.Tool;
 
@@ -17,6 +18,7 @@ public class SshConfigHelperTests : IDisposable
     public void Dispose()
     {
         SshConfigHelper.RootPathOverride = null;
+        SshConfigHelper.UserSshPathOverride = null;
         try
         {
             Directory.Delete(_root, recursive: true);
@@ -192,10 +194,134 @@ public class SshConfigHelperTests : IDisposable
             Path.Combine(SshConfigHelper.CatletSshConfigPath, $"{catletId}.config"));
 
         // The key path can contain spaces and must be quoted, otherwise ssh splits
-        // it into multiple tokens. The selectors are quoted too (defensive).
-        content.Should().Contain("IdentityFile \"C:\\Users\\Jane Doe\\.ssh\\id_eryph\"");
+        // it into multiple tokens. The selectors are quoted too (defensive). A
+        // BYOK path outside the user profile cannot be '~'-anchored, but is still
+        // forward-slashed so the MSYS ssh in embedded shells can open it.
+        content.Should().Contain("IdentityFile \"C:/Users/Jane Doe/.ssh/id_eryph\"");
         content.Should().Contain($"ProxyCommand egs-tool.exe eryph proxy {catletId} "
             + "--configuration \"config-b\" --client-id \"client-a\"");
+    }
+
+    [Fact]
+    public async Task EnsureCatletConfigAsync_KeyUnderUserProfile_EmitsTildeAnchoredForwardSlashPath()
+    {
+        // The managed catlet key lives under the user profile. It must be emitted
+        // as a '~'-anchored, forward-slash path so the SAME config loads it under
+        // both native Windows ssh.exe and the MSYS ssh of an embedded Git-Bash,
+        // whose path handling rejects a 'C:\...' IdentityFile.
+        var catletId = Guid.NewGuid().ToString();
+        var keyPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "AppData", "Local", ".eryph", "guest-services", "private", "id_egs");
+
+        await SshConfigHelper.EnsureCatletConfigAsync(catletId, "web", "default", keyPath);
+
+        var content = await File.ReadAllTextAsync(
+            Path.Combine(SshConfigHelper.CatletSshConfigPath, $"{catletId}.config"));
+
+        content.Should().Contain(
+            "IdentityFile \"~/AppData/Local/.eryph/guest-services/private/id_egs\"");
+    }
+
+    [Fact]
+    public void BuildIncludeBlock_EmitsTildeAnchoredForwardSlashIncludes_ForMsysSshCompatibility()
+    {
+        // The config root resolves under the user profile (the LocalAppData root
+        // in production, the temp override here), so both include lines must be
+        // '~'-anchored with forward slashes and carry no backslash that the MSYS
+        // glob() would fail to expand.
+        var block = SshConfigHelper.BuildIncludeBlock();
+
+        var includeLines = block.Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.StartsWith("Include ", StringComparison.Ordinal))
+            .ToList();
+
+        includeLines.Should().HaveCount(2);
+        includeLines.Should().OnlyContain(l => l.StartsWith("Include \"~/", StringComparison.Ordinal));
+        includeLines.Should().OnlyContain(l => !l.Contains('\\'));
+        includeLines.Should().Contain(l => l.EndsWith("/catlet.d/*\"", StringComparison.Ordinal));
+        includeLines.Should().Contain(l => l.EndsWith("/vm.d/*\"", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EnsureVmConfigAsync_KeyFilePath_IsForwardSlashedAndQuoted()
+    {
+        // The VM-config IdentityFile must be portabilized too (same fix as the
+        // catlet path). The ProgramData key is outside the profile, so it is
+        // forward-slashed (not '~'-anchored) and stays quoted.
+        var vmId = Guid.NewGuid();
+
+        await SshConfigHelper.EnsureVmConfigAsync(
+            vmId, alias: null, @"C:\ProgramData\eryph\guest-services\private\id_egs");
+
+        var content = await File.ReadAllTextAsync(
+            Path.Combine(SshConfigHelper.VmSshConfigPath, $"{vmId}.config"));
+
+        content.Should().Contain(
+            "IdentityFile \"C:/ProgramData/eryph/guest-services/private/id_egs\"");
+    }
+
+    [Fact]
+    public async Task EnsureSshConfigAsync_RewritesExistingBlock_ToPortableIncludes()
+    {
+        // The riskiest path: an existing ~/.ssh/config that already carries an
+        // (old, backslash) eryph block is upgraded in place. The eryph block must
+        // be replaced with the portable one and the surrounding user config must
+        // be preserved untouched.
+        var sshDir = Path.Combine(_root, "dot-ssh");
+        Directory.CreateDirectory(sshDir);
+        SshConfigHelper.UserSshPathOverride = sshDir;
+        var configPath = Path.Combine(sshDir, "config");
+
+        const string userBefore = "Host myserver\n    HostName 10.0.0.5\n";
+        const string userAfter = "Host other\n    HostName 10.0.0.9\n";
+        var staleBlock =
+            "# ------ eryph guest services ------\n"
+            + "Include \"C:\\Users\\Someone\\AppData\\Local\\.eryph\\guest-services\\ssh\\vm.d\\*\"\n"
+            + "# ------ eryph guest services ------";
+        await File.WriteAllTextAsync(configPath, $"{userBefore}{staleBlock}\n{userAfter}");
+
+        await SshConfigHelper.EnsureSshConfigAsync();
+
+        var result = await File.ReadAllTextAsync(configPath);
+        // User stanzas on both sides survive.
+        result.Should().Contain(userBefore).And.Contain(userAfter);
+        // The stale backslash include is gone, replaced by the portable form.
+        result.Should().NotContain("\\*\"");
+        result.Should().Contain("Include \"~/")
+            .And.Contain("/catlet.d/*\"").And.Contain("/vm.d/*\"");
+        // Exactly one eryph block remains (two border markers).
+        Regex.Matches(result, Regex.Escape("# ------ eryph guest services ------"))
+            .Count.Should().Be(2);
+    }
+
+    [Fact]
+    public void ToPortableSshPath_PathOutsideProfile_OnlyForwardSlashed()
+    {
+        // Cannot be '~'-anchored (different/absent profile), but must still drop
+        // backslashes so native ssh.exe is happy and the MSYS open() can resolve it.
+        SshConfigHelper.ToPortableSshPath(@"C:\ProgramData\eryph\guest-services\private\id_egs")
+            .Should().Be("C:/ProgramData/eryph/guest-services/private/id_egs");
+    }
+
+    [Fact]
+    public void ToPortableSshPath_PathUnderProfile_TildeAnchored()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        SshConfigHelper.ToPortableSshPath(Path.Combine(profile, "AppData", "Local", "x"))
+            .Should().Be("~/AppData/Local/x");
+    }
+
+    [Fact]
+    public void ToPortableSshPath_ForwardSlashPathUnderProfile_StillTildeAnchored()
+    {
+        // A BYOK '--identity' value may already use forward slashes; it must still
+        // be recognized as profile-relative and '~'-anchored, not just slashed.
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            .Replace('\\', '/');
+        SshConfigHelper.ToPortableSshPath($"{profile}/.ssh/id_byok")
+            .Should().Be("~/.ssh/id_byok");
     }
 
     [Theory]
