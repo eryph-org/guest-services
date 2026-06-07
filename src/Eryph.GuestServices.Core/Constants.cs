@@ -52,10 +52,12 @@ public static class Constants
 
     /// <summary>
     /// The KVP key (External pool) that overrides the shell command spawned
-    /// for an interactive SSH session. When unset, the service falls back to
-    /// the SSH-sent <c>SHELL</c> environment variable, then to the platform
-    /// default (<c>powershell.exe</c> on Windows, <c>$SHELL</c> or
-    /// <c>/bin/bash</c> on Linux).
+    /// for an SSH session — both interactive shells and non-interactive
+    /// <c>exec</c> (remote command) requests, which run the command through this
+    /// shell. When unset, the service falls back to the SSH-sent <c>SHELL</c>
+    /// environment variable (interactive only), then to the platform default
+    /// (<c>powershell.exe</c> on Windows, <c>$SHELL</c> or <c>/bin/bash</c> on
+    /// Linux).
     /// </summary>
     public static readonly string ShellKey = "eryph:guest-services:shell";
 

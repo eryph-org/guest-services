@@ -809,6 +809,52 @@ function Invoke-EgsShellProbe {
   return $raw -replace "`e\[[0-?]*[ -/]*[@-~]", '' -replace "`e\][^`a]*`a", ''
 }
 
+function Invoke-EgsSshCommand {
+  <#
+  .SYNOPSIS
+    Runs a single non-interactive command on the catlet via the SSH `exec`
+    request (`ssh host "<command>"`) and returns its exit code and captured
+    output.
+
+  .DESCRIPTION
+    Unlike the interactive shell channel, exec output is plain channel data
+    that Win32-OpenSSH writes to ssh.exe's stdout, so it can be captured
+    normally — no probe needed. This exercises the server-side
+    CommandService -> CommandForwarder -> IShellSelector path: the command is
+    run through the selected shell, and stdout + stderr are merged back onto
+    the channel. stderr is captured here too (2>&1) so error-stream coverage
+    works.
+
+    Pinned to Windows OpenSSH (see $script:WinSshExe) and relies on the
+    *.hyper-v.alt Host block written by `egs-tool add-ssh-config` for the
+    ProxyCommand, so it must run after Connect-Catlet.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $Command,
+    [Parameter()] [int] $ConnectTimeout = 15
+  )
+
+  $hostName = "$VmId.hyper-v.alt"
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $out = & $script:WinSshExe `
+      -o "StrictHostKeyChecking=no" `
+      -o "BatchMode=yes" `
+      -o "ConnectTimeout=$ConnectTimeout" `
+      $hostName $Command 2>&1
+    [pscustomobject]@{
+      ExitCode = $LASTEXITCODE
+      Output   = ($out | Out-String).Trim()
+    }
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
 function Save-GuestDiagnostics {
   <#
     .SYNOPSIS

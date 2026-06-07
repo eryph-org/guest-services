@@ -53,9 +53,11 @@ internal sealed class SshServerService(
         var config = new SshSessionConfiguration(useSecurity: true);
 
         config.Services.Add(typeof(SubsystemService), null);
-        config.Services.Add(typeof(CommandService), null);
         // The shell selector is passed as the service activation config object.
-        // DevTunnels.Ssh activates the matching 2-arg ctor on ShellService.
+        // DevTunnels.Ssh activates the matching 2-arg ctor. Both the interactive
+        // ShellService and the exec CommandService run the client request through
+        // the selected shell, so they share the selector.
+        config.Services.Add(typeof(CommandService), shellSelector);
         config.Services.Add(typeof(ShellService), shellSelector);
         config.Services.Add(typeof(UploadFileService), null);
         config.Services.Add(typeof(DownloadFileService), null);
