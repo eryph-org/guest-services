@@ -11,7 +11,17 @@ public class SshConfigHelperTests : IDisposable
 
     public SshConfigHelperTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "egs-ssh-config-tests", Guid.NewGuid().ToString("N"));
+        // Root the override under LocalApplicationData, exactly where the
+        // production EryphSshConfigPath lives. The portability tests assert that
+        // BuildIncludeBlock()/ToPortableSshPath() '~'-anchor the include and key
+        // paths, which only holds when the root is under the user profile. Basing
+        // it on Path.GetTempPath() would make those assertions depend on where TEMP
+        // points (some CI runners place it outside the profile) and turn the tests
+        // flaky; LocalApplicationData is always under the profile, like production.
+        _root = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "egs-ssh-config-tests",
+            Guid.NewGuid().ToString("N"));
         SshConfigHelper.RootPathOverride = _root;
     }
 
@@ -226,8 +236,8 @@ public class SshConfigHelperTests : IDisposable
     [Fact]
     public void BuildIncludeBlock_EmitsTildeAnchoredForwardSlashIncludes_ForMsysSshCompatibility()
     {
-        // The config root resolves under the user profile (the LocalAppData root
-        // in production, the temp override here), so both include lines must be
+        // The config root resolves under the user profile (LocalAppData, both in
+        // production and in the test override), so both include lines must be
         // '~'-anchored with forward slashes and carry no backslash that the MSYS
         // glob() would fail to expand.
         var block = SshConfigHelper.BuildIncludeBlock();

@@ -43,15 +43,32 @@ public class OpenSshKeyBytesTests
     }
 
     [Fact]
-    public void NormalizeLineEndingsToLf_RealDevTunnelsKey_HasNoCrlf_AndStillImports()
+    public void DevTunnels_ExportsOpenSshKeyWithCrlf_OnWindows_WhichIsWhyWeNormalize()
     {
-        // Tie the regression to the real producer: DevTunnels exports the
-        // OpenSSH key with CRLF (KeyData.EncodePem -> Environment.NewLine), which
-        // MSYS/MINGW libcrypto rejects. After normalization no CR remains and the
-        // key still parses, proving the material is untouched.
+        // Canary for the upstream quirk this whole helper exists for: on Windows,
+        // DevTunnels' KeyData.EncodePem builds the PEM with Environment.NewLine, so
+        // the exported key carries CRLF, which MSYS/MINGW libcrypto rejects. This
+        // test deliberately documents that precondition: if it ever starts failing
+        // (DevTunnels switched to LF, or this runs on a non-CRLF platform), the LF
+        // normalization may have become a no-op worth revisiting — it is NOT a
+        // failure of NormalizeLineEndingsToLf, which the test below verifies on its
+        // own without depending on the producer's line endings.
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
         var exported = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
-        exported.Should().Contain((byte)0x0D, "DevTunnels exports CRLF on Windows (precondition for this test)");
+
+        exported.Should().Contain((byte)0x0D);
+    }
+
+    [Fact]
+    public void NormalizeLineEndingsToLf_RealDevTunnelsKey_StripsAllCr_AndStillImports()
+    {
+        // Functional regression against the real producer, robust to whatever line
+        // endings it emits: export a genuine DevTunnels key, normalize it, and
+        // assert no CR remains and the key still parses to the same material. No
+        // precondition on CRLF presence — if the export is already LF, normalize
+        // is a no-op and the import must still round-trip identically.
+        var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
+        var exported = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
 
         var normalized = OpenSshKeyBytes.NormalizeLineEndingsToLf(exported);
 
