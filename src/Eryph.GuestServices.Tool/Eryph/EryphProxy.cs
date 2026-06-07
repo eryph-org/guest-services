@@ -5,7 +5,7 @@ using Eryph.ComputeClient.Models;
 namespace Eryph.GuestServices.Tool.Eryph;
 
 // The eryph data plane. Invoked by SSH as the ProxyCommand
-// (egs-tool eryph proxy <catletId>). Two-step, using the typed Eryph.ComputeClient
+// (egs-tool catlet proxy <catletId>). Two-step, using the typed Eryph.ComputeClient
 // (eryph's async operation model — the API never blocks on an operation):
 //   1. CatletsClient.OpenSshChannel  -> starts the OpenSshChannel operation.
 //   2. poll OperationsClient.Get     -> until it completes; read the one-time
@@ -38,7 +38,7 @@ public static class EryphProxy
         var operations = connection.CreateOperationsClient();
 
         // 1. Start the control-plane operation. The agent (via the saga) prepares the hvsocket and
-        // mints a one-time token; we do not push a key here (use `eryph add-key` for the added-key flow).
+        // mints a one-time token; we do not push a key here (use `catlet add-key` for the added-key flow).
         string operationId;
         try
         {

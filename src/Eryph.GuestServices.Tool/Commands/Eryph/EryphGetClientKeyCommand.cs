@@ -7,7 +7,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph get-client-key
+// egs-tool catlet get-client-key
 //
 // Prints the managed client PUBLIC key in OpenSSH authorized_keys form, for
 // pasting into a catlet spec / fodder to pre-inject (the build-time flow).

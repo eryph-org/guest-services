@@ -5,7 +5,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph set-shell <catletId> <shell> [--args <args>]
+// egs-tool catlet set-shell <catletId> <shell> [--args <args>]
 //
 // Sets the shell the guest's SSH server spawns for interactive sessions, via the
 // guest-services settings. Pass an empty shell to clear the override.

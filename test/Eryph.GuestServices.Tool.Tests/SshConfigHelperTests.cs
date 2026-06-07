@@ -208,7 +208,7 @@ public class SshConfigHelperTests : IDisposable
         // BYOK path outside the user profile cannot be '~'-anchored, but is still
         // forward-slashed so the MSYS ssh in embedded shells can open it.
         content.Should().Contain("IdentityFile \"C:/Users/Jane Doe/.ssh/id_eryph\"");
-        content.Should().Contain($"ProxyCommand egs-tool.exe eryph proxy {catletId} "
+        content.Should().Contain($"ProxyCommand egs-tool.exe catlet proxy {catletId} "
             + "--configuration \"config-b\" --client-id \"client-a\"");
     }
 
@@ -358,7 +358,7 @@ public class SshConfigHelperTests : IDisposable
         var content = await File.ReadAllTextAsync(
             Path.Combine(SshConfigHelper.CatletSshConfigPath, $"{catletId}.config"));
 
-        content.Should().Contain($"ProxyCommand egs-tool.exe eryph proxy {catletId}");
+        content.Should().Contain($"ProxyCommand egs-tool.exe catlet proxy {catletId}");
         content.Should().NotContain("--configuration");
         content.Should().NotContain("--client-id");
     }

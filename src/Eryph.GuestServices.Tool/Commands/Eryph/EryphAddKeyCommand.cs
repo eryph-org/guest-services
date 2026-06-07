@@ -5,7 +5,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph add-key <catletId> [--public-key <path|->] [--ttl <duration>]
+// egs-tool catlet add-key <catletId> [--public-key <path|->] [--ttl <duration>]
 //
 // Pushes a public key to the catlet's guest via eryph (the runtime flow). The
 // key is read from --public-key (a path, or "-" for stdin) or the managed key

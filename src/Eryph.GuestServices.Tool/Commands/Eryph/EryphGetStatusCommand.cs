@@ -5,7 +5,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph get-status <catletId>
+// egs-tool catlet get-status <catletId>
 //
 // Reads the catlet guest's services state (agent status/version, provisioning
 // state, shell) via the compute client's operation and prints it.
