@@ -75,6 +75,12 @@ Rebuilt on the same client stack the removed integration used
 | `egs-tool catlet get-client-key` | Print the managed client **public** key (for pasting into a catlet spec / fodder to pre-inject — flow 1). |
 | `egs-tool catlet add-key <catletId> [--public-key <path\|->] [--ttl <duration>]` | Push a public key to the catlet's guest via eryph (flow 2). Omitted `--public-key` ⇒ managed key. |
 | `egs-tool catlet remove-key <catletId>` | Revoke: eryph clears this operator's KVP slot in the guest. |
+| `egs-tool catlet upload-file` / `upload-directory` / `download-file` / `download-directory <catletId> <src> <dst>` | File transfer over the channel. Opens the data plane in-process (same `EryphChannel` open as `proxy`, wrapped as a `WebSocketStream`) and runs an `SshClientSession` over it, then calls the same transport-neutral transfer code the VM-level commands use. `--overwrite` / `--recursive` / `--identity` as on the VM commands. |
+
+The transfer commands share one connector abstraction (`IGuestConnector`)
+and one set of copy operations with the VM-level commands; only the
+transport — Hyper-V socket vs eryph channel — differs, so the copy
+logic is written once.
 
 `add-ssh-config <vmId>` and `<vmId>.hyper-v.alt` (VM-level, local
 hvsocket) are unchanged and coexist exactly as the

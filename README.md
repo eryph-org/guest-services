@@ -276,8 +276,12 @@ Run on any machine with an eryph connection — not just the Hyper-V host — an
 | `catlet add-key <catlet-id> [--public-key <path\|->] [--ttl <dur>]` | Authorize a public key in the guest (optionally expiring) |
 | `catlet remove-key <catlet-id>` | Revoke the caller's authorized key |
 | `catlet get-client-key` | Print the per-user managed public key (for fodder pre-injection) |
+| `catlet upload-file <catlet-id> <src> <dst>` | Push a file to a catlet over eryph |
+| `catlet upload-directory <catlet-id> <src> <dst>` | Push a directory to a catlet over eryph |
+| `catlet download-file <catlet-id> <src> <dst>` | Pull a file from a catlet over eryph |
+| `catlet download-directory <catlet-id> <src> <dst>` | Pull a directory from a catlet over eryph |
 
-Common flags: `--client-id <id>`, `--configuration <name>` to select the eryph connection. Requires the `compute:catlets:remote-access` scope.
+The transfer commands take the same `--overwrite` / `--recursive` flags as their VM-level counterparts, and `--identity <key>` to sign with a BYOK key (its public half must be authorized in the guest). Common flags: `--client-id <id>`, `--configuration <name>` to select the eryph connection. Requires the `compute:catlets:remote-access` scope.
 
 ### `egs-service` (guest)
 
