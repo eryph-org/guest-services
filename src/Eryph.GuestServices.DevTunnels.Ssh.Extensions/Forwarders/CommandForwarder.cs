@@ -80,20 +80,22 @@ public sealed class CommandForwarder : IDisposable
 
     private async Task RunAsync(SshStream sshStream)
     {
+        // This SSH library exposes only a single channel data stream — it has
+        // no SSH extended-data (stderr) support — so stdout and stderr are
+        // merged onto it. That mirrors `ssh host "cmd 2>&1"` and the interactive
+        // PTY path, where a terminal has no separate error stream. A shared lock
+        // serializes the two pumps so their writes can't interleave mid-chunk
+        // and corrupt the channel framing.
+        var writeLock = new SemaphoreSlim(1, 1);
+        Task? stdoutTask = null;
+        Task? stderrTask = null;
         try
         {
             _process!.Start();
 
-            // This SSH library exposes only a single channel data stream — it
-            // has no SSH extended-data (stderr) support — so stdout and stderr
-            // are merged onto it. That mirrors `ssh host "cmd 2>&1"` and the
-            // interactive PTY path, where a terminal has no separate error
-            // stream. A shared lock serializes the two pumps so their writes
-            // can't interleave mid-chunk and corrupt the channel framing.
-            var writeLock = new SemaphoreSlim(1, 1);
-            var stdoutTask = PumpToChannelAsync(
+            stdoutTask = PumpToChannelAsync(
                 _process.StandardOutput.BaseStream, sshStream, writeLock, _cts.Token);
-            var stderrTask = PumpToChannelAsync(
+            stderrTask = PumpToChannelAsync(
                 _process.StandardError.BaseStream, sshStream, writeLock, _cts.Token);
             _ = sshStream.CopyToAsync(_process.StandardInput.BaseStream, _cts.Token);
 
@@ -104,6 +106,20 @@ public sealed class CommandForwarder : IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await sshStream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, _cts.Token);
+        }
+        finally
+        {
+            // Dispose the per-run lock, but only once both pumps have stopped
+            // touching it. On the success path they completed above; on the
+            // error/cancel path cancel so they unwind rather than block, then
+            // wait out the teardown race before disposing.
+            if (stdoutTask is not null && stderrTask is not null
+                && !(stdoutTask.IsCompleted && stderrTask.IsCompleted))
+            {
+                try { _cts.Cancel(); } catch (ObjectDisposedException) { }
+                try { await Task.WhenAll(stdoutTask, stderrTask); } catch { /* teardown race */ }
+            }
+            writeLock.Dispose();
         }
     }
 
