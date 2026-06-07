@@ -43,4 +43,16 @@ public class NonInteractiveShellTests
     {
         NonInteractiveShell.CommandFlagFor(shellCommand).Should().Be(expectedFlag);
     }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void CommandFlagFor_WithBlankInput_FallsBackToPosixFlag(string? shellCommand)
+    {
+        // A blank shell never produces a runnable process — BuildStartInfo would
+        // fail at start — but the flag inference must not throw; it returns the
+        // POSIX default.
+        NonInteractiveShell.CommandFlagFor(shellCommand!).Should().Be("-c");
+    }
 }

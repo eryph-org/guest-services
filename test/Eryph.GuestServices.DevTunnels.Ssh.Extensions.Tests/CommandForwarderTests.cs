@@ -44,6 +44,17 @@ public class CommandForwarderTests
     }
 
     [Fact]
+    public void BuildStartInfo_UsesCmdCommandFlag()
+    {
+        const string command = "dir & echo done";
+
+        var startInfo = CommandForwarder.BuildStartInfo("cmd.exe", command);
+
+        startInfo.FileName.Should().Be("cmd.exe");
+        startInfo.ArgumentList.Should().Equal("/c", command);
+    }
+
+    [Fact]
     public void BuildStartInfo_RedirectsStdInAndStdOutWithoutShellExecute()
     {
         var startInfo = CommandForwarder.BuildStartInfo("/bin/bash", "echo hi");

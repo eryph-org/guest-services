@@ -29,14 +29,25 @@ public sealed class CommandForwarder : IDisposable
             // on the interactive channel), so resolve with no per-session
             // override: the KVP-configured shell wins, else the platform default.
             var selection = await _selector.SelectAsync(ShellOverride.Empty, cancellation);
+            // Only selection.Command is used: selection.Arguments carries the
+            // shell's *interactive* flags (e.g. `-i`, `-WindowStyle Hidden`),
+            // which are wrong for a non-interactive exec. The command-mode flag
+            // (`-c` / `-Command` / `/c`) is supplied by BuildStartInfo instead.
             _process = new Process { StartInfo = BuildStartInfo(selection.Command, _command) };
-            _ = RunAsync(stream);
+            ObserveFault(RunAsync(stream));
         }
         catch (Exception ex)
         {
             await stream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, cancellation);
         }
     }
+
+    // Keeps the fire-and-forget RunAsync from surfacing its fault as an
+    // unobserved task exception — e.g. the OperationCanceledException that
+    // WaitForExitAsync throws when Dispose cancels the token mid-run.
+    private static void ObserveFault(Task task) =>
+        _ = task.ContinueWith(static t => _ = t.Exception,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
     /// <summary>
     /// Builds the process start info that runs <paramref name="command"/>
@@ -120,6 +131,10 @@ public sealed class CommandForwarder : IDisposable
 
     public void Dispose()
     {
+        // Cancel before disposing so the read/write pumps observe cancellation
+        // and stop, instead of lingering on an already-disposed token until the
+        // killed process happens to close the pipes (matches PtyForwarder).
+        try { _cts.Cancel(); } catch (ObjectDisposedException) { }
         _cts.Dispose();
         _process?.Kill(true);
         _process?.Dispose();

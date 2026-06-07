@@ -1,7 +1,10 @@
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 /// <summary>
-/// Resolves the command + arguments to spawn for an interactive SSH session.
+/// Resolves the command + arguments to spawn for an SSH session. The
+/// interactive shell path uses both the command and the arguments; the
+/// non-interactive <c>exec</c> path uses only the command (it supplies its own
+/// command-mode flag and ignores the interactive arguments).
 /// </summary>
 public interface IShellSelector
 {
