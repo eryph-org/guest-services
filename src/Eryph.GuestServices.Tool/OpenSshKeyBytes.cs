@@ -15,18 +15,37 @@ internal static class OpenSshKeyBytes
     // every other byte — a lone CR or any high (0x80+) byte — is left untouched.
     public static byte[] NormalizeLineEndingsToLf(byte[] bytes)
     {
-        var result = new byte[bytes.Length];
-        var length = 0;
-        for (var i = 0; i < bytes.Length; i++)
+        // Scan first and only allocate when there is actually a CRLF to strip. An
+        // already-LF key (the common case, including a second pass over an
+        // already-normalized key) is handed back untouched with no copy.
+        var firstCrlf = IndexOfCrlf(bytes, 0);
+        if (firstCrlf < 0)
+            return bytes;
+
+        var result = new byte[bytes.Length - 1];
+        Array.Copy(bytes, 0, result, 0, firstCrlf);
+        var length = firstCrlf;
+        for (var i = firstCrlf; i < bytes.Length; i++)
         {
+            // Drop only a CR that directly precedes an LF; a lone CR or any high
+            // (0x80+) byte is preserved so the key material is byte-exact.
             if (bytes[i] == 0x0D && i + 1 < bytes.Length && bytes[i + 1] == 0x0A)
                 continue;
 
             result[length++] = bytes[i];
         }
 
-        // No CRLF found: hand back the original bytes untouched (the common case
-        // for an already-LF key), otherwise the trimmed copy.
-        return length == bytes.Length ? bytes : result[..length];
+        return length == result.Length ? result : result[..length];
+    }
+
+    private static int IndexOfCrlf(byte[] bytes, int start)
+    {
+        for (var i = start; i + 1 < bytes.Length; i++)
+        {
+            if (bytes[i] == 0x0D && bytes[i + 1] == 0x0A)
+                return i;
+        }
+
+        return -1;
     }
 }

@@ -70,7 +70,7 @@ public static class SshConfigHelper
     // understands '/c/...' or '~'-relative paths and its Include glob() silently
     // drops anything else — so the same 'C:\...' Include that works in
     // PowerShell is invisible from bash, and 'ssh <alias>' falls through to the
-    // defaults (no ProxyCommand, wrong user/key). The portable subset both
+    // defaults (no ProxyCommand, wrong user/key). The portable subset that both
     // builds expand to the same physical location is a '~'-anchored,
     // forward-slash path. Paths outside the user profile (e.g. the machine-wide
     // VM key under ProgramData) cannot be '~'-anchored; they are at least
@@ -164,7 +164,7 @@ public static class SshConfigHelper
         if (configEnd < 0)
             throw new InvalidOperationException(
                 "The SSH config contains a broken eryph guest services configuration. "
-                + $"Please cleanup your SSH config which can be found at '{sshConfigPath}'.");
+                + $"Please clean up the SSH config at '{sshConfigPath}'.");
 
         await File.WriteAllTextAsync(
             sshConfigPath,
