@@ -72,11 +72,11 @@ Start-Catlet -Name my-vm
 
 ### Remote SSH access
 
-Reach a catlet's guest SSH **from any machine** — the `egs-tool eryph` commands tunnel the same guest SSH server through eryph's authorized compute API (the bytes are relayed host-side over the Hyper-V socket; SSH runs end-to-end). No Hyper-V host access and **no administrator rights** are needed: the commands run as the operator and authenticate with the operator's eryph identity. The eryph client must hold the `compute:catlets:remote-access` scope.
+Reach a catlet's guest SSH **from any machine** — the `egs-tool catlet` commands tunnel the same guest SSH server through eryph's authorized compute API (the bytes are relayed host-side over the Hyper-V socket; SSH runs end-to-end). No Hyper-V host access and **no administrator rights** are needed: the commands run as the operator and authenticate with the operator's eryph identity. The eryph client must hold the `compute:catlets:remote-access` scope.
 
 ```powershell
 # Write an SSH alias for a catlet that tunnels through eryph
-egs-tool eryph add-ssh-config <catlet-id>
+egs-tool catlet add-ssh-config <catlet-id>
 
 # Connect (the alias's ProxyCommand bridges through eryph)
 ssh <catlet>.<project>.eryph.alt
@@ -87,12 +87,12 @@ ssh <catlet-id>.eryph.alt       # canonical, always unique
 **Keys.** By default the alias uses a **per-user managed key**, created on demand and stored in your own profile with a user-only ACL (so Windows OpenSSH will load it). Bring your own key with `--identity`:
 
 ```powershell
-egs-tool eryph add-ssh-config <catlet-id> --identity C:\Users\me\.ssh\id_ed25519
+egs-tool catlet add-ssh-config <catlet-id> --identity C:\Users\me\.ssh\id_ed25519
 ```
 
 The public key still has to be authorized in the guest — pre-inject it at build time, or push it at runtime.
 
-**Build time** — set the `sshPublicKey` variable of the [`dbosoft/guest-services`](https://genepool.eryph.io/b/dbosoft/guest-services) install gene in the catlet spec. Use the output of `egs-tool eryph get-client-key`:
+**Build time** — set the `sshPublicKey` variable of the [`dbosoft/guest-services`](https://genepool.eryph.io/b/dbosoft/guest-services) install gene in the catlet spec. Use the output of `egs-tool catlet get-client-key`:
 
 ```yaml
 name: my-vm
@@ -101,18 +101,18 @@ fodder:
   - source: gene:dbosoft/guest-services:win-install   # use linux-install on Linux
     variables:
       - name: sshPublicKey
-        value: 'ecdsa-sha2-nistp256 AAAA... egs'        # from: egs-tool eryph get-client-key
+        value: 'ecdsa-sha2-nistp256 AAAA... egs'        # from: egs-tool catlet get-client-key
 ```
 
 **Runtime** — authorize a key on a running catlet:
 
 ```powershell
 # Authorize the alias's key in the guest immediately
-egs-tool eryph add-ssh-config <catlet-id> --add-key
+egs-tool catlet add-ssh-config <catlet-id> --add-key
 
 # Or manage authorized keys directly (optionally with an expiry)
-egs-tool eryph add-key    <catlet-id> [--public-key <path|->] [--ttl 8h]
-egs-tool eryph remove-key <catlet-id>
+egs-tool catlet add-key    <catlet-id> [--public-key <path|->] [--ttl 8h]
+egs-tool catlet remove-key <catlet-id>
 ```
 
 Select a specific eryph client / configuration with `--client-id <id>` and `--configuration <name>`; otherwise the default eryph connection is used.
@@ -227,7 +227,7 @@ What's **not** supported (yet): jinja2 templating, part-handler, boothook execut
 
 ## Requirements
 
-**Host**: Windows 10/11 Pro/Enterprise/Education or Windows Server 2016+, Hyper-V enabled, administrator privileges. (The `egs-tool eryph` subcommands instead run on any machine with an eryph connection, without admin.)
+**Host**: Windows 10/11 Pro/Enterprise/Education or Windows Server 2016+, Hyper-V enabled, administrator privileges. (The `egs-tool catlet` subcommands instead run on any machine with an eryph connection, without admin.)
 
 **Guest**: Windows Server 2016+ / Windows 10+ or a modern Linux distribution with systemd. Hyper-V integration services enabled.
 
@@ -244,7 +244,7 @@ The guest SSH server uses public-key authentication only — passwords are disab
   egs-tool initialize    # regenerate keys if needed
   ```
 
-- **eryph remote flow** — the operator's key is authorized through the compute API. The default is a per-user managed key (user-only ACL, created on demand); `egs-tool eryph get-client-key` prints its public key for fodder pre-injection, and `--identity` selects your own key. See [Remote SSH access](#remote-ssh-access).
+- **eryph remote flow** — the operator's key is authorized through the compute API. The default is a per-user managed key (user-only ACL, created on demand); `egs-tool catlet get-client-key` prints its public key for fodder pre-injection, and `--identity` selects your own key. See [Remote SSH access](#remote-ssh-access).
 
 ---
 
@@ -266,16 +266,16 @@ The guest SSH server uses public-key authentication only — passwords are disab
 
 Flags: `--overwrite`, `--recursive` (directory commands), `--reset` (`set-shell`).
 
-### `egs-tool eryph` (remote access over eryph)
+### `egs-tool catlet` (remote access over eryph)
 
 Run on any machine with an eryph connection — not just the Hyper-V host — and authenticate with the operator's eryph identity (no admin rights).
 
 | Command | What |
 |---|---|
-| `eryph add-ssh-config <catlet-id> [--identity <key>] [--add-key]` | Write an SSH alias that tunnels through eryph |
-| `eryph add-key <catlet-id> [--public-key <path\|->] [--ttl <dur>]` | Authorize a public key in the guest (optionally expiring) |
-| `eryph remove-key <catlet-id>` | Revoke the caller's authorized key |
-| `eryph get-client-key` | Print the per-user managed public key (for fodder pre-injection) |
+| `catlet add-ssh-config <catlet-id> [--identity <key>] [--add-key]` | Write an SSH alias that tunnels through eryph |
+| `catlet add-key <catlet-id> [--public-key <path\|->] [--ttl <dur>]` | Authorize a public key in the guest (optionally expiring) |
+| `catlet remove-key <catlet-id>` | Revoke the caller's authorized key |
+| `catlet get-client-key` | Print the per-user managed public key (for fodder pre-injection) |
 
 Common flags: `--client-id <id>`, `--configuration <name>` to select the eryph connection. Requires the `compute:catlets:remote-access` scope.
 
@@ -305,7 +305,7 @@ Get-VM | Select-Object Name, Id
 Get-Catlet | Select-Object Name, Id, VmId
 ```
 
-The `egs-tool eryph` commands take a **catlet id**; the Hyper-V socket commands take a **VM id**.
+The `egs-tool catlet` commands take a **catlet id**; the Hyper-V socket commands take a **VM id**.
 
 ---
 
@@ -313,7 +313,7 @@ The `egs-tool eryph` commands take a **catlet id**; the Hyper-V socket commands 
 
 - **`get-status` returns `unknown`** — agent not running or Hyper-V integration services disabled in the VM.
 - **SSH `Connection refused` / banner timeout** — the agent crashed; check `Get-EventLog -LogName Application -Source egs-service` in the VM.
-- **`egs-tool eryph` cannot connect** — confirm an eryph connection is configured (or eryph-zero is running) and the client has the `compute:catlets:remote-access` scope; select a specific one with `--configuration` / `--client-id`.
+- **`egs-tool catlet` cannot connect** — confirm an eryph connection is configured (or eryph-zero is running) and the client has the `compute:catlets:remote-access` scope; select a specific one with `--configuration` / `--client-id`.
 - **Provisioning reports `failed`** — read `eryph.provisioning.error` via `egs-tool get-data --json <VM-ID>`; the agent also writes `%ProgramData%\eryph\provisioning\state.json` and per-script logs under `%ProgramData%\eryph\provisioning\logs\`.
 - **Re-running provisioning** — `egs-service reset` (then reboot the VM, or use `egs-service run` for a one-shot synchronous run). See [docs/user/howto/reset-and-rerun.md](docs/user/howto/reset-and-rerun.md).
 

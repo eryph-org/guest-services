@@ -61,7 +61,7 @@ app.Configure(config =>
         .WithDescription(
             "Configures the shell that interactive SSH sessions spawn in the VM.");
 
-    config.AddBranch("eryph", eryph =>
+    config.AddBranch("catlet", eryph =>
     {
         eryph.SetDescription(
             "Remote access to eryph catlets through the eryph-authorized channel.");
@@ -120,12 +120,12 @@ if (args is ["proxy", var vmId])
     return 0;
 }
 
-// The eryph data-plane proxy is, like the VM-level proxy above, kept out of
+// The catlet data-plane proxy is, like the VM-level proxy above, kept out of
 // Spectre.Console.Cli so nothing interferes with the redirected stdin/stdout it
 // bridges to the eryph channel. Unlike the VM proxy it must NOT require host
 // admin: it runs on the operator's machine and authenticates with the
 // operator's eryph identity.
-if (args.Length >= 3 && args[0] == "eryph" && args[1] == "proxy")
+if (args.Length >= 3 && args[0] == "catlet" && args[1] == "proxy")
 {
     var catletId = args[2];
     // Validate the id even though the generated alias only ever writes a safe one:

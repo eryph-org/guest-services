@@ -23,7 +23,7 @@ We want a remote operator to reach a catlet's egs SSH service through
 eryph's **authenticated fabric** — eryph authorizes the channel, the
 host agent opens the hvsocket, and SSH runs end-to-end so eryph never
 sees plaintext. This RFC covers the **guest-services side**: the
-`egs-tool eryph` command group, the guest-side key/expiry changes, and
+`egs-tool catlet` command group, the guest-side key/expiry changes, and
 the libraries eryph consumes. The eryph-side design (compute API
 endpoint, operation/saga, agent web host, reverse-proxy) lives in the
 eryph repo at `docs/internal/egs-remote-channel.md`; this RFC pins the
@@ -34,7 +34,7 @@ contract both sides share.
 ```
 egs-tool (operator machine)                 eryph                         host agent            guest
   ssh <catlet>.eryph.alt                  ComputeApi                   (HyperV module)        egs-service
-  └ ProxyCommand: egs-tool eryph proxy <catletId>
+  └ ProxyCommand: egs-tool catlet proxy <catletId>
         │ user creds (existing eryph connection)
         ├──WS (bearer; compute:catlets:remote-access)──►│
         │                                               │ start OpenSshChannel operation
@@ -53,7 +53,7 @@ service id (`0000138a-facb-11e6-bd58-64006a7986d3`, vsock port 5002).
 Any other guest port is the operator's problem to forward **over** this
 SSH session (`ssh -L`), never a second eryph channel.
 
-## `egs-tool eryph` command group
+## `egs-tool catlet` command group
 
 Rebuilt on the same client stack the removed integration used
 (`Eryph.ClientRuntime.Configuration`, `Eryph.IdentityModel.Clients`,
@@ -70,11 +70,11 @@ Rebuilt on the same client stack the removed integration used
 
 | Command | Purpose |
 |---|---|
-| `egs-tool eryph add-ssh-config <catletId> [--identity <path>] [--add-key]` | Write a single `<catlet>.<project>.eryph.alt` alias whose `ProxyCommand` is `egs-tool eryph proxy <catletId>`. `--identity` selects the private key (BYOK); omitted ⇒ managed key. `--add-key` also runs the key push (flow 2). |
-| `egs-tool eryph proxy <catletId>` | Data plane. Authenticate via the user connection, open the WS to the compute API, bridge stdin/stdout. Invoked by SSH `ProxyCommand`; protocol-agnostic. |
-| `egs-tool eryph get-client-key` | Print the managed client **public** key (for pasting into a catlet spec / fodder to pre-inject — flow 1). |
-| `egs-tool eryph add-key <catletId> [--public-key <path\|->] [--ttl <duration>]` | Push a public key to the catlet's guest via eryph (flow 2). Omitted `--public-key` ⇒ managed key. |
-| `egs-tool eryph remove-key <catletId>` | Revoke: eryph clears this operator's KVP slot in the guest. |
+| `egs-tool catlet add-ssh-config <catletId> [--identity <path>] [--add-key]` | Write a single `<catlet>.<project>.eryph.alt` alias whose `ProxyCommand` is `egs-tool catlet proxy <catletId>`. `--identity` selects the private key (BYOK); omitted ⇒ managed key. `--add-key` also runs the key push (flow 2). |
+| `egs-tool catlet proxy <catletId>` | Data plane. Authenticate via the user connection, open the WS to the compute API, bridge stdin/stdout. Invoked by SSH `ProxyCommand`; protocol-agnostic. |
+| `egs-tool catlet get-client-key` | Print the managed client **public** key (for pasting into a catlet spec / fodder to pre-inject — flow 1). |
+| `egs-tool catlet add-key <catletId> [--public-key <path\|->] [--ttl <duration>]` | Push a public key to the catlet's guest via eryph (flow 2). Omitted `--public-key` ⇒ managed key. |
+| `egs-tool catlet remove-key <catletId>` | Revoke: eryph clears this operator's KVP slot in the guest. |
 
 `add-ssh-config <vmId>` and `<vmId>.hyper-v.alt` (VM-level, local
 hvsocket) are unchanged and coexist exactly as the

@@ -5,7 +5,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph add-ssh-config <catletId> [--identity <path>] [--add-key]
+// egs-tool catlet add-ssh-config <catletId> [--identity <path>] [--add-key]
 //
 // Resolves a single catlet via the compute client and writes one
 // "<catlet>.<project>.eryph.alt" SSH alias whose ProxyCommand bridges through

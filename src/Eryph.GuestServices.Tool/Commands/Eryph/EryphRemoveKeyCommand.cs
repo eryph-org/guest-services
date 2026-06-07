@@ -4,7 +4,7 @@ using Spectre.Console.Cli;
 
 namespace Eryph.GuestServices.Tool.Commands.Eryph;
 
-// egs-tool eryph remove-key <catletId>
+// egs-tool catlet remove-key <catletId>
 //
 // Revokes the caller's own key via the compute client. The server derives the
 // subject from the bearer token, so no key is sent.

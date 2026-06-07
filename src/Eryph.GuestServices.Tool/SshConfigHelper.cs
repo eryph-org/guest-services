@@ -250,7 +250,7 @@ public static class SshConfigHelper
         && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 
     // Writes a single per-catlet SSH config whose ProxyCommand bridges to the
-    // eryph channel (egs-tool eryph proxy <catletId>) rather than a local
+    // eryph channel (egs-tool catlet proxy <catletId>) rather than a local
     // hvsocket. Per-catlet and on demand: unlike the removed bulk
     // update-ssh-config it never enumerates or rewrites other catlets' configs.
     public static async Task<IReadOnlyList<string>> EnsureCatletConfigAsync(
@@ -476,7 +476,7 @@ public static class SshConfigHelper
         // other shell-significant character) would otherwise be split into extra
         // tokens — or worse, alter the proxy command line — when the SSH client
         // executes the ProxyCommand.
-        var proxyCommand = new StringBuilder($"egs-tool.exe eryph proxy {catletId}");
+        var proxyCommand = new StringBuilder($"egs-tool.exe catlet proxy {catletId}");
         if (!string.IsNullOrEmpty(configurationName))
             proxyCommand.Append($" --configuration \"{configurationName}\"");
         if (!string.IsNullOrEmpty(clientId))
