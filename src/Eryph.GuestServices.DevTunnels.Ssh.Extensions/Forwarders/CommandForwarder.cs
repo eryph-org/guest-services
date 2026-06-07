@@ -86,6 +86,10 @@ public sealed class CommandForwarder : IDisposable
         // PTY path, where a terminal has no separate error stream. A shared lock
         // serializes the two pumps so their writes can't interleave mid-chunk
         // and corrupt the channel framing.
+        // Capture the token once: a CancellationToken struct stays usable after
+        // its source is disposed, so Dispose can free _cts without racing the
+        // _cts.Token getter here (which would throw ObjectDisposedException).
+        var cancellation = _cts.Token;
         var writeLock = new SemaphoreSlim(1, 1);
         Task? stdoutTask = null;
         Task? stderrTask = null;
@@ -94,18 +98,18 @@ public sealed class CommandForwarder : IDisposable
             _process!.Start();
 
             stdoutTask = PumpToChannelAsync(
-                _process.StandardOutput.BaseStream, sshStream, writeLock, _cts.Token);
+                _process.StandardOutput.BaseStream, sshStream, writeLock, cancellation);
             stderrTask = PumpToChannelAsync(
-                _process.StandardError.BaseStream, sshStream, writeLock, _cts.Token);
-            _ = sshStream.CopyToAsync(_process.StandardInput.BaseStream, _cts.Token);
+                _process.StandardError.BaseStream, sshStream, writeLock, cancellation);
+            _ = sshStream.CopyToAsync(_process.StandardInput.BaseStream, cancellation);
 
-            await _process.WaitForExitAsync(_cts.Token);
+            await _process.WaitForExitAsync(cancellation);
             await Task.WhenAll(stdoutTask, stderrTask);
-            await sshStream.Channel.CloseAsync(unchecked((uint)_process.ExitCode), _cts.Token);
+            await sshStream.Channel.CloseAsync(unchecked((uint)_process.ExitCode), cancellation);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await sshStream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, _cts.Token);
+            await sshStream.Channel.CloseAsync(EryphSignalTypes.Exception, ex.Message, cancellation);
         }
         finally
         {
@@ -147,12 +151,19 @@ public sealed class CommandForwarder : IDisposable
 
     public void Dispose()
     {
-        // Cancel before disposing so the read/write pumps observe cancellation
-        // and stop, instead of lingering on an already-disposed token until the
-        // killed process happens to close the pipes (matches PtyForwarder).
+        // Runs on the channel.Closed event path, so it must not throw. Cancel
+        // first so the pumps observe cancellation and stop, instead of lingering
+        // until the killed process closes the pipes (matches PtyForwarder).
         try { _cts.Cancel(); } catch (ObjectDisposedException) { }
-        _cts.Dispose();
-        _process?.Kill(true);
+
+        // Kill throws InvalidOperationException if the process was never started
+        // (Dispose can race a teardown before RunAsync calls Start). Best-effort
+        // — ObjectDisposedException derives from InvalidOperationException, so
+        // this one catch covers both.
+        try { _process?.Kill(true); }
+        catch (InvalidOperationException) { }
+
         _process?.Dispose();
+        _cts.Dispose();
     }
 }

@@ -14,7 +14,7 @@ public static class NonInteractiveShell
     /// <c>cmd</c> uses <c>/c</c>, and every other (POSIX) shell defaults to
     /// <c>-c</c>.
     /// </summary>
-    public static string CommandFlagFor(string shellCommand)
+    public static string CommandFlagFor(string? shellCommand)
     {
         // Reduce "C:\Program Files\PowerShell\7\pwsh.exe" or "/bin/bash" to a
         // bare, extension-less, lower-case name. Split on both separators so a

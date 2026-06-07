@@ -53,6 +53,6 @@ public class NonInteractiveShellTests
         // A blank shell never produces a runnable process — BuildStartInfo would
         // fail at start — but the flag inference must not throw; it returns the
         // POSIX default.
-        NonInteractiveShell.CommandFlagFor(shellCommand!).Should().Be("-c");
+        NonInteractiveShell.CommandFlagFor(shellCommand).Should().Be("-c");
     }
 }
