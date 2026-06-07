@@ -157,4 +157,64 @@ Describe 'Configurable shell' {
       $output | Should -Not -Match 'PowerShell 7\.'
     }
   }
+
+  # The SSH `exec` request (`ssh host "<command>"`) runs the command through
+  # the selected shell, just like the interactive path — not as a bare,
+  # split-on-space executable. These assert the OpenSSH `$SHELL -c "..."`
+  # contract: shell operators are honored, the configured shell is used, the
+  # remote exit code propagates, and stderr comes back to the client.
+  Context 'exec (remote command)' {
+
+    It 'runs a command through the default shell' {
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId -Command 'Write-Output egs-exec-ok'
+
+      $result.ExitCode | Should -Be 0
+      $result.Output | Should -Match 'egs-exec-ok'
+    }
+
+    It 'evaluates a pipeline (shell parsing, not a split-on-space exec)' {
+      # A pipe only works if a shell interprets the command. The pre-fix exec
+      # path tried to launch an executable literally named "Write-Output".
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId `
+        -Command 'Write-Output hello | ForEach-Object { $_.ToUpper() }'
+
+      $result.ExitCode | Should -Be 0
+      $result.Output | Should -Match 'HELLO'
+    }
+
+    It 'uses the default shell (Windows PowerShell) when no override is set' {
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId `
+        -Command 'Write-Output $PSVersionTable.PSEdition'
+
+      $result.ExitCode | Should -Be 0
+      $result.Output | Should -Match 'Desktop'
+    }
+
+    It 'honors the KVP shell override for exec' {
+      egs-tool set-shell $catlet.VmId --command 'pwsh.exe' | Out-Null
+
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId `
+        -Command 'Write-Output $PSVersionTable.PSEdition'
+
+      $result.ExitCode | Should -Be 0
+      $result.Output | Should -Match 'Core'
+    }
+
+    It 'propagates the remote exit code' {
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId -Command 'exit 7'
+
+      $result.ExitCode | Should -Be 7
+    }
+
+    It 'returns stderr to the client' {
+      # stderr is merged onto the channel (the library has no extended-data
+      # support). Both markers must come back; pre-fix the stderr one was lost.
+      $result = Invoke-EgsSshCommand -VmId $catlet.VmId `
+        -Command "[Console]::Error.WriteLine('egs-stderr-marker'); [Console]::Out.WriteLine('egs-stdout-marker')"
+
+      $result.ExitCode | Should -Be 0
+      $result.Output | Should -Match 'egs-stdout-marker'
+      $result.Output | Should -Match 'egs-stderr-marker'
+    }
+  }
 }

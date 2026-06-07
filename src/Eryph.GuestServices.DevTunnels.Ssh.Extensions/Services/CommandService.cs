@@ -8,9 +8,19 @@ using Microsoft.DevTunnels.Ssh.Services;
 namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions.Services;
 
 [ServiceActivation(ChannelRequest = ChannelRequestTypes.Command)]
-public class CommandService(SshSession session) : SshService(session)
+public class CommandService : SshService
 {
+    private readonly IShellSelector? _shellSelector;
     private readonly ConcurrentDictionary<uint, CommandForwarder> _forwarders = new();
+
+    // Microsoft.DevTunnels.Ssh activation picks the 2-arg ctor when a config
+    // object (the shell selector) is present in SshSessionConfiguration.Services.
+    public CommandService(SshSession session) : this(session, null) { }
+
+    public CommandService(SshSession session, IShellSelector? shellSelector) : base(session)
+    {
+        _shellSelector = shellSelector;
+    }
 
     protected override Task OnChannelRequestAsync(
         SshChannel channel,
@@ -24,7 +34,7 @@ public class CommandService(SshSession session) : SshService(session)
         }
 
         var execRequest = request.Request.ConvertTo<CommandRequestMessage>();
-        var forwarder = new CommandForwarder(execRequest.Command ?? "");
+        var forwarder = new CommandForwarder(execRequest.Command ?? "", _shellSelector);
 
         if (!_forwarders.TryAdd(channel.ChannelId, forwarder))
         {
