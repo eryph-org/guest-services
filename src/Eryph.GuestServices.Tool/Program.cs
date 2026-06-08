@@ -89,6 +89,18 @@ app.Configure(config =>
         eryph.AddCommand<EryphSetShellCommand>("set-shell")
             .WithDescription(
                 "Sets the SSH session shell on the given catlet via eryph.");
+
+        eryph.AddCommand<CatletUploadFileCommand>("upload-file")
+            .WithDescription("Uploads a file from the host to the catlet via eryph.");
+
+        eryph.AddCommand<CatletUploadDirectoryCommand>("upload-directory")
+            .WithDescription("Uploads a directory from the host to the catlet via eryph.");
+
+        eryph.AddCommand<CatletDownloadFileCommand>("download-file")
+            .WithDescription("Downloads a file from the catlet to the host via eryph.");
+
+        eryph.AddCommand<CatletDownloadDirectoryCommand>("download-directory")
+            .WithDescription("Downloads a directory from the catlet to the host via eryph.");
     });
 });
 

@@ -1,26 +1,16 @@
 using System.Net.WebSockets;
-using Eryph.ComputeClient;
-using Eryph.ComputeClient.Models;
+using Eryph.GuestServices.Tool.Transport;
 
 namespace Eryph.GuestServices.Tool.Eryph;
 
 // The eryph data plane. Invoked by SSH as the ProxyCommand
-// (egs-tool catlet proxy <catletId>). Two-step, using the typed Eryph.ComputeClient
-// (eryph's async operation model — the API never blocks on an operation):
-//   1. CatletsClient.OpenSshChannel  -> starts the OpenSshChannel operation.
-//   2. poll OperationsClient.Get     -> until it completes; read the one-time
-//                                       channel token from the SshChannelOperationResult.
-//   3. GET catlets/{id}/guest-services/ssh-channel/connect?token=...  (WebSocket) -> bridge the
-//      local stdin/stdout to that socket. The WebSocket leg is a raw ClientWebSocket
-//      because OpenAPI/the generated client does not model WebSocket upgrades.
-// Protocol-agnostic: SSH runs end-to-end over the channel, eryph only relays the
-// bytes. Run outside Spectre.Console.Cli so nothing touches the redirected
-// stdin/stdout.
+// (egs-tool catlet proxy <catletId>): it opens the eryph channel (via the shared
+// EryphChannel helper) and bridges the local stdin/stdout to the data-plane
+// WebSocket. Protocol-agnostic: SSH runs end-to-end over the channel and eryph
+// only relays the bytes. Run outside Spectre.Console.Cli so nothing touches the
+// redirected stdin/stdout.
 public static class EryphProxy
 {
-    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
-    private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(30);
-
     public static async Task<int> RunAsync(
         string catletId,
         string? clientId = null,
@@ -34,113 +24,34 @@ public static class EryphProxy
             return -1;
         }
 
-        var catlets = connection.CreateCatletsClient(EryphConnection.RemoteAccessScope);
-        var operations = connection.CreateOperationsClient();
-
-        // 1. Start the control-plane operation. The agent (via the saga) prepares the hvsocket and
-        // mints a one-time token; we do not push a key here (use `catlet add-key` for the added-key flow).
-        string operationId;
+        ClientWebSocket webSocket;
         try
         {
-            operationId = (await catlets.OpenSshChannelAsync(catletId)).Value.Id;
+            webSocket = await EryphChannel.OpenAsync(
+                connection,
+                catletId,
+                // The proxy talks to ssh over stdout, so its notices go to stderr.
+                writeWarning: msg => Console.Error.WriteLine($"Warning: {msg}"),
+                CancellationToken.None);
         }
-        catch (Exception ex)
+        catch (GuestConnectionException ex)
         {
-            await Console.Error.WriteLineAsync($"Failed to start the SSH channel: {ex.Message}");
+            await Console.Error.WriteLineAsync(ex.Message);
             return -1;
         }
 
-        // 2. Poll the operation until the channel token is available.
-        var channelToken = await PollForTokenAsync(operations, operationId);
-        if (channelToken is null)
+        using (webSocket)
         {
-            await Console.Error.WriteLineAsync("The SSH channel operation did not produce a token in time.");
-            return -1;
+            var stdin = Console.OpenStandardInput();
+            var stdout = Console.OpenStandardOutput();
+
+            using var cts = new CancellationTokenSource();
+            await Task.WhenAll(
+                PumpStdinToSocketAsync(stdin, webSocket, cts),
+                PumpSocketToStdoutAsync(webSocket, stdout, cts));
         }
-
-        // 3. Open the data-plane WebSocket with the token and bridge stdio.
-        string token;
-        try
-        {
-            token = await connection.GetAccessTokenAsync([EryphConnection.RemoteAccessScope]);
-        }
-        catch (Exception ex)
-        {
-            await Console.Error.WriteLineAsync($"Failed to acquire an access token: {ex.Message}");
-            return -1;
-        }
-
-        var connectUri = connection.BuildComputeUri(
-            $"catlets/{Uri.EscapeDataString(catletId)}/guest-services/ssh-channel/connect?token={Uri.EscapeDataString(channelToken)}");
-        var wsUri = new UriBuilder(connectUri)
-        {
-            Scheme = connectUri.Scheme == Uri.UriSchemeHttps ? "wss" : "ws",
-        }.Uri;
-
-        if (wsUri.Scheme == "ws")
-            // The compute endpoint is not using TLS (e.g. a dev/local eryph). The
-            // bearer token below is then sent in clear text; warn so a misconfigured
-            // endpoint does not silently leak it.
-            await Console.Error.WriteLineAsync(
-                "Warning: connecting over an unencrypted channel; the access token is not protected.");
-
-        using var webSocket = new ClientWebSocket();
-        webSocket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
-        try
-        {
-            await webSocket.ConnectAsync(wsUri, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            // DNS/TLS/401/upgrade failure: emit one concise stderr line for the
-            // SSH client rather than letting a stack trace reach it.
-            await Console.Error.WriteLineAsync($"Failed to open the SSH channel connection: {ex.Message}");
-            return -1;
-        }
-
-        var stdin = Console.OpenStandardInput();
-        var stdout = Console.OpenStandardOutput();
-
-        using var cts = new CancellationTokenSource();
-        await Task.WhenAll(
-            PumpStdinToSocketAsync(stdin, webSocket, cts),
-            PumpSocketToStdoutAsync(webSocket, stdout, cts));
 
         return 0;
-    }
-
-    // Polls the operation until it completes, then returns the channel token from the typed
-    // SshChannelOperationResult. Returns null on failure or timeout.
-    private static async Task<string?> PollForTokenAsync(
-        OperationsClient operations,
-        string operationId)
-    {
-        var deadline = DateTimeOffset.UtcNow + PollTimeout;
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            Operation operation;
-            try
-            {
-                operation = (await operations.GetAsync(operationId)).Value;
-            }
-            catch (Exception)
-            {
-                // A transient network/auth blip must not crash the proxy. Keep
-                // polling until the deadline; a persistent failure simply times out.
-                await Task.Delay(PollInterval);
-                continue;
-            }
-
-            if (operation.Status == OperationStatus.Failed)
-                return null;
-
-            if (operation.Status == OperationStatus.Completed)
-                return operation.Result is SshChannelOperationResult result ? result.Token : null;
-
-            await Task.Delay(PollInterval);
-        }
-
-        return null;
     }
 
     private static async Task PumpStdinToSocketAsync(
