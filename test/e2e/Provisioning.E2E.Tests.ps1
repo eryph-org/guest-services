@@ -12,13 +12,16 @@
   - The catlet config (`provisioning-catlet.yaml`) is the TEST INPUT — its
     cloud-config fodder is what our agent is asked to process. eryph-zero
     compiles fodder into a ConfigDrive ISO that gets attached to the catlet.
-  - We do NOT add the dbosoft/guest-services gene; the parent gives us
-    Windows + cloudbase-init. We install our agent offline via VHD mount.
+  - We do NOT add the dbosoft/guest-services gene; the parent already ships
+    egs-service baked into C:\Program Files\eryph\guest-services\bin\. We
+    overwrite those binaries with our locally-built ones offline via VHD mount.
+  - Newer base images no longer ship cloudbase-init (egs-service is the sole
+    provisioning engine). The offline cloudbase-init disable is therefore
+    best-effort and a no-op when cbi is absent (Test-Path guarded); it stays
+    in place for older images that still bundle it.
   - Before first start we mount the catlet's VHD, copy our locally-built
-    egs-service binaries into C:\Program Files\eryph\guest-services\bin\,
-    register egs-service as an automatic Windows service via the offline
-    SYSTEM hive, and disable cloudbase-init by renaming its install dir AND
-    setting its service Start=Disabled.
+    egs-service binaries into the existing bin dir, and (if present) disable
+    cloudbase-init by renaming its install dir AND setting Start=Disabled.
   - On first boot, only egs-service runs. Its ProvisioningHostedService
     discovers the ConfigDrive datasource, processes our cloud-config, and
     reports completion via KVP. SetHostnameModule may trigger a reboot;
@@ -391,6 +394,29 @@ Describe 'Embedded provisioning at first boot' {
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' status --json"
       $r.ExitCode | Should -Be 0
       ($r.Output | ConvertFrom-Json -AsHashtable).completedStages | Should -Contain 'Final'
+    }
+
+    It 'collect-logs captures the agent''s own operational log (issue #45)' {
+      # The agent writes its operational log to a file
+      # (%ProgramData%\eryph\guest-services\logs\agent.log) so the support
+      # bundle is useful even when no user-data scripts ran — without it the
+      # only sink was the Windows Event Log, which collect-logs never reads.
+      # Build the bundle, then inspect it in-guest: the egs SSH server has no
+      # SFTP subsystem so scp can't pull it. Both probes are single-quoted
+      # (no double quotes) so they survive the ssh.exe "powershell -Command"
+      # wrapping in Invoke-GuestPS.
+      $hostName = "$($catlet.VmId).hyper-v.alt"
+      $build = Invoke-GuestPS -HostName $hostName `
+        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-e2e-bundle.zip"
+      $build.ExitCode | Should -Be 0
+
+      $probe = @'
+Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::OpenRead('C:\Windows\Temp\egs-e2e-bundle.zip'); try { $e=$z.Entries | Where-Object FullName -eq 'logs/agent.log'; if ($e) { 'agent.log=' + $e.Length } else { 'agent.log=MISSING' } } finally { $z.Dispose() }
+'@
+      $r = Invoke-GuestPS -HostName $hostName -Script $probe
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Match '^agent\.log=\d+$'
+      [int]($r.Output.Trim() -replace 'agent\.log=', '') | Should -BeGreaterThan 0
     }
   }
 }

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -52,7 +53,13 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
         if (File.Exists(ProvisioningPaths.StateFile))
             archive.CreateEntryFromFile(ProvisioningPaths.StateFile, "state.json");
 
-        // logs/
+        // logs/ — the agent's own operational log (agent.log + rolled backups)
+        // lives under the service-wide guest-services root; the provisioning
+        // per-script logs live under the provisioning root. Both go under the
+        // same logs/ prefix (filenames don't collide: agent.log vs <script>.log).
+        if (Directory.Exists(AgentPaths.LogsDirectory))
+            AddDirectory(archive, AgentPaths.LogsDirectory, "logs");
+
         if (Directory.Exists(ProvisioningPaths.LogsDirectory))
             AddDirectory(archive, ProvisioningPaths.LogsDirectory, "logs");
 
