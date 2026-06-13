@@ -217,11 +217,11 @@ public sealed class CloudInitKvpEventEncoderTests
 
         entries.Count.Should().BeGreaterThan(1);
 
-        var reassembled = new System.Text.StringBuilder();
+        var reassembled = new StringBuilder();
         for (var i = 0; i < entries.Count; i++)
         {
             entries[i].Key.Should().EndWith($"|{i}");
-            entries[i].Value.Length.Should().BeLessThanOrEqualTo(1024);
+            Encoding.UTF8.GetByteCount(entries[i].Value).Should().BeLessThanOrEqualTo(1024);
             using var doc = JsonDocument.Parse(entries[i].Value);
             doc.RootElement.GetProperty("msg_i").GetInt32().Should().Be(i);
             reassembled.Append(doc.RootElement.GetProperty("msg").GetString());
@@ -229,5 +229,37 @@ public sealed class CloudInitKvpEventEncoderTests
 
         // Concatenating the slices reconstructs the full description.
         reassembled.ToString().Should().Be(huge);
+    }
+
+    [Fact]
+    public void Encode_break_down_stays_valid_json_for_escape_heavy_descriptions()
+    {
+        // Regression: slicing the *escaped* string could cut a `\` or `\uXXXX`
+        // escape mid-sequence and emit unparseable JSON. We slice the raw text
+        // and escape per chunk, so every chunk must parse — and reassemble.
+        // The unit mixes backslashes, quotes, tab, newline and non-ASCII.
+        var unit = "C:\\path\\to\\x\twith \"quotes\"\nand ünïcödé éè中 ";
+        var builder = new StringBuilder();
+        while (builder.Length < 4000)
+            builder.Append(unit);
+        var description = builder.ToString();
+
+        var entries = CloudInitKvpEventEncoder.Encode(
+            new CloudInitEvent("modules-final", "finish", "FAIL", description, DateTimeOffset.UnixEpoch),
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+
+        entries.Count.Should().BeGreaterThan(1);
+
+        var reassembled = new StringBuilder();
+        for (var i = 0; i < entries.Count; i++)
+        {
+            // Each chunk parses as valid JSON (the regression guard) and fits.
+            using var doc = JsonDocument.Parse(entries[i].Value);
+            Encoding.UTF8.GetByteCount(entries[i].Value).Should().BeLessThanOrEqualTo(1024);
+            doc.RootElement.GetProperty("msg_i").GetInt32().Should().Be(i);
+            reassembled.Append(doc.RootElement.GetProperty("msg").GetString());
+        }
+
+        reassembled.ToString().Should().Be(description);
     }
 }
