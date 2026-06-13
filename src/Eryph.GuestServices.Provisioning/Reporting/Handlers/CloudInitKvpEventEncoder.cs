@@ -160,13 +160,7 @@ internal static class CloudInitKvpEventEncoder
             writer.WriteStartObject();
             writer.WriteString("name", cloudInitEvent.Name);
             writer.WriteString("type", cloudInitEvent.Type);
-            // Match cloud-init's value JSON: datetime.fromtimestamp(ts, utc)
-            // .isoformat() — a `+00:00` offset and 6-digit microseconds (not the
-            // `Z` + 7-digit form .NET's round-trip "O" produces).
-            writer.WriteString(
-                "ts",
-                cloudInitEvent.Timestamp.ToUniversalTime().ToString(
-                    "yyyy-MM-ddTHH:mm:ss.ffffffK", CultureInfo.InvariantCulture));
+            writer.WriteString("ts", FormatTimestamp(cloudInitEvent.Timestamp));
             if (cloudInitEvent.Result is not null)
                 writer.WriteString("result", cloudInitEvent.Result);
             if (cloudInitEvent.Duration is { } duration)
@@ -178,5 +172,18 @@ internal static class CloudInitKvpEventEncoder
         }
 
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    // Match cloud-init's value JSON: datetime.fromtimestamp(ts, utc).isoformat().
+    // Python's isoformat() uses a `+00:00` offset and emits 6 microsecond digits
+    // when non-zero, but omits the fractional part entirely when microseconds
+    // are 0 (it does NOT trim trailing zeros within the 6 digits). The round-trip
+    // "O" specifier would instead give a `Z` suffix with 7 fixed digits.
+    private static string FormatTimestamp(DateTimeOffset timestamp)
+    {
+        var utc = timestamp.ToUniversalTime();
+        return utc.ToString("ffffff", CultureInfo.InvariantCulture) == "000000"
+            ? utc.ToString("yyyy-MM-ddTHH:mm:ssK", CultureInfo.InvariantCulture)
+            : utc.ToString("yyyy-MM-ddTHH:mm:ss.ffffffK", CultureInfo.InvariantCulture);
     }
 }

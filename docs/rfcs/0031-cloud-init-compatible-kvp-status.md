@@ -46,7 +46,8 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   `duration` (seconds, finish only) is paired from the matching start event by
   the handler — so no module reports timing itself. `ts` matches cloud-init's
   `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
-  microseconds.
+  microseconds when non-zero, with the fractional part omitted entirely for
+  whole seconds.
 - **Oversize handling** matches cloud-init's `_break_down`: a value over the
   Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024`) is split across
   `<base>|<index>` subkeys, each a full event JSON carrying `msg_i:<index>` and

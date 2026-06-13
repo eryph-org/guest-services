@@ -116,7 +116,8 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         {
             var seconds = (cloudInitEvent.Timestamp - start).TotalSeconds;
             if (seconds >= 0)
-                return cloudInitEvent with { Duration = Math.Round(seconds, 3) };
+                // cloud-init's FinishReportingEvent rounds duration to 4 places.
+                return cloudInitEvent with { Duration = Math.Round(seconds, 4) };
         }
 
         return cloudInitEvent;
