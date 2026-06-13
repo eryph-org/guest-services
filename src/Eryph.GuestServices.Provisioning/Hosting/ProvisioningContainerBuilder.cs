@@ -185,7 +185,7 @@ internal static class ProvisioningContainerBuilder
 
         // KVP reporting is disabled in dry-run mode so a what-if run does not
         // overwrite the host-visible KVP state of a real provisioning attempt.
-        // KvpReportingHandler writes the eryph.provisioning.* snapshot;
+        // KvpReportingHandler writes the single eryph.provisioning.state key;
         // CloudInitKvpReportingHandler writes the cloud-init-compatible
         // CLOUD_INIT|... event stream. Both share the guest KVP pool.
         if (!options.DryRun)

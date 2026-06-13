@@ -9,7 +9,7 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 // Emits the same CLOUD_INIT|... KVP event stream that real cloud-init's
 // HyperVKvpReportingHandler writes, so a host-side reader parses Windows (egs)
 // guests the same way it parses Linux (real cloud-init) guests. Runs ALONGSIDE
-// KvpReportingHandler, which keeps writing the eryph.provisioning.* snapshot —
+// KvpReportingHandler, which writes the single eryph.provisioning.state key —
 // this handler does not touch it.
 //
 // Like its sibling it probes once at construction and gates via IsApplicable;

@@ -156,8 +156,8 @@ incarnation (the boot epoch second); stale incarnations are swept on startup.
 - **Windows, Surface 1:** `CloudInitKvpReportingHandler`,
   `CloudInitKvpEventEncoder`. Registered alongside
   `KvpReportingHandler` in the reporting collection (gated off in dry-run).
-- **Windows, Surface 2:** `KvpReportingHandler`, reduced to `state`
-  (+ the out-of-scope `ssh_host_keys`).
+- **Windows, Surface 2:** `KvpReportingHandler`, reduced to the single
+  `eryph.provisioning.state` key.
 - **Linux, Surface 2:** `CloudInitStatusWatcher` + `CloudInitStatusReader` +
   `CloudInitStateMapper`, registered only on Linux.
 - **Linux, Surface 1:** nothing — cloud-init native.
