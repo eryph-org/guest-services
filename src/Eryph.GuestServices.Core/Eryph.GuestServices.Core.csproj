@@ -14,7 +14,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The file log provider needs ILogger/ILoggerProvider only — the
+         lightweight Abstractions package, not the full logging host. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Eryph.GuestServices.Service.Tests" />
+    <InternalsVisibleTo Include="Eryph.GuestServices.Provisioning.Tests" />
   </ItemGroup>
 
 </Project>
