@@ -106,22 +106,24 @@ public sealed class CollectLogsCommandTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_skips_unreadable_log_files_and_still_succeeds()
+    public async Task ExecuteAsync_skips_a_file_it_cannot_open_and_still_succeeds()
     {
-        // Best-effort contract: a log file collect-logs cannot open — locked,
-        // or permission-denied under a privileged tree like /var/log — must be
-        // skipped, not abort the whole bundle. Both failure modes hit the same
-        // skip-and-continue path in AddDirectory.
+        // Best-effort contract: a log file collect-logs cannot open must be
+        // skipped, not abort the whole bundle. This asserts the open-failure
+        // skip path deterministically by holding a file open exclusively
+        // (Windows: CreateEntryFromFile's read open hits a sharing violation ->
+        // IOException). A permission-denied file raises UnauthorizedAccessException
+        // and hits the same catch; that path can't be triggered portably (CI
+        // runs elevated, and POSIX file locks are advisory), so it isn't
+        // asserted here — the catch covers both exception types.
         var agentLogs = AgentPaths.LogsDirectory;
         Directory.CreateDirectory(agentLogs);
         await File.WriteAllTextAsync(Path.Combine(agentLogs, "agent.log"), "readable");
         var lockedPath = Path.Combine(agentLogs, "locked.log");
         await File.WriteAllTextAsync(lockedPath, "locked");
 
-        // Hold it open with no sharing so CreateEntryFromFile's read open is
-        // refused (Windows: sharing violation -> IOException). On Linux the
-        // lock is advisory, so the file is simply bundled — either way the
-        // command must succeed and the readable log must be present.
+        // On Linux the lock is advisory, so the file is simply bundled — either
+        // way the command must succeed and the readable log must be present.
         using var hold = new FileStream(
             lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
 
