@@ -350,6 +350,10 @@ public sealed class NoCloudDataSource(
         if (string.IsNullOrWhiteSpace(raw))
             return keys;
 
+        // Order-preserving de-dup: the list keeps insertion order, the set gives
+        // O(1) membership so a large key set stays linear.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
         void Add(string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -357,7 +361,7 @@ public sealed class NoCloudDataSource(
             foreach (var line in value.Split('\n'))
             {
                 var key = line.Trim();
-                if (key.Length > 0 && !keys.Contains(key))
+                if (key.Length > 0 && seen.Add(key))
                     keys.Add(key);
             }
         }
@@ -370,9 +374,10 @@ public sealed class NoCloudDataSource(
             if (stream.Documents.Count > 0)
                 root = stream.Documents[0].RootNode;
         }
-        catch
+        catch (YamlDotNet.Core.YamlException)
         {
-            // Not parseable as YAML — treat the whole value as key text.
+            // Not parseable as YAML — treat the whole value as key text. Only
+            // YAML parse failures are swallowed; other exceptions surface.
         }
 
         switch (root)
