@@ -33,6 +33,12 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
     private string? _vmId;
     private bool _sweptStale;
 
+    // Start-event timestamps keyed by cloud-init event name (<stage> or
+    // <stage>/<module>). Lets us compute the `duration` of a finish event by
+    // pairing it with its start — centrally, so no module reports timing itself.
+    private readonly Dictionary<string, DateTimeOffset> _startTimes =
+        new(StringComparer.Ordinal);
+
     public CloudInitKvpReportingHandler(
         IGuestDataExchange kvp,
         IStateStore stateStore,
@@ -58,6 +64,9 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         if (mapped is null)
             return;
 
+        // Pair start/finish events to attach cloud-init's `duration` (seconds).
+        var cloudInitEvent = WithDuration(mapped.Value);
+
         // Resolve incarnation / vm_id and sweep stale entries only once we have
         // an event that actually produces output — events with no cloud-init
         // analogue (ProvisioningStarted, Progress, SshHostKeysReported, ...) must
@@ -65,7 +74,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         var entry = CloudInitKvpEventEncoder.Encode(
-            mapped.Value, _incarnation ?? 0, _vmId ?? "", Guid.NewGuid());
+            cloudInitEvent, _incarnation ?? 0, _vmId ?? "", Guid.NewGuid());
 
         try
         {
@@ -84,6 +93,30 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
                 "Failed to write cloud-init KVP event for {Event}; host-side reporting will be stale",
                 reportingEvent.GetType().Name);
         }
+    }
+
+    // Attach cloud-init's `duration` (seconds) by pairing a finish event with
+    // the start of the same name. Start events record their timestamp; finish
+    // events consume it. A finish with no recorded start (e.g. a reboot dropped
+    // the start, or a failure before any stage opened) simply carries no
+    // duration, matching cloud-init's "only when timed" behaviour.
+    private CloudInitEvent WithDuration(CloudInitEvent cloudInitEvent)
+    {
+        if (cloudInitEvent.Type == CloudInitKvpEventEncoder.StartType)
+        {
+            _startTimes[cloudInitEvent.Name] = cloudInitEvent.Timestamp;
+            return cloudInitEvent;
+        }
+
+        if (cloudInitEvent.Type == CloudInitKvpEventEncoder.FinishType
+            && _startTimes.Remove(cloudInitEvent.Name, out var start))
+        {
+            var seconds = (cloudInitEvent.Timestamp - start).TotalSeconds;
+            if (seconds >= 0)
+                return cloudInitEvent with { Duration = Math.Round(seconds, 3) };
+        }
+
+        return cloudInitEvent;
     }
 
     // Resolved lazily on the first published event: the incarnation (the
