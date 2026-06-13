@@ -38,4 +38,24 @@ internal sealed class Win32BootClock : IBootClock
                 "Win32_OperatingSystem.LastBootUpTime stringified to null.");
         }
     }
+
+    public DateTimeOffset GetCurrentBootTime()
+    {
+        using var session = CimSession.Create(null);
+        var instance = session.EnumerateInstances(CimNamespace, "Win32_OperatingSystem").FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                "No Win32_OperatingSystem instance was returned by CIM; cannot determine boot time.");
+        using (instance)
+        {
+            var value = instance.CimInstanceProperties["LastBootUpTime"]?.Value
+                ?? throw new InvalidOperationException(
+                    "Win32_OperatingSystem.LastBootUpTime was null; cannot determine boot time.");
+
+            if (value is DateTime dt)
+                return new DateTimeOffset(dt.ToUniversalTime());
+
+            throw new InvalidOperationException(
+                $"Win32_OperatingSystem.LastBootUpTime was not a DateTime (was {value.GetType()}).");
+        }
+    }
 }

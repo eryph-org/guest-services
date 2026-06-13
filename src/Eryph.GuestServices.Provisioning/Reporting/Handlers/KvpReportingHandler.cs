@@ -1,17 +1,23 @@
-using System.Globalization;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 
-// Legacy KVP key scheme (preserved verbatim — eryph host-side tools read these):
-//   eryph.provisioning.state          : started | running | reboot_pending | completed | failed
-//   eryph.provisioning.instance       : <instance-id>
-//   eryph.provisioning.stage          : <stage-name>
-//   eryph.provisioning.reboot_reason  : <reason>          (set on RebootRequested, cleared otherwise)
-//   eryph.provisioning.error          : <error>           (set on ProvisioningFailed, cleared otherwise)
-//   eryph.provisioning.updated        : ISO-8601 UTC timestamp (every event)
+// The simple provisioning-status key (RFC 0031, "Surface 2"):
+//   eryph.provisioning.state : started | running | reboot_pending | completed | failed
+//
+// This is the ONLY status key. The rich reporting — per-stage events and, in
+// particular, the failure reason — lives in the cloud-init CLOUD_INIT|... event
+// stream (CloudInitKvpReportingHandler on Windows; real cloud-init on Linux), so
+// a host reader reads the reason the same way on both OSes. The old bespoke
+// keys (instance/stage/reboot_reason/error/updated/ssh_host_keys) were
+// Windows-only and had no KVP consumer, so they are no longer written here.
+//
+// Note: SshHostKeysReported is still a first-class reporting event — the
+// LogReportingHandler logs it and other sinks (RFC 0006 backends) can subscribe.
+// Only its consumer-less KVP key was dropped; this handler just no longer
+// special-cases it.
 //
 // Writes to a non-Hyper-V host are pointless and may throw; the handler probes
 // once at construction and gates itself via IsApplicable. KVP write failures
@@ -20,12 +26,6 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 internal sealed class KvpReportingHandler : IReportingHandler
 {
     private const string StateKey = "eryph.provisioning.state";
-    private const string InstanceKey = "eryph.provisioning.instance";
-    private const string StageKey = "eryph.provisioning.stage";
-    private const string RebootReasonKey = "eryph.provisioning.reboot_reason";
-    private const string ErrorKey = "eryph.provisioning.error";
-    private const string UpdatedKey = "eryph.provisioning.updated";
-    private const string SshHostKeysKey = "eryph.provisioning.ssh_host_keys";
     private const string ProbeKey = "eryph.provisioning.handler.ready";
 
     private readonly IGuestDataExchange _kvp;
@@ -43,54 +43,39 @@ internal sealed class KvpReportingHandler : IReportingHandler
 
     public async Task PublishAsync(ReportingEvent reportingEvent, CancellationToken cancellationToken)
     {
-        var values = new Dictionary<string, string?>(StringComparer.Ordinal)
-        {
-            [UpdatedKey] = reportingEvent.Timestamp.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
-        };
+        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
 
         switch (reportingEvent)
         {
-            case ReportingEvent.ProvisioningStarted started:
+            case ReportingEvent.ProvisioningStarted:
                 values[StateKey] = "started";
-                values[InstanceKey] = started.InstanceId;
-                values[ErrorKey] = null;
-                values[RebootReasonKey] = null;
                 break;
 
-            case ReportingEvent.StageStarted stageStarted:
+            case ReportingEvent.StageStarted:
                 values[StateKey] = "running";
-                values[StageKey] = stageStarted.Stage.ToString();
                 break;
 
-            case ReportingEvent.RebootRequested reboot:
+            case ReportingEvent.RebootRequested:
                 values[StateKey] = "reboot_pending";
-                values[RebootReasonKey] = reboot.Reason;
                 break;
 
             case ReportingEvent.ProvisioningCompleted:
                 values[StateKey] = "completed";
-                values[StageKey] = null;
-                values[ErrorKey] = null;
-                values[RebootReasonKey] = null;
                 break;
 
-            case ReportingEvent.ProvisioningFailed failed:
+            case ReportingEvent.ProvisioningFailed:
+                // No reason here — the failure reason is carried by the
+                // CLOUD_INIT|... FAIL event (RFC 0031, Surface 1), uniform with
+                // how cloud-init reports it on Linux.
                 values[StateKey] = "failed";
-                values[ErrorKey] = failed.Reason;
-                break;
-
-            case ReportingEvent.SshHostKeysReported sshHostKeys:
-                // Compact "type=fingerprint" pairs joined by ';' — keeps the
-                // KVP value a single readable string the host-side reader can
-                // split without parsing structured data.
-                values[SshHostKeysKey] = string.Join(
-                    ";",
-                    sshHostKeys.Fingerprints.Select(f => $"{f.KeyType}={f.Fingerprint}"));
                 break;
 
             default:
-                // Other events only refresh the timestamp.
-                break;
+                // Events that don't change the simple status (module start/finish,
+                // stage finish, progress, SshHostKeysReported, ...) are reflected
+                // in the CLOUD_INIT|... stream or other sinks, not here. Nothing
+                // to write to the status key.
+                return;
         }
 
         try

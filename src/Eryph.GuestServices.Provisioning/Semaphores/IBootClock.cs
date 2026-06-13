@@ -14,4 +14,11 @@ public interface IBootClock
     /// a reboot return different values.
     /// </summary>
     string GetCurrentBootId();
+
+    /// <summary>
+    /// Returns the time the machine last booted (UTC). Stable within a boot,
+    /// later after a reboot. Used as the cloud-init "incarnation" — its epoch
+    /// second matches cloud-init's <c>int(time.time() - uptime)</c>.
+    /// </summary>
+    DateTimeOffset GetCurrentBootTime();
 }

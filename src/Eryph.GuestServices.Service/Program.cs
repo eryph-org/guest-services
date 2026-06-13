@@ -119,6 +119,11 @@ internal static class Program
         {
             builder.Services.AddSingleton<IKeyStorage, LinuxKeyStorage>();
             builder.Services.AddSingleton<IGuestDataExchange, LinuxGuestDataExchange>();
+            // egs does not provision on Linux — cloud-init does. Mirror its
+            // status into eryph.provisioning.state so the host reads one
+            // provisioning-state key on both Linux and Windows.
+            builder.Services.AddSingleton<ICloudInitStatusReader, CloudInitStatusReader>();
+            builder.Services.AddHostedService<CloudInitStatusWatcher>();
             builder.Services.AddSystemd();
         }
 
