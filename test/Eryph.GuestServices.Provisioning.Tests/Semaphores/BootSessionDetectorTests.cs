@@ -107,10 +107,12 @@ public sealed class BootSessionDetectorTests : IDisposable
     {
         public string Current { get; set; } = initial;
         public string GetCurrentBootId() => Current;
+        public DateTimeOffset GetCurrentBootTime() => DateTimeOffset.UnixEpoch;
     }
 
     private sealed class ThrowingBootClock : IBootClock
     {
         public string GetCurrentBootId() => throw new InvalidOperationException("CIM unavailable");
+        public DateTimeOffset GetCurrentBootTime() => throw new InvalidOperationException("CIM unavailable");
     }
 }

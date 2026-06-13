@@ -1,7 +1,7 @@
 using System.Globalization;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
-using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.Semaphores;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
@@ -21,7 +21,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
     private const string ProbeKey = "CLOUD_INIT.probe";
 
     private readonly IGuestDataExchange _kvp;
-    private readonly IStateStore _stateStore;
+    private readonly IBootClock _bootClock;
     private readonly IVmIdProvider _vmIdProvider;
     private readonly ILogger<CloudInitKvpReportingHandler> _logger;
     private readonly bool _isApplicable;
@@ -29,7 +29,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
     // The cloud-init name of the running stage, used to scope module child
     // events. Updated as stages start.
     private string? _currentStage;
-    private int? _incarnation;
+    private long? _incarnation;
     private string? _vmId;
     private bool _sweptStale;
 
@@ -41,12 +41,12 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
 
     public CloudInitKvpReportingHandler(
         IGuestDataExchange kvp,
-        IStateStore stateStore,
+        IBootClock bootClock,
         IVmIdProvider vmIdProvider,
         ILogger<CloudInitKvpReportingHandler> logger)
     {
         _kvp = kvp;
-        _stateStore = stateStore;
+        _bootClock = bootClock;
         _vmIdProvider = vmIdProvider;
         _logger = logger;
         _isApplicable = Probe();
@@ -123,15 +123,25 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         return cloudInitEvent;
     }
 
-    // Resolved lazily on the first published event: the incarnation (the
-    // per-instance reboot count) and vm_id are stable for the run, and the
-    // stale-incarnation sweep needs the current incarnation first.
+    // Resolved lazily on the first published event: the incarnation and vm_id
+    // are stable for the run, and the stale-incarnation sweep needs the current
+    // incarnation first.
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_incarnation is null)
         {
-            var state = await _stateStore.LoadAsync(cancellationToken).ConfigureAwait(false);
-            _incarnation = state?.RebootCount ?? 0;
+            // cloud-init's incarnation is the boot time as epoch seconds
+            // (int(time.time() - uptime)); we take it from the boot clock.
+            // Stable per boot, higher after a reboot — all the sweep needs.
+            try
+            {
+                _incarnation = _bootClock.GetCurrentBootTime().ToUnixTimeSeconds();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read boot time for the cloud-init incarnation; using 0");
+                _incarnation = 0;
+            }
         }
 
         _vmId ??= _vmIdProvider.GetVmId();
@@ -159,7 +169,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
 
                 var parts = key.Split('|');
                 if (parts.Length >= 2
-                    && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var incarnation)
+                    && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var incarnation)
                     && incarnation != _incarnation)
                 {
                     stale[key] = null;

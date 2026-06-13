@@ -3,8 +3,8 @@ using AwesomeAssertions;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Reporting.Handlers;
+using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.Stages;
-using Eryph.GuestServices.Provisioning.State;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -28,22 +28,24 @@ public sealed class CloudInitKvpReportingHandlerTests
             .Throws(new InvalidOperationException("no kvp here"));
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, StateStore(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
 
         handler.IsApplicable.Should().BeFalse();
     }
 
     [Fact]
-    public async Task PublishAsync_writes_a_cloud_init_event_with_the_current_incarnation()
+    public async Task PublishAsync_uses_the_boot_epoch_second_as_the_incarnation()
     {
-        var (handler, kvp) = Build(rebootCount: 3, vmId: "VMID");
+        // cloud-init's incarnation is the boot time as epoch seconds; here the
+        // boot clock reports a fixed boot time so the key is deterministic.
+        var (handler, kvp) = Build(incarnation: 1_700_000_000, vmId: "VMID");
 
         await handler.PublishAsync(
             new ReportingEvent.StageStarted(Stage.Local) { Origin = "stage:Local" },
             CancellationToken.None);
 
         var key = LastWrittenKey(kvp);
-        key.Should().StartWith("CLOUD_INIT|3|start|init-local|VMID|");
+        key.Should().StartWith("CLOUD_INIT|1700000000|start|init-local|VMID|");
     }
 
     [Fact]
@@ -85,7 +87,7 @@ public sealed class CloudInitKvpReportingHandlerTests
         });
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, StateStore(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
         kvp.ClearReceivedCalls();
 
         await handler.PublishAsync(
@@ -115,7 +117,7 @@ public sealed class CloudInitKvpReportingHandlerTests
         kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>());
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, StateStore(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
         handler.IsApplicable.Should().BeTrue();
 
         var act = async () => await handler.PublishAsync(
@@ -174,12 +176,12 @@ public sealed class CloudInitKvpReportingHandlerTests
     }
 
     private static (CloudInitKvpReportingHandler handler, IGuestDataExchange kvp) Build(
-        int rebootCount = 0, string vmId = "vm")
+        long incarnation = 0, string vmId = "vm")
     {
         var kvp = WorkingKvp();
         kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>());
         var handler = new CloudInitKvpReportingHandler(
-            kvp, StateStore(rebootCount), VmId(vmId), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(incarnation), VmId(vmId), NullLogger<CloudInitKvpReportingHandler>.Instance);
         // Drop the probe write so assertions see only publish payloads.
         kvp.ClearReceivedCalls();
         return (handler, kvp);
@@ -193,12 +195,11 @@ public sealed class CloudInitKvpReportingHandlerTests
         return kvp;
     }
 
-    private static IStateStore StateStore(int rebootCount)
+    private static IBootClock BootClock(long bootEpochSeconds)
     {
-        var store = Substitute.For<IStateStore>();
-        store.LoadAsync(Arg.Any<CancellationToken>())
-            .Returns(new ProvisioningState { RebootCount = rebootCount });
-        return store;
+        var clock = Substitute.For<IBootClock>();
+        clock.GetCurrentBootTime().Returns(DateTimeOffset.FromUnixTimeSeconds(bootEpochSeconds));
+        return clock;
     }
 
     private static IVmIdProvider VmId(string value)

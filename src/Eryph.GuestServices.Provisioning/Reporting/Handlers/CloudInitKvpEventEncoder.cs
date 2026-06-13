@@ -88,7 +88,7 @@ internal static class CloudInitKvpEventEncoder
     /// description — matching cloud-init's <c>_break_down</c>.
     /// </summary>
     public static IReadOnlyList<KeyValuePair<string, string>> Encode(
-        CloudInitEvent cloudInitEvent, int incarnation, string vmId, Guid eventId)
+        CloudInitEvent cloudInitEvent, long incarnation, string vmId, Guid eventId)
     {
         var baseKey = string.Join(
             '|',
