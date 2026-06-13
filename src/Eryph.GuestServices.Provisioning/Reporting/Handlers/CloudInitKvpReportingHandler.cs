@@ -22,7 +22,6 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
 
     private readonly IGuestDataExchange _kvp;
     private readonly IBootClock _bootClock;
-    private readonly IVmIdProvider _vmIdProvider;
     private readonly ILogger<CloudInitKvpReportingHandler> _logger;
     private readonly bool _isApplicable;
 
@@ -30,24 +29,15 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
     // events. Updated as stages start.
     private string? _currentStage;
     private long? _incarnation;
-    private string? _vmId;
     private bool _sweptStale;
-
-    // Start-event timestamps keyed by cloud-init event name (<stage> or
-    // <stage>/<module>). Lets us compute the `duration` of a finish event by
-    // pairing it with its start — centrally, so no module reports timing itself.
-    private readonly Dictionary<string, DateTimeOffset> _startTimes =
-        new(StringComparer.Ordinal);
 
     public CloudInitKvpReportingHandler(
         IGuestDataExchange kvp,
         IBootClock bootClock,
-        IVmIdProvider vmIdProvider,
         ILogger<CloudInitKvpReportingHandler> logger)
     {
         _kvp = kvp;
         _bootClock = bootClock;
-        _vmIdProvider = vmIdProvider;
         _logger = logger;
         _isApplicable = Probe();
     }
@@ -64,11 +54,10 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         if (mapped is null)
             return;
 
-        // Pair start/finish events to attach cloud-init's `duration` (seconds).
-        var cloudInitEvent = WithDuration(mapped.Value);
+        var cloudInitEvent = mapped.Value;
 
-        // Resolve incarnation / vm_id and sweep stale entries only once we have
-        // an event that actually produces output — events with no cloud-init
+        // Resolve the incarnation and sweep stale entries only once we have an
+        // event that actually produces output — events with no cloud-init
         // analogue (ProvisioningStarted, Progress, SshHostKeysReported, ...) must
         // not trigger the KVP reads/writes of initialization.
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
@@ -76,7 +65,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         // One event encodes to one entry, or several `…|<index>` subkey entries
         // when its value is oversized (cloud-init _break_down). Write them all.
         var entries = CloudInitKvpEventEncoder.Encode(
-            cloudInitEvent, _incarnation ?? 0, _vmId ?? "", Guid.NewGuid());
+            cloudInitEvent, _incarnation ?? 0, Guid.NewGuid());
 
         try
         {
@@ -98,34 +87,9 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         }
     }
 
-    // Attach cloud-init's `duration` (seconds) by pairing a finish event with
-    // the start of the same name. Start events record their timestamp; finish
-    // events consume it. A finish with no recorded start (e.g. a reboot dropped
-    // the start, or a failure before any stage opened) simply carries no
-    // duration, matching cloud-init's "only when timed" behaviour.
-    private CloudInitEvent WithDuration(CloudInitEvent cloudInitEvent)
-    {
-        if (cloudInitEvent.Type == CloudInitKvpEventEncoder.StartType)
-        {
-            _startTimes[cloudInitEvent.Name] = cloudInitEvent.Timestamp;
-            return cloudInitEvent;
-        }
-
-        if (cloudInitEvent.Type == CloudInitKvpEventEncoder.FinishType
-            && _startTimes.Remove(cloudInitEvent.Name, out var start))
-        {
-            var seconds = (cloudInitEvent.Timestamp - start).TotalSeconds;
-            if (seconds >= 0)
-                // cloud-init's FinishReportingEvent rounds duration to 4 places.
-                return cloudInitEvent with { Duration = Math.Round(seconds, 4) };
-        }
-
-        return cloudInitEvent;
-    }
-
-    // Resolved lazily on the first published event: the incarnation and vm_id
-    // are stable for the run, and the stale-incarnation sweep needs the current
-    // incarnation first.
+    // Resolved lazily on the first published event: the incarnation is stable
+    // for the run, and the stale-incarnation sweep needs the current incarnation
+    // first.
     private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
         if (_incarnation is null)
@@ -143,8 +107,6 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
                 _incarnation = 0;
             }
         }
-
-        _vmId ??= _vmIdProvider.GetVmId();
 
         if (!_sweptStale)
         {

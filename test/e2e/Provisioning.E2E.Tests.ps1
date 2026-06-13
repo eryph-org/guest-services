@@ -124,7 +124,10 @@ BeforeAll {
     $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -Command `"$Script`""
     return @{
       ExitCode = $LASTEXITCODE
-      Output   = ($output | Out-String).Trim()
+      # Out-String defaults to an 80-column width and HARD-WRAPS long lines,
+      # which can split a value (e.g. the commit SHA in `version`) across a
+      # newline and break a -Match. Use a wide width so output is unwrapped.
+      Output   = ($output | Out-String -Width 8192).Trim()
     }
   }
 
@@ -185,12 +188,28 @@ Describe 'Embedded provisioning at first boot' {
     It 'reports completed via KVP' {
       $kvp = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
       $kvp.guest.'eryph.provisioning.state' | Should -Be 'completed'
+      # The bespoke eryph.provisioning.* keys (instance/stage/error/...) were
+      # dropped in RFC 0031 — only the single state key remains on Surface 2.
       $kvp.guest.ContainsKey('eryph.provisioning.error') | Should -BeFalse
+      $kvp.guest.ContainsKey('eryph.provisioning.instance') | Should -BeFalse
     }
 
-    It 'reports a non-empty instance id via KVP' {
+    It 'emits the cloud-init CLOUD_INIT event stream over KVP (Surface 1)' {
+      # RFC 0031 Surface 1: egs stands in for cloud-init on Windows and emits
+      # the same CLOUD_INIT|<incarnation>|<type>|<name>|<vmid>|<uuid> stream a
+      # Linux catlet would get from cloud-init natively. A completed run must
+      # carry a `finish modules-final SUCCESS` event.
       $kvp = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
-      $kvp.guest.'eryph.provisioning.instance' | Should -Not -BeNullOrEmpty
+      $cloudInitKeys = $kvp.guest.Keys | Where-Object { $_ -like 'CLOUD_INIT|*' }
+      $cloudInitKeys | Should -Not -BeNullOrEmpty
+
+      $finalFinish = $cloudInitKeys | Where-Object { $_ -like 'CLOUD_INIT|*|finish|modules-final|*' }
+      $finalFinish | Should -Not -BeNullOrEmpty
+      # get-data --json already nests the event JSON, so -AsHashtable yields the
+      # parsed event object — index it directly, do not parse a second time.
+      $value = $kvp.guest[($finalFinish | Select-Object -First 1)]
+      $value.name | Should -Be 'modules-final'
+      $value.result | Should -Be 'SUCCESS'
     }
 
     It 'wrote the state file inside the guest' {

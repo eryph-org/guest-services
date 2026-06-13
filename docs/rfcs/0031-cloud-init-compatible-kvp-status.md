@@ -39,15 +39,14 @@ value that cloud-init's event stream does not expose.
 The rich, per-stage/per-module reporting. **This is where failure reasons
 live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`:
 
-- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>` —
-  verbatim cloud-init `_event_key()` layout.
-- **Value:** compact JSON `{"name","type","ts",["result"],["duration"],"msg"}`
-  in cloud-init's field order. `result ∈ SUCCESS | WARN | FAIL` (finish only);
-  `duration` (seconds, finish only) is paired from the matching start event by
-  the handler — so no module reports timing itself. `ts` matches cloud-init's
-  `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
-  microseconds when non-zero, with the fractional part omitted entirely for
-  whole seconds.
+- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<uuid>` —
+  cloud-init `_event_key()` layout.
+- **Value:** compact JSON `{"name","type","ts",["result"],"msg"}` in cloud-init's
+  field order. `result ∈ SUCCESS | WARN | FAIL` (finish only). Per-event timing
+  is recoverable from the `start`/`finish` `ts` pair, as in cloud-init. `ts`
+  matches cloud-init's `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00`
+  offset and 6-digit microseconds when non-zero, with the fractional part omitted
+  entirely for whole seconds.
 - **Oversize handling** uses cloud-init's `_break_down` shape: a value over the
   Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024` bytes) is split across
   `<base>|<index>` subkeys, each a full event JSON carrying `msg_i:<index>` and
@@ -67,8 +66,7 @@ The **`incarnation`** is the boot time as epoch seconds, matching cloud-init's
 stable within a boot and higher after a reboot, so the stale-incarnation sweep
 deletes prior boots' entries exactly as cloud-init's does.
 
-Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`;
-no remaining wire-format divergences.
+Matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`.
 
 Producers:
 
@@ -152,7 +150,7 @@ incarnation (the boot epoch second); stale incarnations are swept on startup.
 ## Components
 
 - **Windows, Surface 1:** `CloudInitKvpReportingHandler`,
-  `CloudInitKvpEventEncoder`, `VmIdProvider`. Registered alongside
+  `CloudInitKvpEventEncoder`. Registered alongside
   `KvpReportingHandler` in the reporting collection (gated off in dry-run).
 - **Windows, Surface 2:** `KvpReportingHandler`, reduced to `state`
   (+ the out-of-scope `ssh_host_keys`).

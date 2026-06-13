@@ -181,7 +181,6 @@ internal static class ProvisioningContainerBuilder
         // Reporting framework.
         container.Register<IGuestDataExchange, WindowsGuestDataExchange>(Lifestyle.Singleton);
         container.Register<IReportingDispatcher, ReportingDispatcher>(Lifestyle.Singleton);
-        container.Register<IVmIdProvider, WmiVmIdProvider>(Lifestyle.Singleton);
         container.Collection.Append<IReportingHandler, LogReportingHandler>(Lifestyle.Singleton);
 
         // KVP reporting is disabled in dry-run mode so a what-if run does not

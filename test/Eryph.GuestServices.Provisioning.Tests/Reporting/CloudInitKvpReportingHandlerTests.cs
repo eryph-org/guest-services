@@ -28,7 +28,7 @@ public sealed class CloudInitKvpReportingHandlerTests
             .Throws(new InvalidOperationException("no kvp here"));
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), NullLogger<CloudInitKvpReportingHandler>.Instance);
 
         handler.IsApplicable.Should().BeFalse();
     }
@@ -38,14 +38,15 @@ public sealed class CloudInitKvpReportingHandlerTests
     {
         // cloud-init's incarnation is the boot time as epoch seconds; here the
         // boot clock reports a fixed boot time so the key is deterministic.
-        var (handler, kvp) = Build(incarnation: 1_700_000_000, vmId: "VMID");
+        var (handler, kvp) = Build(incarnation: 1_700_000_000);
 
         await handler.PublishAsync(
             new ReportingEvent.StageStarted(Stage.Local) { Origin = "stage:Local" },
             CancellationToken.None);
 
         var key = LastWrittenKey(kvp);
-        key.Should().StartWith("CLOUD_INIT|1700000000|start|init-local|VMID|");
+        // cloud-init _event_key: CLOUD_INIT|<incarnation>|<type>|<name>|<uuid>.
+        key.Should().StartWith("CLOUD_INIT|1700000000|start|init-local|");
     }
 
     [Fact]
@@ -81,13 +82,13 @@ public sealed class CloudInitKvpReportingHandlerTests
         var kvp = WorkingKvp();
         kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["CLOUD_INIT|9|finish|modules-final|vm|old"] = "{}",   // stale incarnation
-            ["CLOUD_INIT|0|start|init-local|vm|keep"] = "{}",      // current incarnation
+            ["CLOUD_INIT|9|finish|modules-final|old"] = "{}",     // stale incarnation
+            ["CLOUD_INIT|0|start|init-local|keep"] = "{}",        // current incarnation
             ["eryph.provisioning.state"] = "running",             // foreign key, untouched
         });
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), NullLogger<CloudInitKvpReportingHandler>.Instance);
         kvp.ClearReceivedCalls();
 
         await handler.PublishAsync(
@@ -100,7 +101,7 @@ public sealed class CloudInitKvpReportingHandlerTests
             .Select(p => p.Key)
             .ToList();
 
-        deletions.Should().ContainSingle().Which.Should().Be("CLOUD_INIT|9|finish|modules-final|vm|old");
+        deletions.Should().ContainSingle().Which.Should().Be("CLOUD_INIT|9|finish|modules-final|old");
     }
 
     [Fact]
@@ -117,7 +118,7 @@ public sealed class CloudInitKvpReportingHandlerTests
         kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>());
 
         var handler = new CloudInitKvpReportingHandler(
-            kvp, BootClock(0), VmId("vm"), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(0), NullLogger<CloudInitKvpReportingHandler>.Instance);
         handler.IsApplicable.Should().BeTrue();
 
         var act = async () => await handler.PublishAsync(
@@ -128,60 +129,27 @@ public sealed class CloudInitKvpReportingHandlerTests
     }
 
     [Fact]
-    public async Task PublishAsync_attaches_duration_to_a_finish_paired_with_its_start()
-    {
-        var (handler, kvp) = Build();
-        var t0 = new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero);
-
-        await handler.PublishAsync(
-            new ReportingEvent.StageStarted(Stage.Network) { Origin = "stage:Network", Timestamp = t0 },
-            CancellationToken.None);
-        await handler.PublishAsync(
-            new ReportingEvent.StageFinished(Stage.Network)
-            { Origin = "stage:Network", Timestamp = t0.AddMilliseconds(1500) },
-            CancellationToken.None);
-
-        using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
-        doc.RootElement.GetProperty("type").GetString().Should().Be("finish");
-        doc.RootElement.GetProperty("duration").GetDouble().Should().Be(1.5);
-    }
-
-    [Fact]
-    public async Task PublishAsync_start_events_carry_no_duration()
+    public async Task PublishAsync_emits_a_fail_finish_for_provisioning_failure()
     {
         var (handler, kvp) = Build();
 
-        await handler.PublishAsync(
-            new ReportingEvent.StageStarted(Stage.Local) { Origin = "stage:Local" },
-            CancellationToken.None);
-
-        using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
-        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task PublishAsync_finish_without_a_matching_start_carries_no_duration()
-    {
-        var (handler, kvp) = Build();
-
-        // ProvisioningFailed maps to a finish FAIL on init-local; no StageStarted
-        // was published, so there is no start to pair with.
         await handler.PublishAsync(
             new ReportingEvent.ProvisioningFailed("boom", null) { Origin = "stage-runner" },
             CancellationToken.None);
 
         using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
+        doc.RootElement.GetProperty("type").GetString().Should().Be("finish");
         doc.RootElement.GetProperty("result").GetString().Should().Be("FAIL");
-        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
+        doc.RootElement.GetProperty("msg").GetString().Should().Be("boom");
     }
 
     private static (CloudInitKvpReportingHandler handler, IGuestDataExchange kvp) Build(
-        long incarnation = 0, string vmId = "vm")
+        long incarnation = 0)
     {
         var kvp = WorkingKvp();
         kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>());
         var handler = new CloudInitKvpReportingHandler(
-            kvp, BootClock(incarnation), VmId(vmId), NullLogger<CloudInitKvpReportingHandler>.Instance);
+            kvp, BootClock(incarnation), NullLogger<CloudInitKvpReportingHandler>.Instance);
         // Drop the probe write so assertions see only publish payloads.
         kvp.ClearReceivedCalls();
         return (handler, kvp);
@@ -200,13 +168,6 @@ public sealed class CloudInitKvpReportingHandlerTests
         var clock = Substitute.For<IBootClock>();
         clock.GetCurrentBootTime().Returns(DateTimeOffset.FromUnixTimeSeconds(bootEpochSeconds));
         return clock;
-    }
-
-    private static IVmIdProvider VmId(string value)
-    {
-        var provider = Substitute.For<IVmIdProvider>();
-        provider.GetVmId().Returns(value);
-        return provider;
     }
 
     private static List<IReadOnlyDictionary<string, string?>> AllWrites(IGuestDataExchange kvp) =>

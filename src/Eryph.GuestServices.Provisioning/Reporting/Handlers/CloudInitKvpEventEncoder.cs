@@ -9,24 +9,21 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 /// <summary>
 /// One normalized cloud-init reporting event: a <c>start</c> or <c>finish</c>
 /// with an optional result. <see cref="Description"/> becomes the cloud-init
-/// <c>msg</c> field. <see cref="Duration"/> (seconds) is the cloud-init
-/// <c>duration</c> field on finish events — paired from the matching start by
-/// the handler, so it is null on start events and when no start was seen.
+/// <c>msg</c> field.
 /// </summary>
 internal readonly record struct CloudInitEvent(
     string Name,
     string Type,
     string? Result,
     string Description,
-    DateTimeOffset Timestamp,
-    double? Duration = null);
+    DateTimeOffset Timestamp);
 
 /// <summary>
 /// Encodes guest-services <see cref="ReportingEvent"/>s into cloud-init's
 /// Hyper-V KVP wire format, matching
-/// <c>cloudinit/reporting/handlers.py:HyperVKvpReportingHandler</c>.
+/// <c>cloudinit/reporting/handlers.py:HyperVKvpReportingHandler._event_key</c>.
 ///
-/// Key:   <c>CLOUD_INIT|&lt;incarnation&gt;|&lt;type&gt;|&lt;name&gt;|&lt;vm_id&gt;|&lt;uuid&gt;</c>
+/// Key:   <c>CLOUD_INIT|&lt;incarnation&gt;|&lt;type&gt;|&lt;name&gt;|&lt;uuid&gt;</c>
 /// Value: compact JSON <c>{"name","type","ts","result","msg"}</c>
 /// </summary>
 internal static class CloudInitKvpEventEncoder
@@ -88,15 +85,15 @@ internal static class CloudInitKvpEventEncoder
     /// description — matching cloud-init's <c>_break_down</c>.
     /// </summary>
     public static IReadOnlyList<KeyValuePair<string, string>> Encode(
-        CloudInitEvent cloudInitEvent, long incarnation, string vmId, Guid eventId)
+        CloudInitEvent cloudInitEvent, long incarnation, Guid eventId)
     {
+        // cloud-init _event_key: CLOUD_INIT|<incarnation>|<type>|<name>|<uuid>.
         var baseKey = string.Join(
             '|',
             KeyPrefix,
             incarnation.ToString(CultureInfo.InvariantCulture),
             cloudInitEvent.Type,
             cloudInitEvent.Name,
-            vmId,
             eventId.ToString("D"));
 
         var whole = Serialize(cloudInitEvent, cloudInitEvent.Description ?? "", descIndex: null);
@@ -176,7 +173,7 @@ internal static class CloudInitKvpEventEncoder
 
     // Hand-written with Utf8JsonWriter (compact, trim-safe) rather than the
     // reflection-based serializer. Field order mirrors cloud-init's value JSON:
-    // name, type, ts, [result], [duration], [msg_i], msg.
+    // name, type, ts, [result], [msg_i], msg.
     private static string Serialize(CloudInitEvent cloudInitEvent, string msg, int? descIndex)
     {
         using var buffer = new MemoryStream();
@@ -188,8 +185,6 @@ internal static class CloudInitKvpEventEncoder
             writer.WriteString("ts", FormatTimestamp(cloudInitEvent.Timestamp));
             if (cloudInitEvent.Result is not null)
                 writer.WriteString("result", cloudInitEvent.Result);
-            if (cloudInitEvent.Duration is { } duration)
-                writer.WriteNumber("duration", duration);
             if (descIndex is { } idx)
                 writer.WriteNumber(DescIndexKey, idx);
             writer.WriteString(MsgKey, msg);

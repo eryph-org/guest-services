@@ -124,11 +124,11 @@ public sealed class CloudInitKvpEventEncoderTests
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("init-network/SetHostname", "finish", "SUCCESS", "ok", ts),
             incarnation: 2,
-            vmId: "ABCD",
             eventId: id).Single();
 
+        // cloud-init _event_key: CLOUD_INIT|<incarnation>|<type>|<name>|<uuid>.
         entry.Key.Should().Be(
-            "CLOUD_INIT|2|finish|init-network/SetHostname|ABCD|11111111-2222-3333-4444-555555555555");
+            "CLOUD_INIT|2|finish|init-network/SetHostname|11111111-2222-3333-4444-555555555555");
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public sealed class CloudInitKvpEventEncoderTests
 
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "SUCCESS", "done", ts),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
+            incarnation: 0, eventId: Guid.NewGuid()).Single();
 
         entry.Value.Should().NotContain(" ");
         using var doc = JsonDocument.Parse(entry.Value);
@@ -160,36 +160,10 @@ public sealed class CloudInitKvpEventEncoderTests
             new CloudInitEvent(
                 "init-local", "start", null, "",
                 new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero)),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
+            incarnation: 0, eventId: Guid.NewGuid()).Single();
 
         using var doc = JsonDocument.Parse(entry.Value);
         doc.RootElement.GetProperty("ts").GetString().Should().Be("2026-06-03T12:00:00+00:00");
-    }
-
-    [Fact]
-    public void Encode_value_includes_duration_when_set()
-    {
-        var entry = CloudInitKvpEventEncoder.Encode(
-            new CloudInitEvent(
-                "modules-final", "finish", "SUCCESS", "done",
-                new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero), Duration: 2.5),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
-
-        using var doc = JsonDocument.Parse(entry.Value);
-        doc.RootElement.GetProperty("duration").GetDouble().Should().Be(2.5);
-    }
-
-    [Fact]
-    public void Encode_value_omits_duration_when_null()
-    {
-        var entry = CloudInitKvpEventEncoder.Encode(
-            new CloudInitEvent(
-                "init-local", "start", null, "",
-                new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero)),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
-
-        using var doc = JsonDocument.Parse(entry.Value);
-        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
     }
 
     [Fact]
@@ -197,7 +171,7 @@ public sealed class CloudInitKvpEventEncoderTests
     {
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("init-local", "start", null, "", DateTimeOffset.UnixEpoch),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
+            incarnation: 0, eventId: Guid.NewGuid()).Single();
 
         using var doc = JsonDocument.Parse(entry.Value);
         doc.RootElement.TryGetProperty("result", out _).Should().BeFalse();
@@ -213,7 +187,7 @@ public sealed class CloudInitKvpEventEncoderTests
 
         var entries = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "FAIL", huge, DateTimeOffset.UnixEpoch),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, eventId: Guid.NewGuid());
 
         entries.Count.Should().BeGreaterThan(1);
 
@@ -246,7 +220,7 @@ public sealed class CloudInitKvpEventEncoderTests
 
         var entries = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "FAIL", description, DateTimeOffset.UnixEpoch),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, eventId: Guid.NewGuid());
 
         entries.Count.Should().BeGreaterThan(1);
 
