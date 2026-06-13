@@ -86,7 +86,15 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
 
     private static void AddDirectory(ZipArchive archive, string sourceDir, string entryPrefix)
     {
-        foreach (var file in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        // IgnoreInaccessible so an unreadable subdirectory under a privileged
+        // tree (e.g. /var/log on Linux) is skipped during enumeration instead
+        // of throwing UnauthorizedAccessException before the loop body runs.
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+        };
+        foreach (var file in Directory.EnumerateFiles(sourceDir, "*", options))
         {
             var rel = Path.GetRelativePath(sourceDir, file).Replace('\\', '/');
             var entryName = $"{entryPrefix}/{rel}";

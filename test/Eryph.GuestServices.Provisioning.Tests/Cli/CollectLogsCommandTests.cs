@@ -106,6 +106,37 @@ public sealed class CollectLogsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_skips_unreadable_log_files_and_still_succeeds()
+    {
+        // Best-effort contract: a log file collect-logs cannot open — locked,
+        // or permission-denied under a privileged tree like /var/log — must be
+        // skipped, not abort the whole bundle. Both failure modes hit the same
+        // skip-and-continue path in AddDirectory.
+        var agentLogs = AgentPaths.LogsDirectory;
+        Directory.CreateDirectory(agentLogs);
+        await File.WriteAllTextAsync(Path.Combine(agentLogs, "agent.log"), "readable");
+        var lockedPath = Path.Combine(agentLogs, "locked.log");
+        await File.WriteAllTextAsync(lockedPath, "locked");
+
+        // Hold it open with no sharing so CreateEntryFromFile's read open is
+        // refused (Windows: sharing violation -> IOException). On Linux the
+        // lock is advisory, so the file is simply bundled — either way the
+        // command must succeed and the readable log must be present.
+        using var hold = new FileStream(
+            lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var sut = new CollectLogsCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("collect-logs"),
+            new CollectLogsCommand.Settings { Output = _output });
+
+        exit.Should().Be(0);
+        File.Exists(_output).Should().BeTrue();
+        using var archive = ZipFile.OpenRead(_output);
+        archive.Entries.Select(e => e.FullName).Should().Contain("logs/agent.log");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_returns_two_when_output_missing()
     {
         var sut = new CollectLogsCommand();
