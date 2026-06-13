@@ -73,14 +73,17 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         // not trigger the KVP reads/writes of initialization.
         await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
-        var entry = CloudInitKvpEventEncoder.Encode(
+        // One event encodes to one entry, or several `…|<index>` subkey entries
+        // when its value is oversized (cloud-init _break_down). Write them all.
+        var entries = CloudInitKvpEventEncoder.Encode(
             cloudInitEvent, _incarnation ?? 0, _vmId ?? "", Guid.NewGuid());
 
         try
         {
-            await _kvp.SetGuestValuesAsync(
-                new Dictionary<string, string?>(StringComparer.Ordinal) { [entry.Key] = entry.Value })
-                .ConfigureAwait(false);
+            var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+                values[entry.Key] = entry.Value;
+            await _kvp.SetGuestValuesAsync(values).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

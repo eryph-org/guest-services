@@ -47,10 +47,12 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   the handler — so no module reports timing itself. `ts` matches cloud-init's
   `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
   microseconds.
-- Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes. cloud-init splits an
-  oversized description across extra `…|<index>` subkeys; our encoder instead
-  **trims** the `msg` to fit the value limit (the reader rule only needs the
-  event name + result + a bounded reason, so splitting isn't required).
+- **Oversize handling** matches cloud-init's `_break_down`: a value over the
+  Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024`) is split across
+  `<base>|<index>` subkeys, each a full event JSON carrying `msg_i:<index>` and
+  a slice of the JSON-escaped description; a reader concatenates the `msg`
+  slices ordered by `msg_i` (grouped by the shared `<uuid>`). A value that fits
+  is a single entry under the base key (no index, no `msg_i`).
 
 Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`.
 One intentional divergence (does not affect the reader rule):
