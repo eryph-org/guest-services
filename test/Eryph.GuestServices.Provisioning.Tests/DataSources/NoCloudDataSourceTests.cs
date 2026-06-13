@@ -215,6 +215,9 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result.MetaData.Should().ContainKey("public-keys");
         result.MetaData["public-keys"].Should().Contain("mykey");
         result.MetaData["public-keys"].Should().Contain("ssh-rsa AAAA...");
+        // ...and the key value is extracted for the default user (cloud-init's
+        // get_public_ssh_keys() / normalize_pubkey_data), not just kept as text.
+        result.SshPublicKeys.Should().ContainSingle().Which.Should().Be("ssh-rsa AAAA...");
     }
 
     [Fact]
@@ -270,6 +273,73 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result.MetaData["public-keys"].Should().Contain("otherkey");
         result.MetaData.Should().ContainKey("network-interfaces");
         result.MetaData["network-interfaces"].Should().Contain("iface eth0 inet static");
+        // Both keys are extracted in document order (mykey then otherkey).
+        // Use Equal, not BeEquivalentTo: extraction is order-preserving and we
+        // want a regression to fail if that ordering ever changes.
+        result.SshPublicKeys.Should().Equal(
+            "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexamplekeydata mykey@host",
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleEd25519KeyData other@host");
+    }
+
+    [Fact]
+    public async Task ReadAsync_extracts_public_keys_from_a_list()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"),
+            "instance-id: iid-local01\n" +
+            "public-keys:\n" +
+            "  - ssh-rsa AAAAkeyone one@host\n" +
+            "  - ssh-ed25519 AAAAkeytwo two@host\n");
+
+        var result = await NewSource().ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().Equal(
+            "ssh-rsa AAAAkeyone one@host",
+            "ssh-ed25519 AAAAkeytwo two@host");
+    }
+
+    [Fact]
+    public async Task ReadAsync_extracts_a_single_scalar_public_key()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"),
+            "instance-id: iid-local01\n" +
+            "public-keys: ssh-rsa AAAAonlykey only@host\n");
+
+        var result = await NewSource().ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().ContainSingle()
+            .Which.Should().Be("ssh-rsa AAAAonlykey only@host");
+    }
+
+    [Fact]
+    public async Task ReadAsync_leaves_ssh_keys_null_when_no_public_keys()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_root, "meta-data"),
+            "instance-id: iid-local01\nlocal-hostname: h\n");
+
+        var result = await NewSource().ReadAsync(_root, CancellationToken.None);
+
+        result!.SshPublicKeys.Should().BeNull();
+    }
+
+    [Theory]
+    // Map whose value is itself a list (cloud-init normalize_pubkey_data dict form).
+    [InlineData("name:\n- ssh-rsa A\n- ssh-rsa B", new[] { "ssh-rsa A", "ssh-rsa B" })]
+    // Plain newline-joined scalar.
+    [InlineData("ssh-rsa A\nssh-rsa B", new[] { "ssh-rsa A", "ssh-rsa B" })]
+    // Duplicates are dropped, order preserved.
+    [InlineData("- ssh-rsa A\n- ssh-rsa A\n- ssh-rsa B", new[] { "ssh-rsa A", "ssh-rsa B" })]
+    public void ExtractPublicKeys_normalizes_the_cloud_init_forms(string raw, string[] expected)
+    {
+        NoCloudDataSource.ExtractPublicKeys(raw).Should().Equal(expected);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ExtractPublicKeys_returns_empty_for_blank(string? raw)
+    {
+        NoCloudDataSource.ExtractPublicKeys(raw).Should().BeEmpty();
     }
 
     // ---- Finding 17: seedfrom support -----------------------------------

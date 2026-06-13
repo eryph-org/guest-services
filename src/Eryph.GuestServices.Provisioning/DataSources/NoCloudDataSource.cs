@@ -117,6 +117,13 @@ public sealed class NoCloudDataSource(
 
         metaData.TryGetValue("local-hostname", out var hostname);
 
+        // cloud-init's DataSource.get_public_ssh_keys() applies
+        // normalize_pubkey_data(metadata["public-keys"]) and feeds the result
+        // to the default user. NoCloud meta-data routinely carries the keys
+        // here (not in cloud-config), so without this they would be dropped.
+        metaData.TryGetValue("public-keys", out var publicKeysRaw);
+        var sshPublicKeys = ExtractPublicKeys(publicKeysRaw);
+
         var structuredNetworkConfig = networkConfig is null ? null : TryParseNetworkConfig(networkConfig);
 
         return new DataSourceResult
@@ -127,6 +134,7 @@ public sealed class NoCloudDataSource(
             UserData = userData,
             VendorData = vendorData,
             MetaData = metaData,
+            SshPublicKeys = sshPublicKeys.Count > 0 ? sshPublicKeys : null,
             PlatformMetadata = new CloudConfig.PlatformMetadata
             {
                 LocalHostname = string.IsNullOrWhiteSpace(hostname) ? null : hostname,
@@ -325,6 +333,83 @@ public sealed class NoCloudDataSource(
         }
 
         return result;
+    }
+
+    // Mirrors cloud-init's normalize_pubkey_data(metadata["public-keys"]).
+    // ParseMetaData stores the value either as a plain scalar (a single key, or
+    // newline-joined keys) or as re-serialized YAML text when it was a map/list,
+    // so we re-parse it and collect leaf scalars:
+    //   - scalar          -> split on newlines (one key per non-empty line)
+    //   - list            -> each scalar item
+    //   - map {name: key} -> each value; a value that is itself a list yields
+    //                        each of its scalar items
+    // Order-preserving and de-duplicated.
+    internal static IReadOnlyList<string> ExtractPublicKeys(string? raw)
+    {
+        var keys = new List<string>();
+        if (string.IsNullOrWhiteSpace(raw))
+            return keys;
+
+        // Order-preserving de-dup: the list keeps insertion order, the set gives
+        // O(1) membership so a large key set stays linear.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        void Add(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+            foreach (var line in value.Split('\n'))
+            {
+                var key = line.Trim();
+                if (key.Length > 0 && seen.Add(key))
+                    keys.Add(key);
+            }
+        }
+
+        YamlNode? root = null;
+        try
+        {
+            var stream = new YamlStream();
+            stream.Load(new StringReader(raw));
+            if (stream.Documents.Count > 0)
+                root = stream.Documents[0].RootNode;
+        }
+        catch (YamlDotNet.Core.YamlException)
+        {
+            // Not parseable as YAML — treat the whole value as key text. Only
+            // YAML parse failures are swallowed; other exceptions surface.
+        }
+
+        switch (root)
+        {
+            case YamlSequenceNode seq:
+                foreach (var item in seq.Children)
+                    if (item is YamlScalarNode s)
+                        Add(s.Value);
+                break;
+            case YamlMappingNode map:
+                foreach (var (_, value) in map.Children)
+                {
+                    switch (value)
+                    {
+                        case YamlScalarNode vs:
+                            Add(vs.Value);
+                            break;
+                        case YamlSequenceNode vseq:
+                            foreach (var item in vseq.Children)
+                                if (item is YamlScalarNode s)
+                                    Add(s.Value);
+                            break;
+                    }
+                }
+                break;
+            default:
+                // Scalar root (or unparsed): the raw text is the key(s).
+                Add(raw);
+                break;
+        }
+
+        return keys;
     }
 
     private static string SerializeNode(YamlNode node)
