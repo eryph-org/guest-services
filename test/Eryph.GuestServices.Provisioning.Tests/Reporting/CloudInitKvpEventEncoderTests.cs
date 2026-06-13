@@ -134,7 +134,7 @@ public sealed class CloudInitKvpEventEncoderTests
     [Fact]
     public void Encode_value_is_compact_json_with_cloud_init_fields()
     {
-        var ts = new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero);
+        var ts = new DateTimeOffset(2026, 6, 3, 12, 0, 0, 500, TimeSpan.Zero);
 
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "SUCCESS", "done", ts),
@@ -147,7 +147,8 @@ public sealed class CloudInitKvpEventEncoderTests
         root.GetProperty("type").GetString().Should().Be("finish");
         root.GetProperty("result").GetString().Should().Be("SUCCESS");
         root.GetProperty("msg").GetString().Should().Be("done");
-        root.GetProperty("ts").GetString().Should().Be("2026-06-03T12:00:00.0000000Z");
+        // cloud-init isoformat shape: +00:00 offset, 6-digit microseconds.
+        root.GetProperty("ts").GetString().Should().Be("2026-06-03T12:00:00.500000+00:00");
     }
 
     [Fact]

@@ -39,13 +39,28 @@ value that cloud-init's event stream does not expose.
 The rich, per-stage/per-module reporting. **This is where failure reasons
 live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`:
 
-- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>`.
+- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>` —
+  verbatim cloud-init `_event_key()` layout.
 - **Value:** compact JSON `{"name","type","ts","result","msg"}`,
-  `result ∈ SUCCESS | WARN | FAIL`, `ts` ISO-8601 UTC.
+  `result ∈ SUCCESS | WARN | FAIL`. `ts` matches cloud-init's
+  `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
+  microseconds.
 - Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes. cloud-init splits an
   oversized description across extra `…|<index>` subkeys; our encoder instead
   **trims** the `msg` to fit the value limit (the reader rule only needs the
   event name + result + a bounded reason, so splitting isn't required).
+
+Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`.
+Two intentional divergences (neither affects the reader rule):
+
+- **`incarnation`.** cloud-init uses the boot time as epoch seconds
+  (`int(time.time() - uptime)`); egs uses the provisioning state's per-instance
+  reboot count. Both are monotonic-per-boot, which is all the stale-incarnation
+  sweep needs, and egs + cloud-init never write the same pool (egs only on
+  Windows, cloud-init only on Linux), so the value's magnitude is opaque to a
+  reader.
+- **`duration`.** cloud-init adds an optional `duration` to finish events; egs
+  doesn't track per-event duration, so it's omitted.
 
 Producers:
 
