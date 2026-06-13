@@ -152,6 +152,21 @@ public sealed class CloudInitKvpEventEncoderTests
     }
 
     [Fact]
+    public void Encode_ts_omits_the_fractional_part_for_whole_seconds()
+    {
+        // Python datetime.isoformat() drops the fractional seconds entirely when
+        // microseconds are 0 — it does not emit `.000000`.
+        var entry = CloudInitKvpEventEncoder.Encode(
+            new CloudInitEvent(
+                "init-local", "start", null, "",
+                new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero)),
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
+
+        using var doc = JsonDocument.Parse(entry.Value);
+        doc.RootElement.GetProperty("ts").GetString().Should().Be("2026-06-03T12:00:00+00:00");
+    }
+
+    [Fact]
     public void Encode_value_includes_duration_when_set()
     {
         var entry = CloudInitKvpEventEncoder.Encode(
