@@ -98,6 +98,12 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
             {
                 // Skip files we can't open (locked log files, etc).
             }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip files we lack permission to read. The agent log dir can
+                // live under a privileged location (e.g. /var/log on Linux), so
+                // a non-elevated collect-logs must stay best-effort, not abort.
+            }
         }
     }
 }
