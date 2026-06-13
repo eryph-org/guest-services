@@ -96,7 +96,7 @@ could never rely on them cross-OS — and were just noise:
 | `eryph.provisioning.reboot_reason` | drop | reboot ends the run (new incarnation in Surface 1); `state` still goes `reboot_pending`. |
 | `eryph.provisioning.error` | **drop** | **failure reasons are read from Surface 1's `FAIL` events**, uniformly on both OSes — not from a Windows-only key. |
 | `eryph.provisioning.updated` | drop | every Surface 1 event carries `ts`. |
-| `eryph.provisioning.ssh_host_keys` | **KEEP (out of scope)** | Not status. It is the SSH host-key publication feature ([RFC 0018](0018-ssh-module.md): `ssh_publish_hostkeys` → host `known_hosts`). Left as-is; revisit separately if it should move to its own channel. |
+| `eryph.provisioning.ssh_host_keys` | **drop the KVP key only** | Its KVP value had no consumer. The `SshHostKeysReported` reporting **event stays** (the log handler consumes it, and other sinks — RFC 0006 backends — can subscribe); only this status handler stops writing the consumer-less KVP key. |
 
 **Net reader contract:**
 

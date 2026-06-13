@@ -11,11 +11,13 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 // particular, the failure reason — lives in the cloud-init CLOUD_INIT|... event
 // stream (CloudInitKvpReportingHandler on Windows; real cloud-init on Linux), so
 // a host reader reads the reason the same way on both OSes. The old bespoke
-// keys (instance/stage/reboot_reason/error/updated) were Windows-only noise and
-// have been removed.
+// keys (instance/stage/reboot_reason/error/updated/ssh_host_keys) were
+// Windows-only and had no KVP consumer, so they are no longer written here.
 //
-// Exception: eryph.provisioning.ssh_host_keys is NOT status — it is the SSH
-// host-key publication feature (RFC 0018) and is left here for now.
+// Note: SshHostKeysReported is still a first-class reporting event — the
+// LogReportingHandler logs it and other sinks (RFC 0006 backends) can subscribe.
+// Only its consumer-less KVP key was dropped; this handler just no longer
+// special-cases it.
 //
 // Writes to a non-Hyper-V host are pointless and may throw; the handler probes
 // once at construction and gates itself via IsApplicable. KVP write failures
@@ -24,7 +26,6 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 internal sealed class KvpReportingHandler : IReportingHandler
 {
     private const string StateKey = "eryph.provisioning.state";
-    private const string SshHostKeysKey = "eryph.provisioning.ssh_host_keys";
     private const string ProbeKey = "eryph.provisioning.handler.ready";
 
     private readonly IGuestDataExchange _kvp;
@@ -69,19 +70,11 @@ internal sealed class KvpReportingHandler : IReportingHandler
                 values[StateKey] = "failed";
                 break;
 
-            case ReportingEvent.SshHostKeysReported sshHostKeys:
-                // Compact "type=fingerprint" pairs joined by ';' — keeps the
-                // KVP value a single readable string the host-side reader can
-                // split without parsing structured data.
-                values[SshHostKeysKey] = string.Join(
-                    ";",
-                    sshHostKeys.Fingerprints.Select(f => $"{f.KeyType}={f.Fingerprint}"));
-                break;
-
             default:
                 // Events that don't change the simple status (module start/finish,
-                // stage finish, progress, ...) are reflected in the CLOUD_INIT|...
-                // stream, not here. Nothing to write.
+                // stage finish, progress, SshHostKeysReported, ...) are reflected
+                // in the CLOUD_INIT|... stream or other sinks, not here. Nothing
+                // to write to the status key.
                 return;
         }
 

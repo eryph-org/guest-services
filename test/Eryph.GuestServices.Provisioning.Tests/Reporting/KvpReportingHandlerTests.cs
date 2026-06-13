@@ -164,22 +164,22 @@ public sealed class KvpReportingHandlerTests
     }
 
     [Fact]
-    public async Task PublishAsync_SshHostKeysReported_writes_joined_fingerprints()
+    public async Task PublishAsync_does_not_write_a_KVP_key_for_SshHostKeysReported()
     {
+        // The event stays a first-class report (the log handler + other sinks
+        // consume it), but its KVP key had no consumer and was dropped — this
+        // status handler no longer writes anything for it.
         var (handler, kvp) = Build();
 
         await handler.PublishAsync(
             new ReportingEvent.SshHostKeysReported(
-                [
-                    new SshHostKeyFingerprint("ed25519", "SHA256:aaa", "ssh-ed25519 AAA"),
-                    new SshHostKeyFingerprint("rsa", "SHA256:bbb", "ssh-rsa BBB"),
-                ])
+                [new SshHostKeyFingerprint("ed25519", "SHA256:aaa", "ssh-ed25519 AAA")])
             { Origin = "module:SshModule" },
             CancellationToken.None);
 
-        var written = LastWrite(kvp);
-        written["eryph.provisioning.ssh_host_keys"]
-            .Should().Be("ed25519=SHA256:aaa;rsa=SHA256:bbb");
+        kvp.ReceivedCalls()
+            .Count(c => c.GetMethodInfo().Name == nameof(IGuestDataExchange.SetGuestValuesAsync))
+            .Should().Be(0);
     }
 
     private static IGuestDataExchange WorkingKvp()
