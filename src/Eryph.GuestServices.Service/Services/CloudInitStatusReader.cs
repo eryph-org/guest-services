@@ -38,8 +38,16 @@ internal sealed class CloudInitStatusReader(ILogger<CloudInitStatusReader> logge
             // `cloud-init status` reflects the state in its exit code (non-zero
             // for error/degraded) but still prints the JSON, so parse stdout
             // regardless of the exit code.
-            var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            //
+            // Drain stdout AND stderr concurrently before waiting for exit:
+            // reading only stdout risks a deadlock if the child fills the stderr
+            // pipe and blocks on the write. We don't use stderr, but it must
+            // still be drained.
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var stdout = await stdoutTask.ConfigureAwait(false);
 
             if (string.IsNullOrWhiteSpace(stdout))
                 return null;

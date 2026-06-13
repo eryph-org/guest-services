@@ -54,11 +54,15 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
         if (reportingEvent is ReportingEvent.StageStarted started)
             _currentStage = CloudInitKvpEventEncoder.MapStageName(started.Stage);
 
-        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
-
         var mapped = CloudInitKvpEventEncoder.Map(reportingEvent, _currentStage);
         if (mapped is null)
             return;
+
+        // Resolve incarnation / vm_id and sweep stale entries only once we have
+        // an event that actually produces output — events with no cloud-init
+        // analogue (ProvisioningStarted, Progress, SshHostKeysReported, ...) must
+        // not trigger the KVP reads/writes of initialization.
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
 
         var entry = CloudInitKvpEventEncoder.Encode(
             mapped.Value, _incarnation ?? 0, _vmId ?? "", Guid.NewGuid());
