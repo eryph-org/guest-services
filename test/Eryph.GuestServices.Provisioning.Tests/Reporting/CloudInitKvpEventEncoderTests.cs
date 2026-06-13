@@ -152,6 +152,32 @@ public sealed class CloudInitKvpEventEncoderTests
     }
 
     [Fact]
+    public void Encode_value_includes_duration_when_set()
+    {
+        var entry = CloudInitKvpEventEncoder.Encode(
+            new CloudInitEvent(
+                "modules-final", "finish", "SUCCESS", "done",
+                new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero), Duration: 2.5),
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+
+        using var doc = JsonDocument.Parse(entry.Value);
+        doc.RootElement.GetProperty("duration").GetDouble().Should().Be(2.5);
+    }
+
+    [Fact]
+    public void Encode_value_omits_duration_when_null()
+    {
+        var entry = CloudInitKvpEventEncoder.Encode(
+            new CloudInitEvent(
+                "init-local", "start", null, "",
+                new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero)),
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+
+        using var doc = JsonDocument.Parse(entry.Value);
+        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
+    }
+
+    [Fact]
     public void Encode_value_omits_result_for_start_events()
     {
         var entry = CloudInitKvpEventEncoder.Encode(

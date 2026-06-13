@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
@@ -124,6 +125,54 @@ public sealed class CloudInitKvpReportingHandlerTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task PublishAsync_attaches_duration_to_a_finish_paired_with_its_start()
+    {
+        var (handler, kvp) = Build();
+        var t0 = new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero);
+
+        await handler.PublishAsync(
+            new ReportingEvent.StageStarted(Stage.Network) { Origin = "stage:Network", Timestamp = t0 },
+            CancellationToken.None);
+        await handler.PublishAsync(
+            new ReportingEvent.StageFinished(Stage.Network)
+            { Origin = "stage:Network", Timestamp = t0.AddMilliseconds(1500) },
+            CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
+        doc.RootElement.GetProperty("type").GetString().Should().Be("finish");
+        doc.RootElement.GetProperty("duration").GetDouble().Should().Be(1.5);
+    }
+
+    [Fact]
+    public async Task PublishAsync_start_events_carry_no_duration()
+    {
+        var (handler, kvp) = Build();
+
+        await handler.PublishAsync(
+            new ReportingEvent.StageStarted(Stage.Local) { Origin = "stage:Local" },
+            CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
+        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PublishAsync_finish_without_a_matching_start_carries_no_duration()
+    {
+        var (handler, kvp) = Build();
+
+        // ProvisioningFailed maps to a finish FAIL on init-local; no StageStarted
+        // was published, so there is no start to pair with.
+        await handler.PublishAsync(
+            new ReportingEvent.ProvisioningFailed("boom", null) { Origin = "stage-runner" },
+            CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(LastWrittenValue(kvp));
+        doc.RootElement.GetProperty("result").GetString().Should().Be("FAIL");
+        doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
+    }
+
     private static (CloudInitKvpReportingHandler handler, IGuestDataExchange kvp) Build(
         int rebootCount = 0, string vmId = "vm")
     {
@@ -177,5 +226,16 @@ public sealed class CloudInitKvpReportingHandlerTests
         var keys = WrittenEventKeys(kvp);
         keys.Should().NotBeEmpty();
         return keys[^1];
+    }
+
+    private static string LastWrittenValue(IGuestDataExchange kvp)
+    {
+        var values = AllWrites(kvp)
+            .SelectMany(w => w)
+            .Where(p => p.Value is not null && p.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal))
+            .Select(p => p.Value!)
+            .ToList();
+        values.Should().NotBeEmpty();
+        return values[^1];
     }
 }

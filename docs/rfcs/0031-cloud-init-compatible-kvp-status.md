@@ -41,8 +41,10 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
 
 - **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>` —
   verbatim cloud-init `_event_key()` layout.
-- **Value:** compact JSON `{"name","type","ts","result","msg"}`,
-  `result ∈ SUCCESS | WARN | FAIL`. `ts` matches cloud-init's
+- **Value:** compact JSON `{"name","type","ts",["result"],["duration"],"msg"}`
+  in cloud-init's field order. `result ∈ SUCCESS | WARN | FAIL` (finish only);
+  `duration` (seconds, finish only) is paired from the matching start event by
+  the handler — so no module reports timing itself. `ts` matches cloud-init's
   `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
   microseconds.
 - Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes. cloud-init splits an
@@ -51,7 +53,7 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   event name + result + a bounded reason, so splitting isn't required).
 
 Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`.
-Two intentional divergences (neither affects the reader rule):
+One intentional divergence (does not affect the reader rule):
 
 - **`incarnation`.** cloud-init uses the boot time as epoch seconds
   (`int(time.time() - uptime)`); egs uses the provisioning state's per-instance
@@ -59,8 +61,6 @@ Two intentional divergences (neither affects the reader rule):
   sweep needs, and egs + cloud-init never write the same pool (egs only on
   Windows, cloud-init only on Linux), so the value's magnitude is opaque to a
   reader.
-- **`duration`.** cloud-init adds an optional `duration` to finish events; egs
-  doesn't track per-event duration, so it's omitted.
 
 Producers:
 

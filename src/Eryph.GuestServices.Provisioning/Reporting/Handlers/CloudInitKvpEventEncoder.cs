@@ -9,14 +9,17 @@ namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
 /// <summary>
 /// One normalized cloud-init reporting event: a <c>start</c> or <c>finish</c>
 /// with an optional result. <see cref="Description"/> becomes the cloud-init
-/// <c>msg</c> field.
+/// <c>msg</c> field. <see cref="Duration"/> (seconds) is the cloud-init
+/// <c>duration</c> field on finish events — paired from the matching start by
+/// the handler, so it is null on start events and when no start was seen.
 /// </summary>
 internal readonly record struct CloudInitEvent(
     string Name,
     string Type,
     string? Result,
     string Description,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp,
+    double? Duration = null);
 
 /// <summary>
 /// Encodes guest-services <see cref="ReportingEvent"/>s into cloud-init's
@@ -128,6 +131,8 @@ internal static class CloudInitKvpEventEncoder
                     "yyyy-MM-ddTHH:mm:ss.ffffffK", CultureInfo.InvariantCulture));
             if (cloudInitEvent.Result is not null)
                 writer.WriteString("result", cloudInitEvent.Result);
+            if (cloudInitEvent.Duration is { } duration)
+                writer.WriteNumber("duration", duration);
             writer.WriteString("msg", msg);
             writer.WriteEndObject();
         }
