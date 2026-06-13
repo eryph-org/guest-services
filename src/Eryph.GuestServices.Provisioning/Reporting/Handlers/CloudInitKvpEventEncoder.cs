@@ -100,50 +100,75 @@ internal static class CloudInitKvpEventEncoder
             eventId.ToString("D"));
 
         var whole = Serialize(cloudInitEvent, cloudInitEvent.Description ?? "", descIndex: null);
-
-        // cloud-init compares len(value) (chars) against the Azure limit; our
-        // JSON is ASCII (the encoder escapes non-ASCII), so chars == bytes.
-        if (whole.Length <= ChunkValueSize)
+        if (Encoding.UTF8.GetByteCount(whole) <= ChunkValueSize)
             return [new KeyValuePair<string, string>(baseKey, whole)];
 
         return BreakDown(baseKey, cloudInitEvent);
     }
 
-    // Mirror of cloudinit/reporting/handlers.py:_break_down. The description is
-    // JSON-escaped once, then sliced across subkeys `<base>|<i>`; each entry is
-    // a full event JSON carrying `msg_i:<i>` and its description slice. The
-    // room for each slice is the Azure limit minus the rest of the JSON minus a
-    // small fudge (cloud-init's `- 8`).
+    // Same shape as cloudinit/reporting/handlers.py:_break_down — a value over
+    // the limit is split across `<base>|<index>` subkeys, each a full event JSON
+    // with `msg_i:<index>` and a slice of the description; a reader concatenates
+    // the `msg` slices ordered by `msg_i`. Unlike cloud-init, which slices the
+    // ALREADY-escaped string and can emit invalid JSON when a cut lands inside a
+    // `\` or `\uXXXX` escape, we slice the RAW description and let the JSON
+    // writer escape each slice — so every chunk is valid JSON and the slices
+    // still reassemble to the full description.
     private static IReadOnlyList<KeyValuePair<string, string>> BreakDown(
         string baseKey, CloudInitEvent cloudInitEvent)
     {
-        // json.dumps(description)[1:-1] — the escaped body without the quotes.
-        var serializedDescription = JsonSerializer.Serialize(cloudInitEvent.Description ?? "");
-        var escaped = serializedDescription[1..^1];
-
+        var description = cloudInitEvent.Description ?? "";
         var entries = new List<KeyValuePair<string, string>>();
+        var position = 0;
         var index = 0;
-        while (true)
+
+        while (position < description.Length)
         {
-            var withoutDescription = Serialize(cloudInitEvent, "", descIndex: index);
-            var room = ChunkValueSize - withoutDescription.Length - 8;
-            if (room < 1)
-                room = 1;
-
-            var take = Math.Min(room, escaped.Length);
-            var slice = escaped[..take];
-            var value = withoutDescription.Replace(
-                $"\"{MsgKey}\":\"\"", $"\"{MsgKey}\":\"{slice}\"", StringComparison.Ordinal);
-
-            entries.Add(new KeyValuePair<string, string>($"{baseKey}|{index}", value));
-
+            var take = LargestChunkThatFits(cloudInitEvent, description, position, index);
+            var chunk = description.Substring(position, take);
+            entries.Add(new KeyValuePair<string, string>(
+                $"{baseKey}|{index}", Serialize(cloudInitEvent, chunk, index)));
+            position += take;
             index++;
-            escaped = escaped[take..];
-            if (escaped.Length == 0)
-                break;
         }
 
+        // An oversized envelope with no description still needs one indexed entry.
+        if (entries.Count == 0)
+            entries.Add(new KeyValuePair<string, string>(
+                $"{baseKey}|0", Serialize(cloudInitEvent, "", 0)));
+
         return entries;
+    }
+
+    // Largest run of raw chars from description[position..] whose serialized
+    // value stays within the chunk byte limit (at least one char, never ending
+    // inside a UTF-16 surrogate pair). Binary search over the serialized length.
+    private static int LargestChunkThatFits(
+        CloudInitEvent cloudInitEvent, string description, int position, int index)
+    {
+        var remaining = description.Length - position;
+        int low = 1, high = remaining, best = 1;
+        while (low <= high)
+        {
+            var mid = low + (high - low) / 2;
+            var bytes = Encoding.UTF8.GetByteCount(
+                Serialize(cloudInitEvent, description.Substring(position, mid), index));
+            if (bytes <= ChunkValueSize)
+            {
+                best = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        // Don't end a chunk on a high surrogate — that would split a code point.
+        if (best > 1 && best < remaining && char.IsHighSurrogate(description[position + best - 1]))
+            best--;
+
+        return best;
     }
 
     private static string ChildName(string? stage, string module) =>

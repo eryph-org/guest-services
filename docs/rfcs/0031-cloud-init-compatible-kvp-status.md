@@ -48,12 +48,18 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
   microseconds when non-zero, with the fractional part omitted entirely for
   whole seconds.
-- **Oversize handling** matches cloud-init's `_break_down`: a value over the
-  Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024`) is split across
+- **Oversize handling** uses cloud-init's `_break_down` shape: a value over the
+  Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024` bytes) is split across
   `<base>|<index>` subkeys, each a full event JSON carrying `msg_i:<index>` and
-  a slice of the JSON-escaped description; a reader concatenates the `msg`
-  slices ordered by `msg_i` (grouped by the shared `<uuid>`). A value that fits
-  is a single entry under the base key (no index, no `msg_i`).
+  a slice of the description; a reader concatenates the `msg` slices ordered by
+  `msg_i` (grouped by the shared `<uuid>`). A value that fits is a single entry
+  under the base key (no index, no `msg_i`). One deliberate difference: cloud-init
+  slices the *already-escaped* string and can emit invalid JSON when a cut lands
+  inside a `\` or `\uXXXX` escape — egs instead slices the *raw* description and
+  re-escapes each chunk, so every chunk is valid JSON and still reassembles.
+  Size is measured in UTF-8 bytes; the JSON writer escapes non-ASCII (and an
+  HTML-safe superset of cloud-init's escapes), so values stay ASCII and within
+  the limit.
 
 The **`incarnation`** is the boot time as epoch seconds, matching cloud-init's
 `int(time.time() - uptime)` — egs reads it from the boot clock

@@ -46,22 +46,32 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var cloudInitStatus = await _reader.GetStatusAsync(cancellationToken).ConfigureAwait(false);
-                if (cloudInitStatus is null)
+                var probe = await _reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+
+                // cloud-init genuinely absent — nothing to mirror, stop.
+                if (!probe.Installed)
                 {
-                    _logger.LogDebug("cloud-init is not available; not reporting provisioning state");
+                    _logger.LogDebug("cloud-init is not installed; not reporting provisioning state");
                     return;
                 }
 
-                var state = CloudInitStateMapper.Map(cloudInitStatus);
-                if (state is not null && state != lastWritten)
+                // Installed but no parseable status yet (cloud-init still
+                // starting): keep polling instead of giving up.
+                if (probe.Status is not null)
                 {
-                    await WriteStateAsync(state, cancellationToken).ConfigureAwait(false);
-                    lastWritten = state;
-                }
+                    var state = CloudInitStateMapper.Map(probe.Status);
+                    // Only advance lastWritten on a successful write, so a
+                    // transient KVP failure does not permanently suppress retries.
+                    if (state is not null
+                        && state != lastWritten
+                        && await WriteStateAsync(state, cancellationToken).ConfigureAwait(false))
+                    {
+                        lastWritten = state;
+                    }
 
-                if (CloudInitStateMapper.IsTerminal(cloudInitStatus))
-                    return;
+                    if (CloudInitStateMapper.IsTerminal(probe.Status))
+                        return;
+                }
 
                 await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
             }
@@ -72,13 +82,14 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
         }
     }
 
-    private async Task WriteStateAsync(string state, CancellationToken cancellationToken)
+    private async Task<bool> WriteStateAsync(string state, CancellationToken cancellationToken)
     {
         try
         {
             await _kvp.SetGuestValuesAsync(
                 new Dictionary<string, string?>(StringComparer.Ordinal) { [StateKey] = state })
                 .ConfigureAwait(false);
+            return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -87,6 +98,7 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to write {Key} to KVP; host-side reporting will be stale", StateKey);
+            return false;
         }
     }
 }
