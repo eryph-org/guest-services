@@ -1,0 +1,16 @@
+name: hostname-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# Deliberately NO cloud-config `hostname:` fodder. eryph delivers the catlet's
+# name as the datasource meta-data `local-hostname` (NoCloud), which is how a
+# normal catlet's hostname is set. This suite proves SetHostnameModule honors
+# that datasource hostname — the regression behind "hostname is not changed":
+# the module used to read only cloud-config and ignore `local-hostname`, so a
+# plain catlet kept the Windows sysprep default (WIN-XXXXXXXXXXX).
+#
+# The catlet is provisioned by our offline-injected egs-service; cloudbase-init
+# is disabled (or absent) so our agent owns the lifecycle.
