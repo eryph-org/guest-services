@@ -119,8 +119,13 @@ internal static class CloudInitKvpEventEncoder
             writer.WriteStartObject();
             writer.WriteString("name", cloudInitEvent.Name);
             writer.WriteString("type", cloudInitEvent.Type);
+            // Match cloud-init's value JSON: datetime.fromtimestamp(ts, utc)
+            // .isoformat() — a `+00:00` offset and 6-digit microseconds (not the
+            // `Z` + 7-digit form .NET's round-trip "O" produces).
             writer.WriteString(
-                "ts", cloudInitEvent.Timestamp.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+                "ts",
+                cloudInitEvent.Timestamp.ToUniversalTime().ToString(
+                    "yyyy-MM-ddTHH:mm:ss.ffffffK", CultureInfo.InvariantCulture));
             if (cloudInitEvent.Result is not null)
                 writer.WriteString("result", cloudInitEvent.Result);
             writer.WriteString("msg", msg);
