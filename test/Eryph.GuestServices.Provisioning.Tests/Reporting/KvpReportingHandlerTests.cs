@@ -35,7 +35,7 @@ public sealed class KvpReportingHandlerTests
     }
 
     [Fact]
-    public async Task PublishAsync_writes_started_state_and_clears_error_and_reboot_reason()
+    public async Task PublishAsync_writes_started_state_only()
     {
         var (handler, kvp) = Build();
 
@@ -45,14 +45,13 @@ public sealed class KvpReportingHandlerTests
 
         var written = LastWrite(kvp);
         written["eryph.provisioning.state"].Should().Be("started");
-        written["eryph.provisioning.instance"].Should().Be("i-1");
-        written["eryph.provisioning.error"].Should().BeNull();
-        written["eryph.provisioning.reboot_reason"].Should().BeNull();
-        written.Should().ContainKey("eryph.provisioning.updated");
+        // The bespoke side keys are gone (RFC 0031): only the status key is written.
+        written.Should().ContainSingle();
+        written.Keys.Should().NotContain("eryph.provisioning.instance");
     }
 
     [Fact]
-    public async Task PublishAsync_StageStarted_writes_running_state_with_stage_name()
+    public async Task PublishAsync_StageStarted_writes_running_state_only()
     {
         var (handler, kvp) = Build();
 
@@ -62,11 +61,11 @@ public sealed class KvpReportingHandlerTests
 
         var written = LastWrite(kvp);
         written["eryph.provisioning.state"].Should().Be("running");
-        written["eryph.provisioning.stage"].Should().Be("Network");
+        written.Keys.Should().NotContain("eryph.provisioning.stage");
     }
 
     [Fact]
-    public async Task PublishAsync_RebootRequested_writes_reboot_pending_with_reason()
+    public async Task PublishAsync_RebootRequested_writes_reboot_pending_only()
     {
         var (handler, kvp) = Build();
 
@@ -76,11 +75,11 @@ public sealed class KvpReportingHandlerTests
 
         var written = LastWrite(kvp);
         written["eryph.provisioning.state"].Should().Be("reboot_pending");
-        written["eryph.provisioning.reboot_reason"].Should().Be("needs-restart");
+        written.Keys.Should().NotContain("eryph.provisioning.reboot_reason");
     }
 
     [Fact]
-    public async Task PublishAsync_ProvisioningCompleted_writes_completed_and_clears_transient_fields()
+    public async Task PublishAsync_ProvisioningCompleted_writes_completed_only()
     {
         var (handler, kvp) = Build();
 
@@ -90,13 +89,11 @@ public sealed class KvpReportingHandlerTests
 
         var written = LastWrite(kvp);
         written["eryph.provisioning.state"].Should().Be("completed");
-        written["eryph.provisioning.stage"].Should().BeNull();
-        written["eryph.provisioning.error"].Should().BeNull();
-        written["eryph.provisioning.reboot_reason"].Should().BeNull();
+        written.Should().ContainSingle();
     }
 
     [Fact]
-    public async Task PublishAsync_ProvisioningFailed_writes_failed_state_with_reason()
+    public async Task PublishAsync_ProvisioningFailed_writes_failed_state_without_reason()
     {
         var (handler, kvp) = Build();
 
@@ -106,21 +103,25 @@ public sealed class KvpReportingHandlerTests
 
         var written = LastWrite(kvp);
         written["eryph.provisioning.state"].Should().Be("failed");
-        written["eryph.provisioning.error"].Should().Be("boom");
+        // The reason is carried by the CLOUD_INIT|... FAIL event, NOT a bespoke
+        // Windows-only error key (RFC 0031).
+        written.Keys.Should().NotContain("eryph.provisioning.error");
     }
 
     [Fact]
-    public async Task PublishAsync_always_writes_updated_timestamp()
+    public async Task PublishAsync_ignores_events_that_do_not_change_status()
     {
         var (handler, kvp) = Build();
 
+        // Progress / module / stage-finish events are reflected in the
+        // CLOUD_INIT|... stream, not the status key — the handler writes nothing.
         await handler.PublishAsync(
             new ReportingEvent.Progress("hello") { Origin = "module:Foo" },
             CancellationToken.None);
 
-        var written = LastWrite(kvp);
-        written.Should().ContainKey("eryph.provisioning.updated");
-        written["eryph.provisioning.updated"].Should().NotBeNullOrWhiteSpace();
+        kvp.ReceivedCalls()
+            .Count(c => c.GetMethodInfo().Name == nameof(IGuestDataExchange.SetGuestValuesAsync))
+            .Should().Be(0);
     }
 
     [Fact]
@@ -179,7 +180,6 @@ public sealed class KvpReportingHandlerTests
         var written = LastWrite(kvp);
         written["eryph.provisioning.ssh_host_keys"]
             .Should().Be("ed25519=SHA256:aaa;rsa=SHA256:bbb");
-        written.Should().ContainKey("eryph.provisioning.updated");
     }
 
     private static IGuestDataExchange WorkingKvp()

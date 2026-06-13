@@ -753,8 +753,9 @@ function Wait-ForProvisioningComplete {
         return $state
       }
       if ($state -eq 'failed') {
-        $err = $kvp.guest.'eryph.provisioning.error'
-        throw "Provisioning reported failed: $err"
+        # The failure reason now lives in the CLOUD_INIT|... FAIL event / agent.log
+        # (RFC 0031), not a bespoke KVP error key. Point the operator there.
+        throw "Provisioning reported failed (reason: see the CLOUD_INIT|... FAIL KVP event, agent.log, or state.json)."
       }
       Write-Verbose "Provisioning state=$state — waiting..."
     } catch {

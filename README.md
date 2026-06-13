@@ -208,7 +208,7 @@ Cloud-init-compatible. If you've used `#cloud-config` before, the same payloads 
 - **Datasources**: NoCloud, ConfigDrive (OpenStack), Azure (with PA / WinGA coexistence), Hyper-V KVP.
 - **Stages**: Local → Network → Config → Final. Reboot-and-continue (exit 1003) honored.
 - **State**: Per-instance / per-boot / per-once semaphores under `%ProgramData%\eryph\provisioning\`.
-- **Reporting**: Hyper-V KVP (`eryph.provisioning.state`, `eryph.provisioning.error`).
+- **Reporting**: Hyper-V KVP — `eryph.provisioning.state` (simple status) plus the cloud-init `CLOUD_INIT|…` event stream (per-stage events + failure reasons), the same format real cloud-init writes on Linux (RFC 0031).
 
 What's **not** supported (yet): jinja2 templating, part-handler, boothook execution as cloud-init does, OpenStack network_data.json (we read v1/v2 cloud-init network-config instead). See [differences from cloud-init](docs/user/explanation/differences-from-cloud-init.md).
 
@@ -318,7 +318,7 @@ The `egs-tool catlet` commands take a **catlet id**; the Hyper-V socket commands
 - **`get-status` returns `unknown`** — agent not running or Hyper-V integration services disabled in the VM.
 - **SSH `Connection refused` / banner timeout** — the agent crashed; check `Get-EventLog -LogName Application -Source egs-service` in the VM.
 - **`egs-tool catlet` cannot connect** — confirm an eryph connection is configured (or eryph-zero is running) and the client has the `compute:catlets:remote-access` scope; select a specific one with `--configuration` / `--client-id`.
-- **Provisioning reports `failed`** — read `eryph.provisioning.error` via `egs-tool get-data --json <VM-ID>`; the agent also writes `%ProgramData%\eryph\provisioning\state.json` and per-script logs under `%ProgramData%\eryph\provisioning\logs\`.
+- **Provisioning reports `failed`** — read the failure reason from the `CLOUD_INIT|…` `FAIL` event via `egs-tool get-data --json <VM-ID>` (same as cloud-init on Linux); the agent also writes `%ProgramData%\eryph\provisioning\state.json`, `agent.log`, and per-script logs under `%ProgramData%\eryph\provisioning\logs\`.
 - **Re-running provisioning** — `egs-service reset` (then reboot the VM, or use `egs-service run` for a one-shot synchronous run). See [docs/user/howto/reset-and-rerun.md](docs/user/howto/reset-and-rerun.md).
 
 ---

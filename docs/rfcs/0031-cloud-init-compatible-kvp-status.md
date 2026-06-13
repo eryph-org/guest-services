@@ -1,156 +1,164 @@
-# RFC 0031 — Cloud-init-compatible provisioning status over Hyper-V KVP
+# RFC 0031 — Cloud-init-compatible provisioning reporting over Hyper-V KVP
 
 Status: Accepted
 
 ## Problem
 
-A host-side reader (eryph, but also any plain Hyper-V operator tool) wants a
-single, uniform answer to "how is this guest's provisioning going?" that works
-the same on a Linux catlet and a Windows catlet.
+A host-side reader (eryph, or any plain Hyper-V operator tool) wants a single,
+uniform answer to two questions that works the same on a Linux catlet and a
+Windows catlet:
+
+1. **How is provisioning going?** — a simple status.
+2. **If it failed, why?** — the failure reason.
 
 Today the two producers disagree on the wire:
 
 - **Windows** — the guest-services provisioning agent writes a bespoke
-  `eryph.provisioning.*` snapshot to the guest KVP pool
-  (`KvpReportingHandler`): a handful of fixed keys carrying the current
-  `state`/`stage`/`error`/`updated`.
-- **Linux** — guest-services runs **no provisioning at all**. Real cloud-init
-  does the work and reports through *its* Hyper-V KVP reporting handler
-  (`HyperVKvpReportingHandler`), which writes a completely different shape: a
-  `CLOUD_INIT|…` event **stream**.
+  `eryph.provisioning.*` snapshot to the guest KVP pool (`KvpReportingHandler`):
+  `state`, plus `instance`, `stage`, `reboot_reason`, `error`, `updated`.
+- **Linux** — guest-services runs **no provisioning**. Real cloud-init does the
+  work and reports through *its* Hyper-V KVP handler
+  (`HyperVKvpReportingHandler`), a completely different shape: a `CLOUD_INIT|…`
+  event **stream**, with **no single status value**.
 
-So a host reader would need two parsers, and the two contracts can drift. We
-want guest-services to "behave like cloud-init" on the wire, while still
-offering eryph a dead-simple key to read.
+So a host reader needs two parsers, the contracts drift, and the extra bespoke
+Windows keys add noise that confuses readers.
 
-## What cloud-init does
+## Principle
 
-`cloudinit/reporting/handlers.py` → `HyperVKvpReportingHandler` writes into the
-guest KVP pool (`/var/lib/hyperv/.kvp_pool_1`), which the Hyper-V host surfaces
-via WMI `Msvm_KvpExchangeComponent.GuestExchangeItems`.
+**cloud-init is the reference producer.** egs never re-processes or re-derives
+cloud-init's reporting on Linux. Where cloud-init runs (Linux) it owns
+reporting; where it does not (Windows) egs stands in and emits the same wire
+format. The one thing egs adds on Linux is a thin bridge for the simple status
+value that cloud-init's event stream does not expose.
 
-- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>`
-  (`event_key_prefix = "CLOUD_INIT|{incarnation}"`). Oversized descriptions are
-  split across extra `…|<index>` subkeys.
-- **Value:** compact JSON `{"name","type","ts","result","duration","msg"}`.
-- **No status key.** Status is an *event stream* of `start`/`finish` events;
-  `result` ∈ `SUCCESS` / `WARN` / `FAIL` (`cloudinit/reporting/events.py`).
-- **Stages** are named `init-local`, `init-network`, `modules-config`,
-  `modules-final`; the terminal `modules-final` `finish` carries the overall
-  result. Each reboot opens a new **incarnation**; stale incarnations are swept.
+## Two surfaces, two jobs
 
-Limits (the pool, shared by both producers): key ≤ 511 bytes, value ≤ 2047
-bytes (`HV_KVP_EXCHANGE_MAX_{KEY,VALUE}_SIZE`); see `DataValidator`.
+### Surface 1 — cloud-init reporting: the `CLOUD_INIT|…` event stream
 
-## What cloudbase-init does
+The rich, per-stage/per-module reporting. **This is where failure reasons
+live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`:
 
-Only Hyper-V KVP reporting (added by the eryph patch). No webhook, no native
-cloud callback — same baseline noted in [RFC 0006](0006-multi-handler-reporting-cloud-backends.md).
+- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>`.
+  Oversized descriptions split across extra `…|<index>` subkeys.
+- **Value:** compact JSON `{"name","type","ts","result","msg"}`,
+  `result ∈ SUCCESS | WARN | FAIL`, `ts` ISO-8601 UTC.
+- Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes.
 
-## Relationship to RFC 0006
+Producers:
 
-Different axis, not a duplicate. [RFC 0006](0006-multi-handler-reporting-cloud-backends.md)
-is about *where* reports go — adding new reporting **sinks** for other clouds
-(Azure wireserver Ready callback, AWS lifecycle, generic webhook) — and leaves
-the Hyper-V KVP handler as-is. This RFC is about *what the Hyper-V KVP sink
-writes on the wire* — making it byte-compatible with cloud-init so a single
-host-side reader parses Linux (real cloud-init) and Windows (egs) the same way.
-0006 never mentions the `CLOUD_INIT|…` format or host-reader unification. The
-two compose: 0031 fixes the KVP backend's format; 0006 adds further backends.
+- **Linux** — real cloud-init writes it natively. eryph base fodder enables it
+  via `Configs/Linux/ReportingHandlerConfig` (`type: hyperv`). **egs does
+  nothing.**
+- **Windows** — no cloud-init exists, and egs *is* the provisioner, so egs
+  emits the identical stream (`CloudInitKvpReportingHandler` +
+  `CloudInitKvpEventEncoder`). egs exists here only to look like cloud-init on
+  the wire.
 
-## Eryph direction
+**Failure reasons** are read from `finish … FAIL` events — cloud-init-native on
+Linux, egs-emitted on Windows. A single reader rule ("find a `finish … FAIL`
+event; its `name` is the failed stage/module, its `msg` is the reason") works on
+both OSes. egs may put a richer `msg` than cloud-init does (extra detail is
+fine); it never makes the reader rule OS-specific.
 
-Two KVP surfaces, both guaranteed by guest-services, so a host reader can pick
-its level:
+### Surface 2 — `eryph.provisioning.state`: the simple status value
 
-1. **Cloud-init wire stream** — guest-services emits the exact `CLOUD_INIT|…`
-   format above so a cloud-init-native reader parses Windows guests identically
-   to Linux guests. New `CloudInitKvpReportingHandler`, registered alongside the
-   existing handler in the reporting collection (the multi-handler design from
-   RFC 0006). On Linux this stream comes from real cloud-init for free — eryph
-   base fodder already enables it via `Configs/Linux/ReportingHandlerConfig`
-   (`type: hyperv`).
+cloud-init's reporting is an event **stream** with **no single status result**,
+yet eryph wants one trivial key to poll. Values:
+`started | running | reboot_pending | completed | failed`.
 
-2. **`eryph.provisioning.*` snapshot — KEPT.** The simple, OS-uniform key eryph
-   reads (`state` ∈ started/running/reboot_pending/completed/failed, plus
-   stage/error/updated/instance/ssh_host_keys). The existing `KvpReportingHandler`
-   keeps writing it unchanged on Windows. On Linux, where guest-services does no
-   provisioning, a new egs-service component **watches cloud-init status** and
-   fills the same snapshot — so `eryph.provisioning.state` is present on both
-   OSes regardless of producer.
+Producers:
 
-Net: eryph's host reader targets `eryph.provisioning.state` (trivial, uniform)
-and may consume the cloud-init stream for richer per-stage telemetry. The
-dual-format complexity lives in guest-services, expressed in cloud-init's own
-language, instead of leaking into every host reader.
+- **Windows** — egs's `KvpReportingHandler` writes it from the provisioning
+  lifecycle.
+- **Linux** — egs polls `cloud-init status --format json` and maps the `status`
+  field to this key (`CloudInitStatusWatcher` + `CloudInitStateMapper`:
+  `done`→`completed`, `error`→`failed`, `running`→`running`,
+  `disabled`→`completed`; `not run`/unknown → write nothing). It writes **only
+  this one key** and stops once cloud-init is terminal.
 
-### Wire format we emit (Windows handler)
+This Linux poller is a **status bridge, not a reporting processor**: it reads
+cloud-init's single status value, never its event stream and never its failure
+reasons. That distinction is the whole point — egs does not translate
+cloud-init's reporting on Linux.
 
-- **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>`
-  — byte-compatible with cloud-init. `incarnation` from the provisioning state
-  (monotonic per instance, bumped per reboot); `vm_id` from the SMBIOS system
-  UUID; `uuid` fresh per event. Long `msg` split across `…|<index>` subkeys.
-- **Value:** compact JSON `{"name","type","ts","result","duration","msg"}`,
-  `ts` ISO-8601 UTC.
-- **Stale incarnations** swept on startup: enumerate `CLOUD_INIT|` keys, delete
-  any whose incarnation precedes the current one (the guest write path deletes a
-  key when its value is null).
+## The bespoke Windows keys are dropped
 
-### Event mapping (guest-services `ReportingEvent` → cloud-init event)
+`KvpReportingHandler` is reduced to the single status key. The others duplicated
+(and diverged from) what Surface 1 now provides, were Windows-only — so a reader
+could never rely on them cross-OS — and were just noise:
 
-The stage `start`/`finish` events are the backbone (they already span the whole
-run), so the eryph-internal lifecycle bookends are dropped to avoid emitting a
-duplicate `init-local`/`modules-final` event.
+| Key | Decision | Why |
+| --- | --- | --- |
+| `eryph.provisioning.state` | **KEEP** | Surface 2. The one uniform status key. |
+| `eryph.provisioning.instance` | drop | instance / vm id is in the Surface 1 key. |
+| `eryph.provisioning.stage` | drop | per-stage `start`/`finish` is in Surface 1. |
+| `eryph.provisioning.reboot_reason` | drop | reboot ends the run (new incarnation in Surface 1); `state` still goes `reboot_pending`. |
+| `eryph.provisioning.error` | **drop** | **failure reasons are read from Surface 1's `FAIL` events**, uniformly on both OSes — not from a Windows-only key. |
+| `eryph.provisioning.updated` | drop | every Surface 1 event carries `ts`. |
+| `eryph.provisioning.ssh_host_keys` | **KEEP (out of scope)** | Not status. It is the SSH host-key publication feature ([RFC 0018](0018-ssh-module.md): `ssh_publish_hostkeys` → host `known_hosts`). Left as-is; revisit separately if it should move to its own channel. |
+
+**Net reader contract:**
+
+- *"Is it done / failed?"* → `eryph.provisioning.state` (one key, both OSes).
+- *"Why did it fail?"* → the `CLOUD_INIT|… finish … FAIL` event (cloud-init's
+  own mechanism, both OSes).
+
+## Event mapping (egs `ReportingEvent` → cloud-init event) — Windows Surface 1
+
+Stage `start`/`finish` events are the backbone, so the eryph-internal lifecycle
+bookends are dropped to avoid duplicating `init-local` / `modules-final`.
 
 | `ReportingEvent` | cloud-init `name` | `type` | `result` |
 |---|---|---|---|
-| `StageStarted(stage)` | `<stage>` (`init-local`/`init-network`/`modules-config`/`modules-final`) | start | — |
+| `StageStarted(stage)` | `<stage>` | start | — |
 | `ModuleStarted(m)` | `<stage>/<m>` | start | — |
-| `ModuleFinished(m, *)` | `<stage>/<m>` | finish | SUCCESS |
-| `ModuleFailed(m, …)` | `<stage>/<m>` | finish | FAIL |
+| `ModuleFinished(m)` | `<stage>/<m>` | finish | SUCCESS |
+| `ModuleFailed(m, reason)` | `<stage>/<m>` | finish | FAIL (`msg`=reason) |
 | `StageFinished(stage)` | `<stage>` | finish | SUCCESS |
-| `ProvisioningFailed(…)` | `<current-stage>` (or `init-local` if none yet) | finish | FAIL |
-| `ProvisioningStarted` / `ProvisioningCompleted` | *(skipped — covered by `StageStarted(Local)` / `StageFinished(Final)`)* | — | — |
-| `RebootRequested` / `SshHostKeysReported` / `Progress` | *(no cloud-init analogue — skipped; reboot opens a new incarnation next boot)* | — | — |
+| `ProvisioningFailed(reason)` | `<current-stage>` (or `init-local`) | finish | FAIL (`msg`=reason) |
+| `ProvisioningStarted` / `ProvisioningCompleted` | *(skipped — covered by stage start/finish)* | — | — |
+| `RebootRequested` / `SshHostKeysReported` / `Progress` | *(no cloud-init analogue — skipped)* | — | — |
 
 Stage name map: `Local→init-local`, `Network→init-network`,
-`Config→modules-config`, `Final→modules-final`. The terminal event a reader
-keys on is `modules-final` `finish SUCCESS` (success) or a `<stage>` `finish
-FAIL` (failure).
+`Config→modules-config`, `Final→modules-final`. Each reboot opens a new
+incarnation (from the provisioning state's reboot count); stale incarnations are
+swept on startup.
 
-## Plan / phases
+## Components
 
-- **Phase 1 (this PR, Windows):** `CloudInitKvpReportingHandler` + a
-  `CloudInitKvpEventEncoder` (key/value/split), incarnation + vm_id sources,
-  stale-incarnation sweep, DI registration next to `KvpReportingHandler`
-  (gated off in dry-run like its sibling). `KvpReportingHandler` and the
-  `eryph.provisioning.*` snapshot are untouched. Unit tests for the encoder and
-  the event→cloud-init mapping.
-- **Phase 2 (Linux):** an egs-service cloud-init status watcher that polls
-  `cloud-init status --format json` and mirrors it into the **single**
-  `eryph.provisioning.state` KVP value (`done`→`completed`, `error`→`failed`,
-  `running`→`running`, `disabled`→`completed`; `not run`/unknown write nothing).
-  It writes only that one key and stops once cloud-init is terminal, so the host
-  reads the same provisioning-state key on Linux and Windows. The richer
-  per-stage cloud-init stream is consumed directly from real cloud-init on Linux,
-  not re-synthesised by egs.
-- **Phase 3 (eryph repo, separate):** host-agent reader + compute-API status
-  endpoint, reading `eryph.provisioning.state` (and optionally the cloud-init
-  stream). Tracked in the eryph repo, not here.
+- **Windows, Surface 1:** `CloudInitKvpReportingHandler`,
+  `CloudInitKvpEventEncoder`, `VmIdProvider`. Registered alongside
+  `KvpReportingHandler` in the reporting collection (gated off in dry-run).
+- **Windows, Surface 2:** `KvpReportingHandler`, reduced to `state`
+  (+ the out-of-scope `ssh_host_keys`).
+- **Linux, Surface 2:** `CloudInitStatusWatcher` + `CloudInitStatusReader` +
+  `CloudInitStateMapper`, registered only on Linux.
+- **Linux, Surface 1:** nothing — cloud-init native.
+
+## Relationship to RFC 0006
+
+Different axis. [RFC 0006](0006-multi-handler-reporting-cloud-backends.md) adds
+new reporting **sinks** (Azure Ready callback, AWS lifecycle, webhook). This RFC
+defines *what the Hyper-V KVP sink writes* and *how a host reader consumes it
+uniformly*. They compose.
+
+## Non-goals / deferred
+
+- **WARN / degraded.** egs only produces Completed/Failed; no `WARN` result.
+  Acceptable; revisit if a non-fatal module outcome is introduced.
+- **Strict byte-fidelity / full cloud-init feature parity.** Not required. The
+  reader rule (state key + `FAIL` event) is what must match, not every field.
+- **Host reader + compute-API status endpoint.** eryph repo, separate.
 
 ## Open questions
 
-- **WARN / degraded.** Cloud-init has a `WARN`→degraded result; guest-services
-  only produces Completed/Failed today, so it can never report *degraded*.
-  Acceptable for now; revisit if a non-fatal module outcome is introduced.
-- **Reboot.** Cloud-init has no "reboot pending" event — a reboot just ends the
-  run and the next boot is a new incarnation. We drop `RebootRequested` from the
-  cloud-init stream (the `eryph.provisioning.*` snapshot still carries
-  `reboot_pending`).
-- **KVP volume.** A full run emits many `CLOUD_INIT|` entries into the Windows
-  guest registry pool. Linux proves the model; we should confirm a real run's
-  entry count stays within the pool's practical limits and that the incarnation
-  sweep keeps it bounded.
-- **`vm_id` source.** SMBIOS system UUID via WMI on Windows. Eryph's reader
-  ignores the field (it reads per-VM); it exists only for byte-fidelity with a
-  generic cloud-init reader.
+- **What cloud-init writes in its KVP `FAIL` `msg` on Linux.** The detailed
+  reason may live in guest-local `result.json`, not KVP. Whatever cloud-init
+  exposes *over KVP*, egs matches; egs never reaches into cloud-init on Linux to
+  enrich it. Verify on a forced Linux failure that the reader rule pulls a
+  useful reason from both producers.
+- **KVP volume.** A full Windows run emits many `CLOUD_INIT|` entries into the
+  guest registry pool; the incarnation sweep bounds it. Confirm on a real run.
+- **`ssh_host_keys`.** Keep it in the (now status-only) `KvpReportingHandler`,
+  or split it into its own reporter? Not blocking.
