@@ -72,7 +72,10 @@ internal sealed class CloudInitStatusReader(ILogger<CloudInitStatusReader> logge
         }
         catch (Win32Exception)
         {
-            // cloud-init is not installed on this guest — a permanent condition.
+            // cloud-init binary not found — a permanent condition. .NET surfaces
+            // the launch failure as a Win32Exception on both platforms (Windows
+            // ERROR_FILE_NOT_FOUND and Linux ENOENT alike), so this single catch
+            // covers "not installed" everywhere.
             return CloudInitProbe.NotInstalled;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

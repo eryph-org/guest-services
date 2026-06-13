@@ -236,4 +236,41 @@ public sealed class CloudInitKvpEventEncoderTests
 
         reassembled.ToString().Should().Be(description);
     }
+
+    [Fact]
+    public void Encode_break_down_never_splits_a_surrogate_pair()
+    {
+        // Each emoji is a supplementary-plane code point — a UTF-16 surrogate
+        // pair (2 chars, 4 UTF-8 bytes). A chunk boundary that fell between the
+        // high and low surrogate would emit U+FFFD and corrupt the reassembly.
+        // The chunker must never cut inside a pair; verify across many chunks
+        // and at varied offsets by mixing in single-unit ASCII runs.
+        var builder = new StringBuilder();
+        var n = 0;
+        while (builder.Length < 4000)
+            builder.Append("😀😁🚀").Append(new string('a', n++ % 7));
+        var description = builder.ToString();
+
+        var entries = CloudInitKvpEventEncoder.Encode(
+            new CloudInitEvent("modules-final", "finish", "FAIL", description, DateTimeOffset.UnixEpoch),
+            incarnation: 0, eventId: Guid.NewGuid());
+
+        entries.Count.Should().BeGreaterThan(1);
+
+        var reassembled = new StringBuilder();
+        for (var i = 0; i < entries.Count; i++)
+        {
+            using var doc = JsonDocument.Parse(entries[i].Value);
+            Encoding.UTF8.GetByteCount(entries[i].Value).Should().BeLessThanOrEqualTo(1024);
+            var msg = doc.RootElement.GetProperty("msg").GetString()!;
+            // No chunk may carry a lone (unpaired) surrogate.
+            msg.Should().NotContain("�");
+            for (var j = 0; j < msg.Length; j++)
+                if (char.IsHighSurrogate(msg[j]))
+                    (j + 1 < msg.Length && char.IsLowSurrogate(msg[j + 1])).Should().BeTrue();
+            reassembled.Append(msg);
+        }
+
+        reassembled.ToString().Should().Be(description);
+    }
 }

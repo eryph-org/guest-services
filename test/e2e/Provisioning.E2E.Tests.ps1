@@ -196,9 +196,9 @@ Describe 'Embedded provisioning at first boot' {
 
     It 'emits the cloud-init CLOUD_INIT event stream over KVP (Surface 1)' {
       # RFC 0031 Surface 1: egs stands in for cloud-init on Windows and emits
-      # the same CLOUD_INIT|<incarnation>|<type>|<name>|<vmid>|<uuid> stream a
-      # Linux catlet would get from cloud-init natively. A completed run must
-      # carry a `finish modules-final SUCCESS` event.
+      # the same CLOUD_INIT|<incarnation>|<type>|<name>|<uuid> stream a Linux
+      # catlet would get from cloud-init natively. A completed run must carry a
+      # `finish modules-final SUCCESS` event.
       $kvp = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
       $cloudInitKeys = $kvp.guest.Keys | Where-Object { $_ -like 'CLOUD_INIT|*' }
       $cloudInitKeys | Should -Not -BeNullOrEmpty

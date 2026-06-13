@@ -42,11 +42,13 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
 - **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<uuid>` —
   cloud-init `_event_key()` layout.
 - **Value:** compact JSON `{"name","type","ts",["result"],"msg"}` in cloud-init's
-  field order. `result ∈ SUCCESS | WARN | FAIL` (finish only). Per-event timing
-  is recoverable from the `start`/`finish` `ts` pair, as in cloud-init. `ts`
-  matches cloud-init's `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00`
-  offset and 6-digit microseconds when non-zero, with the fractional part omitted
-  entirely for whole seconds.
+  field order. `result` is present only on finish events. cloud-init's set is
+  `SUCCESS | WARN | FAIL`; egs emits only `SUCCESS` or `FAIL` (no WARN — see
+  Non-goals). Per-event timing is recoverable from the `start`/`finish` `ts`
+  pair, as in cloud-init. `ts` matches cloud-init's
+  `datetime.fromtimestamp(ts, utc).isoformat()` — a `+00:00` offset and 6-digit
+  microseconds when non-zero, with the fractional part omitted entirely for
+  whole seconds.
 - **Oversize handling** uses cloud-init's `_break_down` shape: a value over the
   Azure limit (`HV_KVP_AZURE_MAX_VALUE_SIZE = 1024` bytes) is split across
   `<base>|<index>` subkeys, each a full event JSON carrying `msg_i:<index>` and
@@ -56,9 +58,11 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   slices the *already-escaped* string and can emit invalid JSON when a cut lands
   inside a `\` or `\uXXXX` escape — egs instead slices the *raw* description and
   re-escapes each chunk, so every chunk is valid JSON and still reassembles.
-  Size is measured in UTF-8 bytes; the JSON writer escapes non-ASCII (and an
-  HTML-safe superset of cloud-init's escapes), so values stay ASCII and within
-  the limit.
+  Size is measured in UTF-8 bytes; the JSON writer escapes non-ASCII as
+  `\uXXXX` (as cloud-init's `json.dumps` does), so values stay ASCII and within
+  the limit. egs additionally escapes `< > & + '`, which cloud-init leaves
+  literal — both forms are valid JSON that decode identically, so a JSON-parsing
+  reader is unaffected (byte-for-byte equality of the `msg` text is a non-goal).
 
 The **`incarnation`** is the boot time as epoch seconds, matching cloud-init's
 `int(time.time() - uptime)` — egs reads it from the boot clock
@@ -114,7 +118,7 @@ could never rely on them cross-OS — and were just noise:
 | Key | Decision | Why |
 | --- | --- | --- |
 | `eryph.provisioning.state` | **KEEP** | Surface 2. The one uniform status key. |
-| `eryph.provisioning.instance` | drop | instance / vm id is in the Surface 1 key. |
+| `eryph.provisioning.instance` | drop | each Surface 1 event already carries a per-event uuid and the incarnation; a separate instance key adds nothing a reader needs. |
 | `eryph.provisioning.stage` | drop | per-stage `start`/`finish` is in Surface 1. |
 | `eryph.provisioning.reboot_reason` | drop | reboot ends the run (new incarnation in Surface 1); `state` still goes `reboot_pending`. |
 | `eryph.provisioning.error` | **drop** | **failure reasons are read from Surface 1's `FAIL` events**, uniformly on both OSes — not from a Windows-only key. |
