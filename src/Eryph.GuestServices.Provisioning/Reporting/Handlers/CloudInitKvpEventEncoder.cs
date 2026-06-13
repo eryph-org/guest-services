@@ -37,10 +37,12 @@ internal static class CloudInitKvpEventEncoder
     public const string ResultSuccess = "SUCCESS";
     public const string ResultFail = "FAIL";
 
-    // HV_KVP_EXCHANGE_MAX_VALUE_SIZE, excluding the null terminator. The pool
-    // (and DataValidator) reject larger values; we trim the msg to fit rather
-    // than lose the whole event.
-    private const int MaxValueSize = 2047;
+    // cloud-init's HyperVKvpReportingHandler size constants. A value over the
+    // (smaller, self-imposed) Azure limit is broken down across `…|<index>`
+    // subkeys; see _break_down in cloudinit/reporting/handlers.py.
+    private const int ChunkValueSize = 1024;     // HV_KVP_AZURE_MAX_VALUE_SIZE
+    private const string MsgKey = "msg";
+    private const string DescIndexKey = "msg_i"; // cloud-init DESC_IDX_KEY
 
     public static string MapStageName(Stage stage) => stage switch
     {
@@ -78,10 +80,17 @@ internal static class CloudInitKvpEventEncoder
             _ => null,
         };
 
-    public static KeyValuePair<string, string> Encode(
+    /// <summary>
+    /// Encodes one cloud-init event into one or more KVP entries. A value that
+    /// fits the per-value limit is a single entry under the base key; an
+    /// oversized one is broken down across <c>&lt;base&gt;|&lt;index&gt;</c>
+    /// subkeys, each carrying a <c>msg_i</c> index and a slice of the
+    /// description — matching cloud-init's <c>_break_down</c>.
+    /// </summary>
+    public static IReadOnlyList<KeyValuePair<string, string>> Encode(
         CloudInitEvent cloudInitEvent, int incarnation, string vmId, Guid eventId)
     {
-        var key = string.Join(
+        var baseKey = string.Join(
             '|',
             KeyPrefix,
             incarnation.ToString(CultureInfo.InvariantCulture),
@@ -90,31 +99,60 @@ internal static class CloudInitKvpEventEncoder
             vmId,
             eventId.ToString("D"));
 
-        return new KeyValuePair<string, string>(key, BuildValue(cloudInitEvent));
+        var whole = Serialize(cloudInitEvent, cloudInitEvent.Description ?? "", descIndex: null);
+
+        // cloud-init compares len(value) (chars) against the Azure limit; our
+        // JSON is ASCII (the encoder escapes non-ASCII), so chars == bytes.
+        if (whole.Length <= ChunkValueSize)
+            return [new KeyValuePair<string, string>(baseKey, whole)];
+
+        return BreakDown(baseKey, cloudInitEvent);
+    }
+
+    // Mirror of cloudinit/reporting/handlers.py:_break_down. The description is
+    // JSON-escaped once, then sliced across subkeys `<base>|<i>`; each entry is
+    // a full event JSON carrying `msg_i:<i>` and its description slice. The
+    // room for each slice is the Azure limit minus the rest of the JSON minus a
+    // small fudge (cloud-init's `- 8`).
+    private static IReadOnlyList<KeyValuePair<string, string>> BreakDown(
+        string baseKey, CloudInitEvent cloudInitEvent)
+    {
+        // json.dumps(description)[1:-1] — the escaped body without the quotes.
+        var serializedDescription = JsonSerializer.Serialize(cloudInitEvent.Description ?? "");
+        var escaped = serializedDescription[1..^1];
+
+        var entries = new List<KeyValuePair<string, string>>();
+        var index = 0;
+        while (true)
+        {
+            var withoutDescription = Serialize(cloudInitEvent, "", descIndex: index);
+            var room = ChunkValueSize - withoutDescription.Length - 8;
+            if (room < 1)
+                room = 1;
+
+            var take = Math.Min(room, escaped.Length);
+            var slice = escaped[..take];
+            var value = withoutDescription.Replace(
+                $"\"{MsgKey}\":\"\"", $"\"{MsgKey}\":\"{slice}\"", StringComparison.Ordinal);
+
+            entries.Add(new KeyValuePair<string, string>($"{baseKey}|{index}", value));
+
+            index++;
+            escaped = escaped[take..];
+            if (escaped.Length == 0)
+                break;
+        }
+
+        return entries;
     }
 
     private static string ChildName(string? stage, string module) =>
         string.IsNullOrEmpty(stage) ? module : $"{stage}/{module}";
 
-    private static string BuildValue(CloudInitEvent cloudInitEvent)
-    {
-        var msg = cloudInitEvent.Description ?? "";
-        var json = Serialize(cloudInitEvent, msg);
-
-        // Trim the msg until the serialized value fits the pool limit. The base
-        // fields are tiny, so this only ever bites a pathologically long error.
-        while (Encoding.UTF8.GetByteCount(json) > MaxValueSize && msg.Length > 0)
-        {
-            msg = msg[..(msg.Length / 2)];
-            json = Serialize(cloudInitEvent, msg + "…");
-        }
-
-        return json;
-    }
-
     // Hand-written with Utf8JsonWriter (compact, trim-safe) rather than the
-    // reflection-based serializer. Field names mirror cloud-init's value JSON.
-    private static string Serialize(CloudInitEvent cloudInitEvent, string msg)
+    // reflection-based serializer. Field order mirrors cloud-init's value JSON:
+    // name, type, ts, [result], [duration], [msg_i], msg.
+    private static string Serialize(CloudInitEvent cloudInitEvent, string msg, int? descIndex)
     {
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer))
@@ -133,7 +171,9 @@ internal static class CloudInitKvpEventEncoder
                 writer.WriteString("result", cloudInitEvent.Result);
             if (cloudInitEvent.Duration is { } duration)
                 writer.WriteNumber("duration", duration);
-            writer.WriteString("msg", msg);
+            if (descIndex is { } idx)
+                writer.WriteNumber(DescIndexKey, idx);
+            writer.WriteString(MsgKey, msg);
             writer.WriteEndObject();
         }
 

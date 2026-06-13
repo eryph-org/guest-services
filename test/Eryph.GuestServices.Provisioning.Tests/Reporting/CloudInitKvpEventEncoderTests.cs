@@ -125,7 +125,7 @@ public sealed class CloudInitKvpEventEncoderTests
             new CloudInitEvent("init-network/SetHostname", "finish", "SUCCESS", "ok", ts),
             incarnation: 2,
             vmId: "ABCD",
-            eventId: id);
+            eventId: id).Single();
 
         entry.Key.Should().Be(
             "CLOUD_INIT|2|finish|init-network/SetHostname|ABCD|11111111-2222-3333-4444-555555555555");
@@ -138,7 +138,7 @@ public sealed class CloudInitKvpEventEncoderTests
 
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "SUCCESS", "done", ts),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
 
         entry.Value.Should().NotContain(" ");
         using var doc = JsonDocument.Parse(entry.Value);
@@ -158,7 +158,7 @@ public sealed class CloudInitKvpEventEncoderTests
             new CloudInitEvent(
                 "modules-final", "finish", "SUCCESS", "done",
                 new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero), Duration: 2.5),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
 
         using var doc = JsonDocument.Parse(entry.Value);
         doc.RootElement.GetProperty("duration").GetDouble().Should().Be(2.5);
@@ -171,7 +171,7 @@ public sealed class CloudInitKvpEventEncoderTests
             new CloudInitEvent(
                 "init-local", "start", null, "",
                 new DateTimeOffset(2026, 6, 3, 12, 0, 0, TimeSpan.Zero)),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
 
         using var doc = JsonDocument.Parse(entry.Value);
         doc.RootElement.TryGetProperty("duration", out _).Should().BeFalse();
@@ -182,25 +182,37 @@ public sealed class CloudInitKvpEventEncoderTests
     {
         var entry = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("init-local", "start", null, "", DateTimeOffset.UnixEpoch),
-            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
+            incarnation: 0, vmId: "vm", eventId: Guid.NewGuid()).Single();
 
         using var doc = JsonDocument.Parse(entry.Value);
         doc.RootElement.TryGetProperty("result", out _).Should().BeFalse();
     }
 
     [Fact]
-    public void Encode_trims_an_oversized_message_to_fit_the_pool_limit()
+    public void Encode_breaks_an_oversized_message_into_indexed_subkeys()
     {
+        // cloud-init _break_down: a value over the Azure limit (1024) is split
+        // across <base>|<index> subkeys, each a full event JSON carrying msg_i
+        // and a slice of the description.
         var huge = new string('x', 10_000);
 
-        var entry = CloudInitKvpEventEncoder.Encode(
+        var entries = CloudInitKvpEventEncoder.Encode(
             new CloudInitEvent("modules-final", "finish", "FAIL", huge, DateTimeOffset.UnixEpoch),
             incarnation: 0, vmId: "vm", eventId: Guid.NewGuid());
 
-        // HV_KVP_EXCHANGE_MAX_VALUE_SIZE, excluding the null terminator.
-        Encoding.UTF8.GetByteCount(entry.Value).Should().BeLessThanOrEqualTo(2047);
-        // Still valid JSON after trimming.
-        var act = () => JsonDocument.Parse(entry.Value);
-        act.Should().NotThrow();
+        entries.Count.Should().BeGreaterThan(1);
+
+        var reassembled = new System.Text.StringBuilder();
+        for (var i = 0; i < entries.Count; i++)
+        {
+            entries[i].Key.Should().EndWith($"|{i}");
+            entries[i].Value.Length.Should().BeLessThanOrEqualTo(1024);
+            using var doc = JsonDocument.Parse(entries[i].Value);
+            doc.RootElement.GetProperty("msg_i").GetInt32().Should().Be(i);
+            reassembled.Append(doc.RootElement.GetProperty("msg").GetString());
+        }
+
+        // Concatenating the slices reconstructs the full description.
+        reassembled.ToString().Should().Be(huge);
     }
 }
