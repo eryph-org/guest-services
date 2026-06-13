@@ -86,7 +86,34 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
 
     private static void AddDirectory(ZipArchive archive, string sourceDir, string entryPrefix)
     {
-        foreach (var file in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        // IgnoreInaccessible so an unreadable subdirectory under a privileged
+        // tree (e.g. /var/log on Linux) is skipped during the walk instead of
+        // throwing UnauthorizedAccessException.
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+        };
+
+        // Materialize the listing inside the try so a failure to enumerate the
+        // directory itself — the root being unreadable, or a transient I/O error
+        // mid-walk — skips the whole directory instead of aborting the command.
+        // collect-logs is best-effort; this never throws.
+        List<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(sourceDir, "*", options).ToList();
+        }
+        catch (IOException)
+        {
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (var file in files)
         {
             var rel = Path.GetRelativePath(sourceDir, file).Replace('\\', '/');
             var entryName = $"{entryPrefix}/{rel}";
@@ -97,6 +124,12 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
             catch (IOException)
             {
                 // Skip files we can't open (locked log files, etc).
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip files we lack permission to read. The agent log dir can
+                // live under a privileged location (e.g. /var/log on Linux), so
+                // a non-elevated collect-logs must stay best-effort, not abort.
             }
         }
     }
