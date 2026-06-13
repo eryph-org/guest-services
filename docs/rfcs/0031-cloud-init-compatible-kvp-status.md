@@ -55,15 +55,14 @@ live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHa
   slices ordered by `msg_i` (grouped by the shared `<uuid>`). A value that fits
   is a single entry under the base key (no index, no `msg_i`).
 
-Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`.
-One intentional divergence (does not affect the reader rule):
+The **`incarnation`** is the boot time as epoch seconds, matching cloud-init's
+`int(time.time() - uptime)` — egs reads it from the boot clock
+(`IBootClock.GetCurrentBootTime`, `Win32_OperatingSystem.LastBootUpTime`). It is
+stable within a boot and higher after a reboot, so the stale-incarnation sweep
+deletes prior boots' entries exactly as cloud-init's does.
 
-- **`incarnation`.** cloud-init uses the boot time as epoch seconds
-  (`int(time.time() - uptime)`); egs uses the provisioning state's per-instance
-  reboot count. Both are monotonic-per-boot, which is all the stale-incarnation
-  sweep needs, and egs + cloud-init never write the same pool (egs only on
-  Windows, cloud-init only on Linux), so the value's magnitude is opaque to a
-  reader.
+Verified against `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`;
+no remaining wire-format divergences.
 
 Producers:
 
@@ -142,8 +141,7 @@ bookends are dropped to avoid duplicating `init-local` / `modules-final`.
 
 Stage name map: `Local→init-local`, `Network→init-network`,
 `Config→modules-config`, `Final→modules-final`. Each reboot opens a new
-incarnation (from the provisioning state's reboot count); stale incarnations are
-swept on startup.
+incarnation (the boot epoch second); stale incarnations are swept on startup.
 
 ## Components
 
