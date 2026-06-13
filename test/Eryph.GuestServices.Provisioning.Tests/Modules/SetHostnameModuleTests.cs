@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -238,5 +239,86 @@ public sealed class SetHostnameModuleTests
             CancellationToken.None);
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
+    }
+
+    // Regression for the "hostname never changes" bug: eryph delivers a
+    // catlet's name as the datasource `local-hostname` (meta-data), not as a
+    // cloud-config `hostname:`. With neither hostname nor fqdn in the
+    // cloud-config, the module must fall back to the datasource hostname —
+    // mirroring cloud-init's get_hostname_fqdn() fallback.
+    [Fact]
+    public async Task Uses_datasource_hostname_when_cloud_config_specifies_none()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("egs-box", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.SetWithRebootPending);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var context = new TestModuleContext(os, new DataSourceResult
+        {
+            SourceName = "NoCloud",
+            InstanceId = "i",
+            Hostname = "egs-box",
+        });
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            context,
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.RebootRequested>();
+        await os.Received().SetComputerNameAsync("egs-box", Arg.Any<CancellationToken>());
+    }
+
+    // The cloud-config hostname is higher precedence than the datasource
+    // local-hostname (cloud-init: cfg['hostname'] wins over the datasource).
+    [Fact]
+    public async Task Cloud_config_hostname_wins_over_datasource_hostname()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("from-config", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var context = new TestModuleContext(os, new DataSourceResult
+        {
+            SourceName = "NoCloud",
+            InstanceId = "i",
+            Hostname = "from-datasource",
+        });
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel { Hostname = "from-config" }),
+            context,
+            CancellationToken.None);
+
+        await os.Received().SetComputerNameAsync("from-config", Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetComputerNameAsync("from-datasource", Arg.Any<CancellationToken>());
+    }
+
+    // A dotted datasource hostname is reduced to its first NetBIOS label, the
+    // same as a cloud-config fqdn.
+    [Fact]
+    public async Task Datasource_hostname_uses_first_netbios_label()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.SetComputerNameAsync("box", Arg.Any<CancellationToken>())
+            .Returns(SetComputerNameResult.AlreadySet);
+        var module = new SetHostnameModule(NullLogger<SetHostnameModule>.Instance);
+
+        var context = new TestModuleContext(os, new DataSourceResult
+        {
+            SourceName = "NoCloud",
+            InstanceId = "i",
+            Hostname = "box.example.com",
+        });
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            context,
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().SetComputerNameAsync("box", Arg.Any<CancellationToken>());
     }
 }

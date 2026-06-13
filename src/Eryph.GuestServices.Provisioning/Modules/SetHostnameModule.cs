@@ -29,7 +29,7 @@ internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IMo
             return ModuleOutcome.Ok();
         }
 
-        var desired = PickName(config);
+        var desired = PickName(config, context.DataSource.Hostname);
         if (desired is null)
         {
             logger.LogDebug("No hostname or fqdn specified; nothing to do.");
@@ -80,7 +80,7 @@ internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IMo
         }
     }
 
-    private static string? PickName(CloudConfigModel config)
+    private static string? PickName(CloudConfigModel config, string? dataSourceHostname)
     {
         // Cloud-init's prefer_fqdn_over_hostname swaps the precedence: when
         // true AND an fqdn is available, the fqdn wins over hostname.
@@ -94,6 +94,16 @@ internal sealed class SetHostnameModule(ILogger<SetHostnameModule> logger) : IMo
 
         if (!string.IsNullOrWhiteSpace(config.Fqdn))
             return ExtractNetBiosName(config.Fqdn);
+
+        // Fall back to the datasource-provided hostname (NoCloud / ConfigDrive
+        // `local-hostname`, EC2 / Azure metadata). cloud-init's cc_set_hostname
+        // resolves the name via get_hostname_fqdn(), which uses the datasource
+        // hostname when the cloud-config specifies neither hostname nor fqdn.
+        // eryph delivers a catlet's name as meta-data `local-hostname` (not a
+        // cloud-config `hostname:`), so without this fallback a normal catlet
+        // never gets its hostname applied.
+        if (!string.IsNullOrWhiteSpace(dataSourceHostname))
+            return ExtractNetBiosName(dataSourceHostname.Trim());
 
         return null;
     }
