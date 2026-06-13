@@ -121,13 +121,7 @@ BeforeAll {
   # test can use them.
   function script:Invoke-GuestPS {
     param([string] $HostName, [string] $Script)
-    # egs runs SSH exec through PowerShell, so `powershell -Command "<script>"`
-    # would let the OUTER guest shell expand the script's $variables (e.g.
-    # $env:COMPUTERNAME) before the inner powershell ever sees them. Pass the
-    # script as a UTF-16LE base64 -EncodedCommand instead — opaque to every
-    # shell on the path, so it reaches the inner powershell verbatim.
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Script))
-    $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -EncodedCommand $encoded"
+    $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -Command `"$Script`""
     return @{
       ExitCode = $LASTEXITCODE
       Output   = ($output | Out-String).Trim()
@@ -239,10 +233,7 @@ Describe 'Embedded provisioning at first boot' {
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version"
       $r.ExitCode | Should -Be 0
-      # egs-service renders `version` through a console writer that hard-wraps
-      # at ~80 cols when there's no PTY, so the SHA can straddle a line break.
-      # Strip all whitespace before matching.
-      ($r.Output -replace '\s', '') | Should -Match ([regex]::Escape($hostSha))
+      $r.Output | Should -Match ([regex]::Escape($hostSha))
     }
 
     It 'did not run cloudbase-init' {
@@ -426,30 +417,22 @@ Describe 'Embedded provisioning at first boot' {
       # (%ProgramData%\eryph\guest-services\logs\agent.log) so the support
       # bundle is useful even when no user-data scripts ran — without it the
       # only sink was the Windows Event Log, which collect-logs never reads.
-      # Build the bundle in-guest, then pull it to the host with egs-tool
-      # download-file (the egs SSH server has no SFTP subsystem) and inspect it
-      # host-side — far more robust than an in-guest zip probe over ssh.
+      # Build the bundle, then inspect it in-guest: the egs SSH server has no
+      # SFTP subsystem so scp can't pull it. Both probes are single-quoted
+      # (no double quotes) so they survive the ssh.exe "powershell -Command"
+      # wrapping in Invoke-GuestPS.
       $hostName = "$($catlet.VmId).hyper-v.alt"
-      $guestBundle = 'C:\Windows\Temp\egs-e2e-bundle.zip'
       $build = Invoke-GuestPS -HostName $hostName `
-        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs $guestBundle"
+        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-e2e-bundle.zip"
       $build.ExitCode | Should -Be 0
 
-      $localBundle = Join-Path ([System.IO.Path]::GetTempPath()) "egs-e2e-bundle-$($catlet.VmId).zip"
-      Remove-Item $localBundle -ErrorAction SilentlyContinue
-      egs-tool download-file $catlet.VmId $guestBundle $localBundle
-      Test-Path $localBundle | Should -BeTrue
-
-      Add-Type -AssemblyName System.IO.Compression.FileSystem
-      $zip = [System.IO.Compression.ZipFile]::OpenRead($localBundle)
-      try {
-        $entry = $zip.Entries | Where-Object FullName -eq 'logs/agent.log'
-        $entry | Should -Not -BeNullOrEmpty
-        $entry.Length | Should -BeGreaterThan 0
-      }
-      finally {
-        $zip.Dispose()
-      }
+      $probe = @'
+Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::OpenRead('C:\Windows\Temp\egs-e2e-bundle.zip'); try { $e=$z.Entries | Where-Object FullName -eq 'logs/agent.log'; if ($e) { 'agent.log=' + $e.Length } else { 'agent.log=MISSING' } } finally { $z.Dispose() }
+'@
+      $r = Invoke-GuestPS -HostName $hostName -Script $probe
+      $r.ExitCode | Should -Be 0
+      $r.Output.Trim() | Should -Match '^agent\.log=\d+$'
+      [int]($r.Output.Trim() -replace 'agent\.log=', '') | Should -BeGreaterThan 0
     }
   }
 }
