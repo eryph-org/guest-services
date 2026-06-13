@@ -273,12 +273,12 @@ public sealed class NoCloudDataSourceTests : IDisposable
         result.MetaData["public-keys"].Should().Contain("otherkey");
         result.MetaData.Should().ContainKey("network-interfaces");
         result.MetaData["network-interfaces"].Should().Contain("iface eth0 inet static");
-        // Both keys from the public-keys map are extracted for the default user.
-        result.SshPublicKeys.Should().BeEquivalentTo(new[]
-        {
+        // Both keys are extracted in document order (mykey then otherkey).
+        // Use Equal, not BeEquivalentTo: extraction is order-preserving and we
+        // want a regression to fail if that ordering ever changes.
+        result.SshPublicKeys.Should().Equal(
             "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDexamplekeydata mykey@host",
-            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleEd25519KeyData other@host",
-        });
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleEd25519KeyData other@host");
     }
 
     [Fact]
