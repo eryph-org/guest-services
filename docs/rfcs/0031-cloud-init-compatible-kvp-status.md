@@ -40,10 +40,12 @@ The rich, per-stage/per-module reporting. **This is where failure reasons
 live.** Byte-shape matches `cloudinit/reporting/handlers.py:HyperVKvpReportingHandler`:
 
 - **Key:** `CLOUD_INIT|<incarnation>|<event_type>|<event_name>|<vm_id>|<uuid>`.
-  Oversized descriptions split across extra `…|<index>` subkeys.
 - **Value:** compact JSON `{"name","type","ts","result","msg"}`,
   `result ∈ SUCCESS | WARN | FAIL`, `ts` ISO-8601 UTC.
-- Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes.
+- Pool limits: key ≤ 511 bytes, value ≤ 2047 bytes. cloud-init splits an
+  oversized description across extra `…|<index>` subkeys; our encoder instead
+  **trims** the `msg` to fit the value limit (the reader rule only needs the
+  event name + result + a bounded reason, so splitting isn't required).
 
 Producers:
 
@@ -160,5 +162,3 @@ uniformly*. They compose.
   useful reason from both producers.
 - **KVP volume.** A full Windows run emits many `CLOUD_INIT|` entries into the
   guest registry pool; the incarnation sweep bounds it. Confirm on a real run.
-- **`ssh_host_keys`.** Keep it in the (now status-only) `KvpReportingHandler`,
-  or split it into its own reporter? Not blocking.
