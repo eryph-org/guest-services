@@ -69,7 +69,11 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
                         lastWritten = state;
                     }
 
-                    if (CloudInitStateMapper.IsTerminal(probe.Status))
+                    // Stop only once the terminal state is actually on the wire.
+                    // If the terminal write just failed (state != lastWritten),
+                    // keep polling and retry rather than returning and leaving the
+                    // host stuck on a stale non-terminal state.
+                    if (CloudInitStateMapper.IsTerminal(probe.Status) && state == lastWritten)
                         return;
                 }
 

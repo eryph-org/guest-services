@@ -105,6 +105,20 @@ public class CloudInitStatusWatcherTests
         kvp.Attempts.Should().Equal("running", "running");
     }
 
+    [Fact]
+    public async Task WatchAsync_retries_a_failed_terminal_write_before_stopping()
+    {
+        // The terminal "done" write fails once. The watcher must NOT stop on the
+        // failed write (which would leave the host on a stale non-terminal
+        // state) — it retries until the terminal state is actually written.
+        var reader = new StubReader(Running("done"), Running("done"));
+        var kvp = new FlakyDataExchange(failFirst: true);
+
+        await Watcher(reader, kvp).WatchAsync(CancellationToken.None);
+
+        kvp.Attempts.Should().Equal("completed", "completed");
+    }
+
     private static CloudInitProbe Running(string? status) => CloudInitProbe.Running(status);
 
     private static CloudInitStatusWatcher Watcher(ICloudInitStatusReader reader, IGuestDataExchange kvp) =>
