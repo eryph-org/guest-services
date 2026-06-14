@@ -135,10 +135,13 @@ declares no admin).
 ### 8. Typed reporting event
 
 `ReportingEvent.SshHostKeysReported(IReadOnlyList<SshHostKeyFingerprint>)`
-carries the generated host-key fingerprints. The `LogReportingHandler` logs
-one line per fingerprint; the `KvpReportingHandler` writes a compact
-`type=fingerprint;...` string under `eryph.provisioning.ssh_host_keys`. The
-producing site gates emission on `ssh.emit_keys_to_console`.
+carries the generated host-key fingerprints. The `LogReportingHandler` logs one
+line per fingerprint, and any other reporting sink can subscribe (RFC 0006
+backends). The producing site gates emission on `ssh.emit_keys_to_console`.
+
+> **Updated (RFC 0031).** The `KvpReportingHandler` used to also write a compact
+> `type=fingerprint;...` string under `eryph.provisioning.ssh_host_keys`. That
+> KVP key had no consumer and was dropped; the event itself is unchanged.
 
 `SshHostKeyFingerprint` is `(string KeyType, string Fingerprint, string
 PublicKey)` — `Fingerprint` is the `SHA256:...` form from `ssh-keygen -l`.

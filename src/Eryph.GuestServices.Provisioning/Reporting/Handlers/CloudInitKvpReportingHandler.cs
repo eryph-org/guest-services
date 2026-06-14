@@ -1,0 +1,174 @@
+using System.Globalization;
+using Eryph.GuestServices.HvDataExchange.Guest;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
+using Eryph.GuestServices.Provisioning.Semaphores;
+using Microsoft.Extensions.Logging;
+
+namespace Eryph.GuestServices.Provisioning.Reporting.Handlers;
+
+// Emits the same CLOUD_INIT|... KVP event stream that real cloud-init's
+// HyperVKvpReportingHandler writes, so a host-side reader parses Windows (egs)
+// guests the same way it parses Linux (real cloud-init) guests. Runs ALONGSIDE
+// KvpReportingHandler, which writes the single eryph.provisioning.state key —
+// this handler does not touch it.
+//
+// Like its sibling it probes once at construction and gates via IsApplicable;
+// KVP write failures during a run are warn-logged and swallowed (the host-side
+// reader is optional).
+internal sealed class CloudInitKvpReportingHandler : IReportingHandler
+{
+    // Not CLOUD_INIT|... so it is never mistaken for an event nor swept.
+    private const string ProbeKey = "CLOUD_INIT.probe";
+
+    private readonly IGuestDataExchange _kvp;
+    private readonly IBootClock _bootClock;
+    private readonly ILogger<CloudInitKvpReportingHandler> _logger;
+    private readonly bool _isApplicable;
+
+    // The cloud-init name of the running stage, used to scope module child
+    // events. Updated as stages start.
+    private string? _currentStage;
+    private long? _incarnation;
+    private bool _incarnationResolved;
+    private bool _sweptStale;
+
+    public CloudInitKvpReportingHandler(
+        IGuestDataExchange kvp,
+        IBootClock bootClock,
+        ILogger<CloudInitKvpReportingHandler> logger)
+    {
+        _kvp = kvp;
+        _bootClock = bootClock;
+        _logger = logger;
+        _isApplicable = Probe();
+    }
+
+    public bool IsApplicable => _isApplicable;
+
+    public async Task PublishAsync(ReportingEvent reportingEvent, CancellationToken cancellationToken)
+    {
+        // Track the running stage before mapping so module events nest under it.
+        if (reportingEvent is ReportingEvent.StageStarted started)
+            _currentStage = CloudInitKvpEventEncoder.MapStageName(started.Stage);
+
+        var mapped = CloudInitKvpEventEncoder.Map(reportingEvent, _currentStage);
+        if (mapped is null)
+            return;
+
+        var cloudInitEvent = mapped.Value;
+
+        // Resolve the incarnation and sweep stale entries only once we have an
+        // event that actually produces output — events with no cloud-init
+        // analogue (ProvisioningStarted, Progress, SshHostKeysReported, ...) must
+        // not trigger the KVP reads/writes of initialization.
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        // One event encodes to one entry, or several `…|<index>` subkey entries
+        // when its value is oversized (cloud-init _break_down). Write them all.
+        var entries = CloudInitKvpEventEncoder.Encode(
+            cloudInitEvent, _incarnation ?? 0, Guid.NewGuid());
+
+        try
+        {
+            var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var entry in entries)
+                values[entry.Key] = entry.Value;
+            await _kvp.SetGuestValuesAsync(values).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to write cloud-init KVP event for {Event}; host-side reporting will be stale",
+                reportingEvent.GetType().Name);
+        }
+    }
+
+    // Resolved lazily on the first published event: the incarnation is stable
+    // for the run, and the stale-incarnation sweep needs the current incarnation
+    // first.
+    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    {
+        if (_incarnation is null)
+        {
+            // cloud-init's incarnation is the boot time as epoch seconds
+            // (int(time.time() - uptime)); we take it from the boot clock.
+            // Stable per boot, higher after a reboot — all the sweep needs.
+            try
+            {
+                _incarnation = _bootClock.GetCurrentBootTime().ToUnixTimeSeconds();
+                _incarnationResolved = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not read boot time for the cloud-init incarnation; using 0 and skipping the stale sweep");
+                _incarnation = 0;
+            }
+        }
+
+        // Sweep only with a real incarnation. With the 0 fallback we cannot tell
+        // this boot's entries from prior ones, so sweeping could delete the
+        // current boot's CLOUD_INIT entries (e.g. after a mid-run restart).
+        if (_incarnationResolved && !_sweptStale)
+        {
+            _sweptStale = true;
+            await SweepStaleIncarnationsAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // Cloud-init bumps the incarnation per boot and sweeps prior entries so the
+    // pool stays bounded. We do the same: delete any CLOUD_INIT|... entry whose
+    // incarnation is not the current one (the write path deletes on a null value).
+    private async Task SweepStaleIncarnationsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var existing = await _kvp.GetGuestDataAsync().ConfigureAwait(false);
+            var stale = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var key in existing.Keys)
+            {
+                if (!key.StartsWith(CloudInitKvpEventEncoder.KeyPrefix + "|", StringComparison.Ordinal))
+                    continue;
+
+                var parts = key.Split('|');
+                if (parts.Length >= 2
+                    && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var incarnation)
+                    && incarnation != _incarnation)
+                {
+                    stale[key] = null;
+                }
+            }
+
+            if (stale.Count > 0)
+                await _kvp.SetGuestValuesAsync(stale).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to sweep stale CLOUD_INIT incarnations");
+        }
+    }
+
+    // Synchronous probe so IsApplicable stays a sync property (per the interface).
+    // We block on the async write because this runs once at startup and touches a
+    // local registry key on Windows.
+    private bool Probe()
+    {
+        try
+        {
+            _kvp.SetGuestValuesAsync(new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                [ProbeKey] = "1",
+            }).GetAwaiter().GetResult();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Hyper-V KVP not available; CloudInitKvpReportingHandler will be disabled");
+            return false;
+        }
+    }
+}
