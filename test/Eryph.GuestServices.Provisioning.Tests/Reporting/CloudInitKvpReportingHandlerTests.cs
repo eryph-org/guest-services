@@ -105,6 +105,31 @@ public sealed class CloudInitKvpReportingHandlerTests
     }
 
     [Fact]
+    public async Task PublishAsync_skips_the_sweep_when_the_boot_time_cannot_be_read()
+    {
+        // Boot time unreadable -> incarnation falls back to 0. The sweep must be
+        // skipped: with the 0 fallback it cannot distinguish this boot's entries
+        // from prior ones and would wipe real, current entries.
+        var kvp = WorkingKvp();
+        kvp.GetGuestDataAsync().Returns(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["CLOUD_INIT|1700000000|finish|modules-final|real"] = "{}",
+        });
+        var clock = Substitute.For<IBootClock>();
+        clock.GetCurrentBootTime().Throws(new InvalidOperationException("boot time unavailable"));
+
+        var handler = new CloudInitKvpReportingHandler(
+            kvp, clock, NullLogger<CloudInitKvpReportingHandler>.Instance);
+        kvp.ClearReceivedCalls();
+
+        await handler.PublishAsync(
+            new ReportingEvent.StageStarted(Stage.Local) { Origin = "stage:Local" },
+            CancellationToken.None);
+
+        AllWrites(kvp).SelectMany(w => w).Where(p => p.Value is null).Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task PublishAsync_swallows_kvp_write_failures()
     {
         var kvp = Substitute.For<IGuestDataExchange>();

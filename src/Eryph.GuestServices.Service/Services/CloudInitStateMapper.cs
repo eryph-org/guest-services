@@ -1,9 +1,12 @@
 namespace Eryph.GuestServices.Service.Services;
 
-// Maps a cloud-init status (cloud-init status --format json -> "status") to the
-// eryph.provisioning.state value. cloud-init folds recoverable errors into
-// "done"/"running" (the detail lives in extended_status), so the base status is
-// enough for the single provisioning-state value.
+// Maps cloud-init's `status` field (cloud-init status --format json) to the
+// eryph.provisioning.state value. cloud-init's translate_status() keeps the
+// `status` field to the simplified set — not started/running/done/disabled, or
+// "error" — and NEVER puts "degraded" there: a degraded run reports
+// status="done"/"running" and exposes the degradation only via `extended_status`
+// ("degraded done"). So reading `status` alone is correct and complete for the
+// single provisioning-state value; egs deliberately does not read extended_status.
 internal static class CloudInitStateMapper
 {
     public const string Running = "running";

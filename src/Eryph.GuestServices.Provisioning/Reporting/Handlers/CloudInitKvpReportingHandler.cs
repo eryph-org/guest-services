@@ -29,6 +29,7 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
     // events. Updated as stages start.
     private string? _currentStage;
     private long? _incarnation;
+    private bool _incarnationResolved;
     private bool _sweptStale;
 
     public CloudInitKvpReportingHandler(
@@ -100,15 +101,19 @@ internal sealed class CloudInitKvpReportingHandler : IReportingHandler
             try
             {
                 _incarnation = _bootClock.GetCurrentBootTime().ToUnixTimeSeconds();
+                _incarnationResolved = true;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Could not read boot time for the cloud-init incarnation; using 0");
+                _logger.LogWarning(ex, "Could not read boot time for the cloud-init incarnation; using 0 and skipping the stale sweep");
                 _incarnation = 0;
             }
         }
 
-        if (!_sweptStale)
+        // Sweep only with a real incarnation. With the 0 fallback we cannot tell
+        // this boot's entries from prior ones, so sweeping could delete the
+        // current boot's CLOUD_INIT entries (e.g. after a mid-run restart).
+        if (_incarnationResolved && !_sweptStale)
         {
             _sweptStale = true;
             await SweepStaleIncarnationsAsync(cancellationToken).ConfigureAwait(false);
