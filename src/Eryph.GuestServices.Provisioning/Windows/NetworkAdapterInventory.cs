@@ -13,9 +13,12 @@ namespace Eryph.GuestServices.Provisioning.Windows;
 /// lives in <c>PermanentAddress</c>). CIM is still used to <em>set</em>
 /// addresses/DNS/routes, keyed by the interface index resolved here.
 /// </summary>
-[SupportedOSPlatform("windows")]
 internal static class NetworkAdapterInventory
 {
+    // The IfIndex resolution (GetIPv4Properties().Index) is a Windows concern;
+    // FormatMac below is platform-agnostic, so the attribute sits here, not on
+    // the class.
+    [SupportedOSPlatform("windows")]
     public static IReadOnlyList<NetworkAdapterInfo> Enumerate()
     {
         var results = new List<NetworkAdapterInfo>();

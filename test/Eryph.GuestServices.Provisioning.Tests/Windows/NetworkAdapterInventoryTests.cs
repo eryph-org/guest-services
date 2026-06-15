@@ -1,4 +1,3 @@
-using System.Runtime.Versioning;
 using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -17,9 +16,13 @@ public class NetworkAdapterInventoryTests
     }
 
     [Fact]
-    [SupportedOSPlatform("windows")]
     public void Enumerate_returns_adapters_with_a_real_mac_and_index()
     {
+        // Touches the host's real adapters, so gate to Windows per the repo
+        // convention (the inventory is Windows-only and a Linux runner has no
+        // CIM/IfIndex semantics to assert against).
+        if (!OperatingSystem.IsWindows()) return;
+
         // Regression for the empty-MAC bug: the .NET enumeration must surface a
         // usable hardware MAC (GetPhysicalAddress), not the blank
         // MSFT_NetAdapter.MacAddress. Asserts the build host has at least one

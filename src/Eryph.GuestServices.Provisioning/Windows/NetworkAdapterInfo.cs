@@ -19,8 +19,9 @@ public sealed record NetworkAdapterInfo
 
     /// <summary>
     /// Canonical MAC: 12 lowercase hex digits separated by single colons.
-    /// Adapters without a usable link-layer address are not enumerated, so this
-    /// is always populated.
+    /// <see cref="IWindowsOs.GetNetworkAdaptersAsync"/> only yields adapters
+    /// with a usable hardware address, so values it returns are populated; a
+    /// hand-constructed instance may carry anything.
     /// </summary>
     public required string MacAddress { get; init; }
 }
