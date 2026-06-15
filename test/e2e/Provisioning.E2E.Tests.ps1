@@ -444,6 +444,22 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
     }
   }
 
+  Context 'egs settings' {
+
+    It 'EgsModule wrote the service-control flags to the registry' {
+      # The catlet fodder sets egs.settings.remote_access:true + kvp_auth:true.
+      # The module writes them as REG_DWORDs under HKLM\SOFTWARE\eryph\guest-services
+      # (read at the next service start). Use reg.exe (no $-variables) so the
+      # probe survives the harness's powershell wrapping; assert both = 0x1.
+      $hostName = "$($catlet.VmId).hyper-v.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script 'reg query "HKLM\SOFTWARE\eryph\guest-services"'
+      $r.ExitCode | Should -Be 0
+      $r.Output | Should -Match 'RemoteAccessEnabled\s+REG_DWORD\s+0x1'
+      $r.Output | Should -Match 'KvpAuthEnabled\s+REG_DWORD\s+0x1'
+    }
+  }
+
   Context 'network-config' {
 
     It 'matched the NIC by MAC and applied the network-config (not skipped)' {
