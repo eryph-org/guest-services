@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.Update;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -12,10 +13,21 @@ namespace Eryph.GuestServices.Provisioning.Tests.Modules;
 
 public sealed class EgsModuleTests
 {
-    private static async Task<(IWindowsOs Os, ModuleOutcome Outcome)> RunAsync(EgsConfig? egs)
+    // Default updater: no update due. Pass an explicit one to exercise the
+    // update path.
+    private static IEgsUpdater NoUpdate()
+    {
+        var updater = Substitute.For<IEgsUpdater>();
+        updater.PrepareAsync(Arg.Any<EgsUpdateConfig?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<UpdatePlan?>(null));
+        return updater;
+    }
+
+    private static async Task<(IWindowsOs Os, ModuleOutcome Outcome)> RunAsync(
+        EgsConfig? egs, IEgsUpdater? updater = null)
     {
         var os = Substitute.For<IWindowsOs>();
-        var module = new EgsModule(NullLogger<EgsModule>.Instance);
+        var module = new EgsModule(NullLogger<EgsModule>.Instance, updater ?? NoUpdate());
         var config = new CloudConfigModel { Egs = egs };
         var outcome = await module.ApplyAsync(
             ResolvedUserData.Empty(config),
@@ -95,7 +107,7 @@ public sealed class EgsModuleTests
                 ServiceControlFlag.RemoteAccess, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns<Task>(_ => throw new UnauthorizedAccessException("registry denied"));
 
-        var module = new EgsModule(NullLogger<EgsModule>.Instance);
+        var module = new EgsModule(NullLogger<EgsModule>.Instance, NoUpdate());
         var config = new CloudConfigModel
         {
             Egs = new EgsConfig { Settings = new EgsSettingsConfig { RemoteAccess = false } },
@@ -107,5 +119,34 @@ public sealed class EgsModuleTests
             CancellationToken.None);
 
         outcome.Should().BeOfType<ModuleOutcome.Failed>();
+    }
+
+    [Fact]
+    public async Task Staged_update_returns_UpdateRequested_before_applying_settings()
+    {
+        // When the updater stages a plan, the module must hand back
+        // UpdateRequested (so the host swaps + restarts) and NOT yet apply
+        // settings — those run on the new binary after the restart.
+        var updater = Substitute.For<IEgsUpdater>();
+        updater.PrepareAsync(Arg.Any<EgsUpdateConfig?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<UpdatePlan?>(new UpdatePlan
+            {
+                StagingDirectory = @"C:\staging\0.4.0\payload",
+                TargetVersion = "0.4.0",
+            }));
+
+        var (os, outcome) = await RunAsync(
+            new EgsConfig
+            {
+                Settings = new EgsSettingsConfig { RemoteAccess = false },
+                Update = new EgsUpdateConfig { Enabled = true },
+            },
+            updater);
+
+        var update = outcome.Should().BeOfType<ModuleOutcome.UpdateRequested>().Subject;
+        update.TargetVersion.Should().Be("0.4.0");
+        update.StagingDirectory.Should().Be(@"C:\staging\0.4.0\payload");
+        // Settings must NOT have been written yet — they apply post-restart.
+        await os.DidNotReceiveWithAnyArgs().SetServiceControlFlagAsync(default, default, default);
     }
 }

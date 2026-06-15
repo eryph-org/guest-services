@@ -63,6 +63,7 @@ public class ProvisioningHostedServiceGateTests
         var flags = new FixedFlags(provisioningEnabled);
         return new ProvisioningHostedService(
             runner, lifetime, flags, reporter ?? Substitute.For<IReportingDispatcher>(),
+            Substitute.For<Eryph.GuestServices.Provisioning.Update.IUpdateLauncher>(),
             NullLogger<ProvisioningHostedService>.Instance);
     }
 

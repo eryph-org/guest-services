@@ -1,6 +1,7 @@
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.Update;
 using Eryph.GuestServices.Provisioning.UserData;
 using Microsoft.Extensions.Logging;
 
@@ -12,14 +13,14 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// switches (remote access / provisioning / KVP auth) and, later, self-update.
 /// </summary>
 /// <remarks>
-/// Runs at the end of the Network stage: after <see cref="ApplyNetworkConfigModule"/>
-/// (Order 2) and <see cref="NtpClientModule"/> (Order 3) — so networking and
-/// time are up for the self-update download — but before any Config-stage
-/// module. That ordering matters once self-update lands: an update restarts the
-/// agent, and the remaining (Config/Final) modules then run on the new binary.
+/// Runs last in the Network stage (after network-config, NTP, timezone and
+/// locale) so networking is up for the self-update download, but before any
+/// Config-stage module. That ordering matters for self-update: an update
+/// restarts the agent, and the entire Config/Final pipeline then runs on the
+/// new binary.
 /// </remarks>
-[Stage(Stage.Network, Order = 4, Frequency = ModuleFrequency.PerInstance)]
-internal sealed class EgsModule(ILogger<EgsModule> logger) : IModule
+[Stage(Stage.Network, Order = 6, Frequency = ModuleFrequency.PerInstance)]
+internal sealed class EgsModule(ILogger<EgsModule> logger, IEgsUpdater updater) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(
         ResolvedUserData userData,
@@ -31,6 +32,20 @@ internal sealed class EgsModule(ILogger<EgsModule> logger) : IModule
         {
             logger.LogDebug("No egs block; leaving agent configuration alone.");
             return ModuleOutcome.Ok();
+        }
+
+        // Self-update FIRST: a staged update restarts the agent, and the rest of
+        // provisioning (settings here, then every Config/Final module) then runs
+        // on the new binary. On the post-update re-entry the updater finds the
+        // running version already matches the target and returns no plan, so we
+        // fall through to settings.
+        var plan = await updater.PrepareAsync(egs.Update, cancellationToken).ConfigureAwait(false);
+        if (plan is not null)
+        {
+            return ModuleOutcome.Update(
+                $"applying egs self-update to {plan.TargetVersion}",
+                plan.StagingDirectory,
+                plan.TargetVersion);
         }
 
         try

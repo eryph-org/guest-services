@@ -22,7 +22,7 @@ internal static class Program
     // the Windows-service host (the SCM invokes the binary with no args).
     private static readonly HashSet<string> KnownSubcommands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "run", "status", "reset", "collect-logs", "validate", "version",
+        "run", "status", "reset", "collect-logs", "validate", "version", "apply-update",
         // Spectre's built-in help / version flags also short-circuit before
         // dispatching to a command.
         "--help", "-h", "--version",
@@ -182,5 +182,8 @@ internal static class Program
             .WithDescription("Run the provisioning agent once (synchronous one-shot).");
         config.AddCommand<ValidateCommand>("validate")
             .WithDescription("Validate a cloud-config user-data file without applying it.");
+        config.AddCommand<ApplyUpdateCommand>("apply-update")
+            .WithDescription("Internal: apply a staged self-update (stop service, swap binaries, restart).")
+            .IsHidden();
     }
 }

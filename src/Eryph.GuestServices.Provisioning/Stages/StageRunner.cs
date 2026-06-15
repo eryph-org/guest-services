@@ -315,6 +315,51 @@ public sealed class StageRunner(
                         logger.LogInformation("Module {Module} requested reboot: {Reason}", moduleKey, reboot.Reason);
                         return new StageRunOutcome.RebootRequested(reboot.Reason);
 
+                    case ModuleOutcome.UpdateRequested update:
+                        // Same resume bookkeeping as a reboot: mark the module
+                        // reboot-requested so it re-enters after the swap, and
+                        // bound retries with the per-module reboot cap so a
+                        // repeatedly-failing-and-rolling-back update can't loop
+                        // forever (it fails the run instead). The host applies
+                        // the staged binaries and restarts the service — no OS
+                        // reboot — and provisioning resumes on the new binary.
+                        var nextUpdateCount = state.ModuleRebootCounts.GetValueOrDefault(moduleKey) + 1;
+                        if (nextUpdateCount > MaxRebootsPerModule)
+                        {
+                            var capMessage = $"Module {moduleKey} exceeded the update/reboot cap " +
+                                $"({MaxRebootsPerModule} attempts); the self-update is not converging.";
+                            logger.LogError(capMessage);
+                            await reporter.EmitAsync(
+                                new ReportingEvent.ProvisioningFailed(capMessage, Exception: null)
+                                {
+                                    Origin = "stage-runner",
+                                },
+                                cancellationToken).ConfigureAwait(false);
+                            return new StageRunOutcome.Failed(capMessage, Exception: null);
+                        }
+
+                        await semaphoreStore.WriteAsync(moduleKey, frequency, data.InstanceId, OutcomeRebootRequested, cancellationToken)
+                            .ConfigureAwait(false);
+                        state = state with
+                        {
+                            PendingHandlers = With(state.PendingHandlers, moduleKey),
+                            ModuleRebootCounts = WithCount(state.ModuleRebootCounts, moduleKey, nextUpdateCount),
+                            RebootCount = state.RebootCount + 1,
+                            LastUpdated = DateTimeOffset.UtcNow,
+                        };
+                        await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                        await reporter.EmitAsync(
+                            new ReportingEvent.ModuleFinished(moduleName, nameof(ModuleOutcome.UpdateRequested))
+                            {
+                                Origin = $"module:{moduleName}",
+                            },
+                            cancellationToken).ConfigureAwait(false);
+                        logger.LogInformation(
+                            "Module {Module} requested self-update to {Version}: {Reason}",
+                            moduleKey, update.TargetVersion, update.Reason);
+                        return new StageRunOutcome.UpdateRequested(
+                            update.Reason, update.StagingDirectory, update.TargetVersion);
+
                     case ModuleOutcome.Failed failed:
                         // Deliberately do NOT write a semaphore on failure;
                         // the module should re-run on the next pass.
