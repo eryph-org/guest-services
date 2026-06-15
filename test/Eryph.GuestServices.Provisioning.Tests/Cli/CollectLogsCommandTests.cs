@@ -139,6 +139,36 @@ public sealed class CollectLogsCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_captures_a_log_file_held_open_for_writing()
+    {
+        // The live agent.log is held open by the running service's Serilog file
+        // sink (FileShare.ReadWrite). collect-logs must still capture it with its
+        // current content — the regression where a FileShare.Read open hit
+        // "file in use" and silently dropped the very log the bundle exists for
+        // (issue #45).
+        var agentLogs = AgentPaths.LogsDirectory;
+        Directory.CreateDirectory(agentLogs);
+        var logPath = Path.Combine(agentLogs, "agent.log");
+
+        using var writer = new FileStream(
+            logPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+        writer.Write(System.Text.Encoding.UTF8.GetBytes("live serilog line"));
+        writer.Flush();
+
+        var sut = new CollectLogsCommand();
+        var exit = await sut.ExecuteAsync(
+            TestCommandContext.Create("collect-logs"),
+            new CollectLogsCommand.Settings { Output = _output });
+
+        exit.Should().Be(0);
+        using var archive = ZipFile.OpenRead(_output);
+        var entry = archive.GetEntry("logs/agent.log");
+        entry.Should().NotBeNull();
+        using var reader = new StreamReader(entry!.Open());
+        reader.ReadToEnd().Should().Contain("live serilog line");
+    }
+
+    [Fact]
     public async Task ExecuteAsync_returns_two_when_output_missing()
     {
         var sut = new CollectLogsCommand();

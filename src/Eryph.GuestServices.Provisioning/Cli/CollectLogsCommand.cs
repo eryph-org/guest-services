@@ -119,11 +119,25 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
             var entryName = $"{entryPrefix}/{rel}";
             try
             {
-                archive.CreateEntryFromFile(file, entryName);
+                // FileShare.ReadWrite is essential: the live agent.log is held
+                // open by the running service's Serilog file sink, so a plain
+                // read (CreateEntryFromFile / FileShare.Read) would fail with
+                // "file in use" and silently drop the very log this bundle exists
+                // to capture (issue #45). Sharing read+write lets us copy it while
+                // it is still being written.
+                using var source = new FileStream(
+                    file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var entry = archive.CreateEntry(entryName);
+                // Preserve the source file's last-write time (CreateEntryFromFile
+                // set it; the manual copy must do so explicitly) so triage tooling
+                // can order log files by age.
+                entry.LastWriteTime = File.GetLastWriteTime(file);
+                using var entryStream = entry.Open();
+                source.CopyTo(entryStream);
             }
             catch (IOException)
             {
-                // Skip files we can't open (locked log files, etc).
+                // Skip files we still can't open (a truly exclusive lock, etc).
             }
             catch (UnauthorizedAccessException)
             {

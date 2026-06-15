@@ -2,8 +2,8 @@ using System.Diagnostics;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 using Eryph.GuestServices.HvDataExchange.Guest;
-using Eryph.GuestServices.Core.Logging;
 using Eryph.GuestServices.Provisioning.Cli;
+using Eryph.GuestServices.Provisioning.Logging;
 using Eryph.GuestServices.Provisioning.Hosting;
 using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -93,13 +93,11 @@ internal static class Program
             ContentRootPath = AppContext.BaseDirectory,
         });
 
-        // File log sink: mirror the whole agent's operational log into
-        // AgentPaths.LogFile so `collect-logs` captures it. The service's other
-        // sinks (Windows Event Log / systemd journal / console) are not in the
-        // support bundle (issue #45). This is a global agent concern, so it
-        // covers remote access as well as provisioning.
-        builder.Services.AddLogging(logging =>
-            logging.AddProvider(new FileLoggerProvider(AgentPaths.LogFile)));
+        // All agent logging runs through Serilog, configured from the Serilog
+        // section of appsettings.json: the agent file log (captured by
+        // collect-logs, issue #45), the console, and — on Windows — the Event
+        // Log. Covers remote access as well as provisioning.
+        builder.AddAgentLogging();
         builder.Services.AddSingleton<IServiceControlFlags, PlatformServiceControlFlags>();
         builder.Services.AddHostedService<SshServerService>();
         builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();
