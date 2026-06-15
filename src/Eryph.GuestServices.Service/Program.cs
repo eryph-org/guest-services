@@ -93,13 +93,11 @@ internal static class Program
             ContentRootPath = AppContext.BaseDirectory,
         });
 
-        // File log sink (Serilog): mirror the whole agent's operational log into
-        // AgentPaths.LogFile so `collect-logs` captures it. The service's other
-        // sinks (Windows Event Log / systemd journal / console) are not in the
-        // support bundle (issue #45). This is a global agent concern, so it
-        // covers remote access as well as provisioning. Rolling/size/retention
-        // come from the Serilog section of appsettings.json.
-        builder.AddAgentFileLogging();
+        // All agent logging runs through Serilog, configured from the Serilog
+        // section of appsettings.json: the agent file log (captured by
+        // collect-logs, issue #45), the console, and — on Windows — the Event
+        // Log. Covers remote access as well as provisioning.
+        builder.AddAgentLogging();
         builder.Services.AddSingleton<IServiceControlFlags, PlatformServiceControlFlags>();
         builder.Services.AddHostedService<SshServerService>();
         builder.Services.AddSingleton<IHostKeyGenerator, HostKeyGenerator>();

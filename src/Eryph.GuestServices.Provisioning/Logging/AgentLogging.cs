@@ -1,5 +1,6 @@
 using Eryph.GuestServices.Core;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -7,26 +8,40 @@ using Serilog;
 namespace Eryph.GuestServices.Provisioning.Logging;
 
 /// <summary>
-/// Wires the agent's file log via Serilog, configured from the <c>Serilog</c>
-/// section of <c>appsettings.json</c> (level, rolling, size cap, retention) so
-/// the housekeeping is operator-tunable instead of hard-coded. The log file
-/// path itself is environment-derived (<see cref="AgentPaths.LogFile"/>) rather
-/// than baked into appsettings, so it is injected here.
+/// Configures all agent logging through Serilog, driven entirely by the single
+/// <c>Serilog</c> section of <c>appsettings.json</c> (level, file rolling/size/
+/// retention, console, and — on Windows — the Event Log). Serilog owns the whole
+/// pipeline, so there is one place to tune logging.
+/// <para>
+/// The Event Log sink is Windows-only (it throws on Linux), so it lives in an
+/// <c>appsettings.windows.json</c> overlay loaded only on Windows. The log file
+/// path is environment-derived (<see cref="AgentPaths.LogFile"/>) and injected
+/// here rather than baked into appsettings.
+/// </para>
 /// </summary>
 public static class AgentLogging
 {
-    public static void AddAgentFileLogging(this IHostApplicationBuilder builder)
+    public static void AddAgentLogging(this IHostApplicationBuilder builder)
     {
-        // appsettings carries only the housekeeping knobs; the OS-specific path
-        // is injected here so the same appsettings works on Windows and Linux.
+        // Windows-only sink overlay (Event Log) merged onto the shared config.
+        if (OperatingSystem.IsWindows())
+        {
+            builder.Configuration.AddJsonFile(
+                Path.Combine(AppContext.BaseDirectory, "appsettings.windows.json"),
+                optional: true,
+                reloadOnChange: false);
+        }
+
+        // The OS-specific log path is injected so the same appsettings works on
+        // Windows and Linux.
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Serilog:WriteTo:agentFile:Args:path"] = AgentPaths.LogFile,
         });
 
         // Create the log directory eagerly so collect-logs has a directory to
-        // harvest even on a guest that never logged a line (Serilog's file sink
-        // creates it lazily on first write). Best-effort.
+        // harvest even on a guest that never logged a line (the file sink creates
+        // it lazily on first write). Best-effort.
         try
         {
             Directory.CreateDirectory(AgentPaths.LogsDirectory);
@@ -34,16 +49,12 @@ public static class AgentLogging
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
 
-        var fileLogger = new LoggerConfiguration()
+        // Serilog becomes the whole logging pipeline: drop the default
+        // Microsoft.Extensions.Logging providers and route every event through
+        // Serilog's sinks, configured from the Serilog section.
+        builder.Logging.ClearProviders();
+        builder.Services.AddSerilog((services, loggerConfiguration) => loggerConfiguration
             .ReadFrom.Configuration(builder.Configuration)
-            .CreateLogger();
-
-        // Add Serilog as an ADDITIONAL logging provider that owns only the file
-        // sink. The ILoggingBuilder overload keeps the default
-        // Microsoft.Extensions.Logging pipeline intact, so the Windows Event Log
-        // (AddWindowsService), the systemd journal and the console still receive
-        // events. The IServiceCollection AddSerilog overload would instead
-        // replace the ILoggerFactory and silence those providers.
-        builder.Logging.AddSerilog(fileLogger, dispose: true);
+            .ReadFrom.Services(services));
     }
 }

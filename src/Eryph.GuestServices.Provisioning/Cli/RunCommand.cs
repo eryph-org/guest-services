@@ -113,7 +113,7 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
         });
         // Mirror the run into the agent log so `collect-logs` captures it too —
         // the one-shot `egs-service run` path otherwise only writes to console.
-        hostBuilder.AddAgentFileLogging();
+        hostBuilder.AddAgentLogging();
         hostBuilder.Services.AddSimpleInjector(container, opt => opt.AddLogging());
         using var host = hostBuilder.Build();
         host.Services.UseSimpleInjector(container);

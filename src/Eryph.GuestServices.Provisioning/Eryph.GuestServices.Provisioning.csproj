@@ -20,6 +20,8 @@
     <PackageReference Include="SimpleInjector.Integration.ServiceCollection" Version="5.5.0" />
     <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
     <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.EventLog" Version="4.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Spectre.Console" Version="0.51.1" />
     <PackageReference Include="Spectre.Console.Cli" Version="0.51.1" />
