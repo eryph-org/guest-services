@@ -46,6 +46,52 @@ public class CloudConfigYamlSerializerTests
     }
 
     [Fact]
+    public void Deserialize_EgsBlock_ParsesSettingsAndUpdate()
+    {
+        const string yaml = """
+                            egs:
+                              settings:
+                                remote_access: false
+                                provisioning: true
+                                kvp_auth: false
+                              update:
+                                enabled: true
+                                version: "0.4.0"
+                                channel: stable
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Egs.Should().NotBeNull();
+        config.Egs!.Settings.Should().NotBeNull();
+        config.Egs.Settings!.RemoteAccess.Should().BeFalse();
+        config.Egs.Settings.Provisioning.Should().BeTrue();
+        config.Egs.Settings.KvpAuth.Should().BeFalse();
+        config.Egs.Update.Should().NotBeNull();
+        config.Egs.Update!.Enabled.Should().BeTrue();
+        config.Egs.Update.Version.Should().Be("0.4.0");
+        config.Egs.Update.Channel.Should().Be("stable");
+    }
+
+    [Fact]
+    public void Deserialize_EgsSettings_OmittedSwitchesStayNull()
+    {
+        // Three-state: an omitted switch must remain null (leave untouched),
+        // distinct from an explicit false.
+        const string yaml = """
+                            egs:
+                              settings:
+                                remote_access: false
+                            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        config.Egs!.Settings!.RemoteAccess.Should().BeFalse();
+        config.Egs.Settings.Provisioning.Should().BeNull();
+        config.Egs.Settings.KvpAuth.Should().BeNull();
+    }
+
+    [Fact]
     public void Deserialize_RuncmdSequenceOfArrays_ReturnsArgvEntries()
     {
         const string yaml = """

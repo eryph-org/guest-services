@@ -87,6 +87,14 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Windows activation (AVMA / KMS / product key); no Linux equivalent")]
     public LicenseConfig? License { get; init; }
 
+    /// <summary>
+    /// eryph extension (not cloud-init): configures the guest-services agent
+    /// itself — its capability switches and self-update. Windows-only (the
+    /// provisioning agent runs only on Windows). See <see cref="EgsConfig"/>.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services agent configuration (capability switches + self-update)")]
+    public EgsConfig? Egs { get; init; }
+
     // ---------------------------------------------------------------------
     // Known cloud-init top-level keys that the agent ACCEPTS but does not
     // act on. CloudConfigSerializer walks these after parsing and emits one

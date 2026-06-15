@@ -1,4 +1,5 @@
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.Core;
 
 namespace Eryph.GuestServices.Provisioning.Windows;
 
@@ -434,4 +435,19 @@ public interface IWindowsOs
     // parsing / condition evaluation / mode mapping.
 
     Task RequestPowerStateAsync(PowerStateRequest request, CancellationToken cancellationToken);
+
+    // egs agent control — used by EgsModule. Writes the opt-out capability
+    // switches read at service start by IServiceControlFlags.
+
+    /// <summary>
+    /// Writes one guest-services capability switch to the platform-native
+    /// control surface (Windows: a REG_DWORD under
+    /// <c>HKLM\SOFTWARE\eryph\guest-services</c>; <c>true</c> = <c>1</c>,
+    /// <c>false</c> = <c>0</c>). The value is read at the next service start,
+    /// so a change made during provisioning takes effect after a restart.
+    /// </summary>
+    Task SetServiceControlFlagAsync(
+        ServiceControlFlag flag,
+        bool enabled,
+        CancellationToken cancellationToken);
 }

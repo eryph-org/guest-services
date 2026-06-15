@@ -4,6 +4,24 @@ using Microsoft.Win32;
 namespace Eryph.GuestServices.Core;
 
 /// <summary>
+/// The operator-controllable guest-services capability switches, as a typed
+/// enum so the provisioning agent can <em>write</em> the same flags
+/// <see cref="IServiceControlFlags"/> reads. Map an entry to its persisted
+/// value name with <see cref="PlatformServiceControlFlags.GetValueName"/>.
+/// </summary>
+public enum ServiceControlFlag
+{
+    /// <summary>The first-boot provisioning agent (<c>ProvisioningEnabled</c>).</summary>
+    Provisioning,
+
+    /// <summary>The remote-access transport (<c>RemoteAccessEnabled</c>).</summary>
+    RemoteAccess,
+
+    /// <summary>Honoring of KVP-delivered client keys (<c>KvpAuthEnabled</c>).</summary>
+    KvpAuth,
+}
+
+/// <summary>
 /// Operator on/off switches for the top-level guest-services capabilities.
 /// All flags are <b>opt-out</b>: a capability is ON unless an operator has
 /// explicitly turned it off. This is an injectable seam so the gated services
@@ -61,12 +79,29 @@ public interface IServiceControlFlags
 /// </remarks>
 public sealed class PlatformServiceControlFlags : IServiceControlFlags
 {
-    internal const string WindowsServiceControlKey = @"SOFTWARE\eryph\guest-services";
+    /// <summary>
+    /// Windows registry key (under HKLM) holding the opt-out flags. Public so a
+    /// writer (the provisioning agent) targets the exact key this reader uses.
+    /// </summary>
+    public const string WindowsServiceControlKey = @"SOFTWARE\eryph\guest-services";
     internal const string LinuxServiceControlConfigPath = "/etc/opt/eryph/guest-services/service-control.conf";
 
     internal const string ProvisioningEnabledValue = "ProvisioningEnabled";
     internal const string RemoteAccessEnabledValue = "RemoteAccessEnabled";
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
+
+    /// <summary>
+    /// Persisted value name for a flag — the REG_DWORD value name on Windows
+    /// and the <c>KEY=</c> name on Linux are identical. Shared by the reader
+    /// here and any writer so the two never drift.
+    /// </summary>
+    public static string GetValueName(ServiceControlFlag flag) => flag switch
+    {
+        ServiceControlFlag.Provisioning => ProvisioningEnabledValue,
+        ServiceControlFlag.RemoteAccess => RemoteAccessEnabledValue,
+        ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
+        _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
+    };
 
     public bool IsProvisioningEnabled() => ReadFlag(ProvisioningEnabledValue);
 
