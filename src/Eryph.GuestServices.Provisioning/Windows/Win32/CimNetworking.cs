@@ -25,52 +25,6 @@ internal static class CimNetworking
 {
     private const string StandardCimNamespace = @"root\StandardCimv2";
 
-    public static IReadOnlyList<NetworkAdapterInfo> EnumerateAdapters()
-    {
-        using var session = CimSession.Create(null);
-
-        var results = new List<NetworkAdapterInfo>();
-        // MSFT_NetAdapter surfaces both physical and virtual NICs; the
-        // ConnectorPresent boolean is the most reliable "this is a hardware
-        // NIC" indicator (it's set for real NDIS adapters and false for
-        // loopback / tunnel / virtual switch endpoints).
-        foreach (var instance in session.EnumerateInstances(StandardCimNamespace, "MSFT_NetAdapter"))
-        {
-            using (instance)
-            {
-                var ifIndex = GetUInt32(instance, "InterfaceIndex");
-                if (ifIndex == 0)
-                    continue;
-
-                var alias = GetString(instance, "Name")
-                    ?? GetString(instance, "InterfaceAlias")
-                    ?? $"Interface {ifIndex}";
-
-                // MacAddress as MSFT_NetAdapter reports it is uppercase with
-                // hyphens ("AA-BB-CC-DD-EE-FF"). Cloud-init style is lowercase
-                // colon-separated; normalise so callers can compare directly.
-                var mac = NormaliseMac(GetString(instance, "MacAddress"));
-
-                // Physical NICs report ConnectorPresent=true. Falling back to
-                // the "Virtual" flag (when present) handles older hosts that
-                // don't expose ConnectorPresent uniformly.
-                var connectorPresent = GetBoolean(instance, "ConnectorPresent");
-                var isVirtual = GetBoolean(instance, "Virtual");
-                var isPhysical = (connectorPresent ?? false) && !(isVirtual ?? false);
-
-                results.Add(new NetworkAdapterInfo
-                {
-                    InterfaceAlias = alias,
-                    InterfaceIndex = (int)ifIndex,
-                    MacAddress = mac,
-                    IsPhysical = isPhysical,
-                });
-            }
-        }
-
-        return results;
-    }
-
     public static void SetDhcp(int interfaceIndex, bool enabled)
     {
         using var session = CimSession.Create(null);
@@ -560,54 +514,8 @@ internal static class CimNetworking
                 $"{operation} failed with CIM return code {rc}.");
     }
 
-    private static uint GetUInt32(CimInstance instance, string property)
-    {
-        var value = instance.CimInstanceProperties[property]?.Value;
-        return value switch
-        {
-            uint u => u,
-            int i => (uint)i,
-            ushort s => s,
-            _ => 0u,
-        };
-    }
-
     private static string? GetString(CimInstance instance, string property) =>
         instance.CimInstanceProperties[property]?.Value as string;
-
-    private static bool? GetBoolean(CimInstance instance, string property) =>
-        instance.CimInstanceProperties[property]?.Value as bool?;
-
-    private static string NormaliseMac(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return string.Empty;
-
-        var hex = new char[12];
-        var n = 0;
-        foreach (var ch in raw)
-        {
-            if (n == 12) break;
-            if (IsHexDigit(ch))
-                hex[n++] = char.ToLowerInvariant(ch);
-        }
-        if (n != 12)
-            return string.Empty;
-
-        return string.Create(17, hex, (span, src) =>
-        {
-            for (var i = 0; i < 6; i++)
-            {
-                span[i * 3] = src[i * 2];
-                span[i * 3 + 1] = src[i * 2 + 1];
-                if (i < 5)
-                    span[i * 3 + 2] = ':';
-            }
-        });
-    }
-
-    private static bool IsHexDigit(char c) =>
-        (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 
     private static (string Address, int Prefix) ParseCidr(string cidr)
     {
