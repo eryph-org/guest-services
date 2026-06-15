@@ -19,14 +19,9 @@ public sealed record NetworkAdapterInfo
 
     /// <summary>
     /// Canonical MAC: 12 lowercase hex digits separated by single colons.
-    /// Empty if the adapter has no link-layer address (loopback, tunnel).
+    /// <see cref="IWindowsOs.GetNetworkAdaptersAsync"/> only yields adapters
+    /// with a usable hardware address, so values it returns are populated; a
+    /// hand-constructed instance may carry anything.
     /// </summary>
     public required string MacAddress { get; init; }
-
-    /// <summary>
-    /// True iff the adapter is "physical" in the MSFT_NetAdapter sense —
-    /// hardware NIC backed by a driver, not a loopback / tunnel / virtual
-    /// switch endpoint. The applier ignores non-physical adapters per RFC 0002.
-    /// </summary>
-    public required bool IsPhysical { get; init; }
 }

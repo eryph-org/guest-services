@@ -452,7 +452,7 @@ internal sealed class WindowsOs : IWindowsOs
     }
 
     public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>
-        Task.Run(() => CimNetworking.EnumerateAdapters(), cancellationToken);
+        Task.Run(() => NetworkAdapterInventory.Enumerate(), cancellationToken);
 
     public Task EnableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetDhcp(interfaceIndex, enabled: true), cancellationToken);

@@ -36,9 +36,17 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         }
 
         var adapters = await context.Os.GetNetworkAdaptersAsync(cancellationToken).ConfigureAwait(false);
+        // The enumeration only returns MAC-bearing NICs; match by exact MAC.
+        // Group rather than ToDictionary so two adapters sharing a MAC (e.g. a
+        // NIC team and its member) can't throw and block the whole config; the
+        // lowest interface index wins deterministically.
         var byMac = adapters
-            .Where(a => a.IsPhysical && !string.IsNullOrEmpty(a.MacAddress))
-            .ToDictionary(a => a.MacAddress, StringComparer.OrdinalIgnoreCase);
+            .Where(a => !string.IsNullOrEmpty(a.MacAddress))
+            .GroupBy(a => a.MacAddress, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderBy(a => a.InterfaceIndex).First(),
+                StringComparer.OrdinalIgnoreCase);
 
         foreach (var (key, ethernet) in network.Ethernets)
         {
@@ -59,7 +67,7 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
             if (!byMac.TryGetValue(mac, out var adapter))
             {
                 logger.LogWarning(
-                    "Network-config entry '{Name}' references MAC {Mac} but no matching physical adapter is present; skipping.",
+                    "Network-config entry '{Name}' references MAC {Mac} but no matching adapter is present; skipping.",
                     key, mac);
                 continue;
             }

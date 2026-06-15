@@ -34,13 +34,12 @@ public sealed class ApplyNetworkConfigModuleTests
         return new TestModuleContext(os, dataSource);
     }
 
-    private static NetworkAdapterInfo Physical(string alias, int ifIndex, string mac) =>
+    private static NetworkAdapterInfo Adapter(string alias, int ifIndex, string mac) =>
         new()
         {
             InterfaceAlias = alias,
             InterfaceIndex = ifIndex,
             MacAddress = mac,
-            IsPhysical = true,
         };
 
     [Fact]
@@ -83,7 +82,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 12, "d2:ab:04:5a:29:47")],
+                [Adapter("Ethernet", 12, "d2:ab:04:5a:29:47")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -117,7 +116,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 7, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 7, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -160,7 +159,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 9, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 9, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -203,7 +202,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 1, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 1, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -239,7 +238,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 1, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 1, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -268,7 +267,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 7, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 7, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -311,7 +310,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 11, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 11, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -361,7 +360,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 13, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 13, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -412,7 +411,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 15, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 15, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -459,7 +458,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 17, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 17, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -506,7 +505,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 19, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 19, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -549,7 +548,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 21, "00:11:22:33:44:55")],
+                [Adapter("Ethernet", 21, "00:11:22:33:44:55")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -604,7 +603,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Physical("Ethernet", 5, "aa:bb:cc:dd:ee:ff")],
+                [Adapter("Ethernet", 5, "aa:bb:cc:dd:ee:ff")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -616,5 +615,46 @@ public sealed class ApplyNetworkConfigModuleTests
 
         result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received(1).EnableDhcpAsync(5, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Duplicate_MAC_does_not_throw_and_lowest_index_wins()
+    {
+        // Two adapters can legitimately report the same MAC (a NIC team and a
+        // member, a bridged pair). The matcher must not throw on the duplicate
+        // and must pick deterministically: the lowest interface index.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [
+                    Adapter("Ethernet 2", 23, "00:11:22:33:44:55"),
+                    Adapter("Ethernet", 12, "00:11:22:33:44:55"),
+                ],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).EnableDhcpAsync(12, Arg.Any<CancellationToken>());
+        await os.DidNotReceive().EnableDhcpAsync(23, Arg.Any<CancellationToken>());
     }
 }

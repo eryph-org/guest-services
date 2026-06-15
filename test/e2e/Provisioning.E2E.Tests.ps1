@@ -435,4 +435,28 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
       [int]($r.Output.Trim() -replace 'agent\.log=', '') | Should -BeGreaterThan 0
     }
   }
+
+  Context 'network-config' {
+
+    It 'matched the NIC by MAC and applied the network-config (not skipped)' {
+      # Regression for issue #53: the module enumerates adapters via .NET
+      # NetworkInterface.GetPhysicalAddress, so it finds the eth0 NIC by MAC and
+      # applies the eryph (DHCP) network-config instead of logging "no matching
+      # adapter; skipping" — which is what the empty MSFT_NetAdapter.MacAddress
+      # used to cause. Asserted from the agent log, pulled host-side via
+      # download-file and matched as booleans so no log content is echoed on
+      # failure.
+      $localLog = Join-Path ([System.IO.Path]::GetTempPath()) "egs-net-$($catlet.VmId).log"
+      Remove-Item $localLog -ErrorAction SilentlyContinue
+      egs-tool download-file $catlet.VmId 'C:\ProgramData\eryph\guest-services\logs\agent.log' $localLog
+      Test-Path $localLog | Should -BeTrue
+
+      # The DHCP apply path logs "DHCP requested — leaving IPv4 alone" only after
+      # the adapter is matched.
+      $matched = [bool](Select-String -LiteralPath $localLog -Pattern 'DHCP requested' -Quiet)
+      $skipped = [bool](Select-String -LiteralPath $localLog -Pattern 'no matching adapter' -Quiet)
+      $matched | Should -BeTrue
+      $skipped | Should -BeFalse
+    }
+  }
 }
