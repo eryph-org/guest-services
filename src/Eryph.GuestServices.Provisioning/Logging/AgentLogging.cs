@@ -1,7 +1,7 @@
 using Eryph.GuestServices.Core;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Serilog;
 
 namespace Eryph.GuestServices.Provisioning.Logging;
@@ -12,12 +12,6 @@ namespace Eryph.GuestServices.Provisioning.Logging;
 /// the housekeeping is operator-tunable instead of hard-coded. The log file
 /// path itself is environment-derived (<see cref="AgentPaths.LogFile"/>) rather
 /// than baked into appsettings, so it is injected here.
-/// <para>
-/// Serilog is added as an additional logging provider; it owns only the file
-/// sink. The other sinks (Windows Event Log via <c>AddWindowsService</c>, the
-/// systemd journal, console) stay on the default Microsoft.Extensions.Logging
-/// pipeline and keep their own <c>Logging</c> configuration.
-/// </para>
 /// </summary>
 public static class AgentLogging
 {
@@ -30,8 +24,26 @@ public static class AgentLogging
             ["Serilog:WriteTo:agentFile:Args:path"] = AgentPaths.LogFile,
         });
 
-        builder.Services.AddSerilog((services, loggerConfiguration) => loggerConfiguration
+        // Create the log directory eagerly so collect-logs has a directory to
+        // harvest even on a guest that never logged a line (Serilog's file sink
+        // creates it lazily on first write). Best-effort.
+        try
+        {
+            Directory.CreateDirectory(AgentPaths.LogsDirectory);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+
+        var fileLogger = new LoggerConfiguration()
             .ReadFrom.Configuration(builder.Configuration)
-            .ReadFrom.Services(services));
+            .CreateLogger();
+
+        // Add Serilog as an ADDITIONAL logging provider that owns only the file
+        // sink. The ILoggingBuilder overload keeps the default
+        // Microsoft.Extensions.Logging pipeline intact, so the Windows Event Log
+        // (AddWindowsService), the systemd journal and the console still receive
+        // events. The IServiceCollection AddSerilog overload would instead
+        // replace the ILoggerFactory and silence those providers.
+        builder.Logging.AddSerilog(fileLogger, dispose: true);
     }
 }

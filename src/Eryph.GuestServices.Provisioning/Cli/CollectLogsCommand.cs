@@ -127,7 +127,12 @@ public sealed class CollectLogsCommand : AsyncCommand<CollectLogsCommand.Setting
                 // it is still being written.
                 using var source = new FileStream(
                     file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var entryStream = archive.CreateEntry(entryName).Open();
+                var entry = archive.CreateEntry(entryName);
+                // Preserve the source file's last-write time (CreateEntryFromFile
+                // set it; the manual copy must do so explicitly) so triage tooling
+                // can order log files by age.
+                entry.LastWriteTime = File.GetLastWriteTime(file);
+                using var entryStream = entry.Open();
                 source.CopyTo(entryStream);
             }
             catch (IOException)

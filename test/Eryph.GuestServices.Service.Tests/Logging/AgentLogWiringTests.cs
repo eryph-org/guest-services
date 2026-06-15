@@ -51,7 +51,7 @@ public sealed class AgentLogWiringTests : IDisposable
     }
 
     [Fact]
-    public void AddAgentFileLogging_writes_the_agent_log_via_serilog()
+    public void AddAgentFileLogging_writes_the_agent_log_and_keeps_other_providers()
     {
         // Faithful to the composition roots (Program.cs / RunCommand), which call
         // builder.AddAgentFileLogging(). The Serilog File sink (size/rolling/
@@ -67,6 +67,13 @@ public sealed class AgentLogWiringTests : IDisposable
             ["Serilog:WriteTo:agentFile:Args:retainedFileCountLimit"] = "3",
             ["Serilog:WriteTo:agentFile:Args:shared"] = "true",
         });
+
+        // Stand-in for the Event Log / systemd journal / console providers.
+        // Serilog must be ADDITIVE: adding the file sink must NOT replace the
+        // logging pipeline and silence the other providers.
+        var captured = new List<string>();
+        builder.Logging.AddProvider(new CapturingLoggerProvider(captured));
+
         builder.AddAgentFileLogging();
 
         var host = builder.Build();
@@ -75,7 +82,31 @@ public sealed class AgentLogWiringTests : IDisposable
         // Dispose flushes and closes the Serilog file sink.
         host.Dispose();
 
+        // Serilog's file sink captured the line ...
         File.Exists(AgentPaths.LogFile).Should().BeTrue();
         File.ReadAllText(AgentPaths.LogFile).Should().Contain("wired line");
+        // ... and the other provider still received it (Serilog did not take
+        // over the ILoggerFactory).
+        captured.Should().Contain(line => line.Contains("wired line"));
+    }
+
+    private sealed class CapturingLoggerProvider(List<string> sink) : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(sink);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(List<string> sink) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => sink.Add(formatter(state, exception));
+        }
     }
 }
