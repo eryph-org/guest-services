@@ -1,4 +1,5 @@
 using System.Net.NetworkInformation;
+using System.Runtime.Versioning;
 
 namespace Eryph.GuestServices.Provisioning.Windows;
 
@@ -12,6 +13,7 @@ namespace Eryph.GuestServices.Provisioning.Windows;
 /// lives in <c>PermanentAddress</c>). CIM is still used to <em>set</em>
 /// addresses/DNS/routes, keyed by the interface index resolved here.
 /// </summary>
+[SupportedOSPlatform("windows")]
 internal static class NetworkAdapterInventory
 {
     public static IReadOnlyList<NetworkAdapterInfo> Enumerate()
@@ -19,38 +21,55 @@ internal static class NetworkAdapterInventory
         var results = new List<NetworkAdapterInfo>();
         foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
         {
-            // Only adapters that can carry a network-config MAC. Loopback and
-            // tunnel/teredo interfaces never match a delivered Ethernet entry.
-            if (adapter.NetworkInterfaceType is NetworkInterfaceType.Loopback
-                or NetworkInterfaceType.Tunnel)
-                continue;
-
-            var macBytes = adapter.GetPhysicalAddress().GetAddressBytes();
-            if (macBytes.Length != 6)
-                continue;
-
-            var index = TryGetInterfaceIndex(adapter);
-            if (index == 0)
-                continue;
-
-            results.Add(new NetworkAdapterInfo
+            // One transitional/odd adapter must not abort the whole enumeration
+            // (GetIPProperties and the family lookups can throw); skip it.
+            try
             {
-                InterfaceAlias = adapter.Name,
-                InterfaceIndex = index,
-                MacAddress = FormatMac(macBytes),
-                // Everything that survived the filter above is a real,
-                // MAC-bearing NIC the config can target. Matching is by exact
-                // MAC, so any extra virtual adapter simply never matches.
-                IsPhysical = true,
-            });
+                var info = TryDescribe(adapter);
+                if (info is not null)
+                    results.Add(info);
+            }
+            catch (NetworkInformationException)
+            {
+                // Adapter in a transitional state (being removed / not yet
+                // registered) — skip it rather than fail the whole inventory.
+            }
         }
 
         return results;
     }
 
+    private static NetworkAdapterInfo? TryDescribe(NetworkInterface adapter)
+    {
+        // Only adapters that can carry a network-config MAC. Loopback and
+        // tunnel/teredo interfaces never match a delivered Ethernet entry.
+        if (adapter.NetworkInterfaceType is NetworkInterfaceType.Loopback
+            or NetworkInterfaceType.Tunnel)
+            return null;
+
+        var macBytes = adapter.GetPhysicalAddress().GetAddressBytes();
+        // Require a real 6-byte, non-zero MAC. An all-zero address (some
+        // not-yet-up virtual adapters report it) must not become a match key.
+        if (macBytes.Length != 6 || macBytes.All(b => b == 0))
+            return null;
+
+        var index = TryGetInterfaceIndex(adapter);
+        if (index == 0)
+            return null;
+
+        return new NetworkAdapterInfo
+        {
+            InterfaceAlias = adapter.Name,
+            InterfaceIndex = index,
+            MacAddress = FormatMac(macBytes),
+        };
+    }
+
     // The Windows interface index (IfIndex) the CIM set-methods key on. It is
-    // exposed via the IP-family properties; a freshly-booted NIC has at least an
-    // IPv6 link-local, so the IPv4 -> IPv6 fallback covers DHCP and static.
+    // exposed via the IP-family properties; for a dual-stack NIC the IPv4 and
+    // IPv6 indices are the same adapter IfIndex, and the verified path uses the
+    // IPv4 index. A freshly-booted NIC has at least an IPv6 link-local, so the
+    // fallback still yields the index for an otherwise IPv4-less adapter.
     private static int TryGetInterfaceIndex(NetworkInterface adapter)
     {
         var properties = adapter.GetIPProperties();
@@ -60,6 +79,7 @@ internal static class NetworkAdapterInventory
         }
         catch (NetworkInformationException)
         {
+            // IPv4 not configured on this adapter yet — try IPv6 below.
         }
 
         try
@@ -68,6 +88,7 @@ internal static class NetworkAdapterInventory
         }
         catch (NetworkInformationException)
         {
+            // Neither family is configured — no index to drive CIM with.
         }
 
         return 0;

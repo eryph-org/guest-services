@@ -40,7 +40,6 @@ public sealed class ApplyNetworkConfigModuleTests
             InterfaceAlias = alias,
             InterfaceIndex = ifIndex,
             MacAddress = mac,
-            IsPhysical = true,
         };
 
     [Fact]

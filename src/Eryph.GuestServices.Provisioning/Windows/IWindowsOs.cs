@@ -220,11 +220,9 @@ public interface IWindowsOs
     // Networking — used by ApplyNetworkConfigModule. See RFC 0002.
 
     /// <summary>
-    /// Enumerates the network adapters on this guest. The result is intended
-    /// for MAC-matching against cloud-init network-config and includes both
-    /// physical and virtual adapters; callers should filter on
-    /// <see cref="NetworkAdapterInfo.IsPhysical"/> when only hardware NICs
-    /// are relevant.
+    /// Enumerates the MAC-bearing network adapters on this guest, for
+    /// MAC-matching against cloud-init network-config. Loopback/tunnel
+    /// interfaces and adapters without a usable hardware address are excluded.
     /// </summary>
     Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken);
 

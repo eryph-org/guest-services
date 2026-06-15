@@ -36,8 +36,9 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         }
 
         var adapters = await context.Os.GetNetworkAdaptersAsync(cancellationToken).ConfigureAwait(false);
+        // The enumeration only returns MAC-bearing NICs; match by exact MAC.
         var byMac = adapters
-            .Where(a => a.IsPhysical && !string.IsNullOrEmpty(a.MacAddress))
+            .Where(a => !string.IsNullOrEmpty(a.MacAddress))
             .ToDictionary(a => a.MacAddress, StringComparer.OrdinalIgnoreCase);
 
         foreach (var (key, ethernet) in network.Ethernets)
