@@ -2,9 +2,8 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using Eryph.GuestServices.Provisioning.DataSources;
-using Eryph.GuestServices.Core;
-using Eryph.GuestServices.Core.Logging;
 using Eryph.GuestServices.Provisioning.Hosting;
+using Eryph.GuestServices.Provisioning.Logging;
 using Eryph.GuestServices.Provisioning.Reporting;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
@@ -106,11 +105,15 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
         // SimpleInjector needs a host-side ILogger pipeline to satisfy
         // ILogger<T> injection. Build a minimal Generic Host shell that only
         // wires logging, hand the container over, and resolve from it.
-        var hostBuilder = Host.CreateApplicationBuilder();
+        // ContentRootPath = the exe dir so appsettings.json (the Serilog
+        // housekeeping config) is found from the one-shot `run` path too.
+        var hostBuilder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            ContentRootPath = AppContext.BaseDirectory,
+        });
         // Mirror the run into the agent log so `collect-logs` captures it too —
         // the one-shot `egs-service run` path otherwise only writes to console.
-        hostBuilder.Services.AddLogging(logging =>
-            logging.AddProvider(new FileLoggerProvider(AgentPaths.LogFile)));
+        hostBuilder.AddAgentFileLogging();
         hostBuilder.Services.AddSimpleInjector(container, opt => opt.AddLogging());
         using var host = hostBuilder.Build();
         host.Services.UseSimpleInjector(container);

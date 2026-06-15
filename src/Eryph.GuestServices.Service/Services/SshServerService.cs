@@ -73,6 +73,7 @@ internal sealed class SshServerService(
 
         await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
         await SetStatusAsync("available");
+        logger.LogInformation("SSH transport listening on the Hyper-V socket; remote access is available.");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -94,24 +95,29 @@ internal sealed class SshServerService(
 
     private void ExceptionRaised(object? sender, Exception e)
     {
-        logger.LogWarning(e, "Exception is SSH server");
+        logger.LogWarning(e, "Unhandled exception in the SSH server.");
     }
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {
-        logger.LogInformation("Authenticating session: {AuthType}", e.AuthenticationType);
+        // Per-attempt protocol step (the public-key query probes before the real
+        // signature, so this fires several times per connection): Debug, not
+        // Information, to keep the operational log readable.
+        logger.LogDebug("Authenticating SSH session ({AuthType}).", e.AuthenticationType);
         if (e.AuthenticationType is not (SshAuthenticationType.ClientPublicKey or SshAuthenticationType.ClientPublicKeyQuery))
             return;
 
         if (e.Username != "egs")
         {
-            logger.LogInformation("Incorrect user name {Username}", e.Username);
+            // A rejected connection is security-relevant — Warning so it surfaces
+            // even when the Event Log / sinks are filtered to Warning+.
+            logger.LogWarning("SSH authentication rejected: unexpected user name '{Username}'.", e.Username);
             return;
         }
 
         if (e.PublicKey is null)
         {
-            logger.LogInformation("Public key is null for user {Username}", e.Username);
+            logger.LogDebug("SSH authentication attempt for user {Username} carried no public key.", e.Username);
             return;
         }
 
@@ -123,12 +129,17 @@ internal sealed class SshServerService(
     {
         if (!await clientKeyProvider.IsAuthorizedAsync(clientKey))
         {
-            logger.LogInformation(
-                "Failed to authenticate client. The provided public key is not authorized: {FingerPrint}.",
+            logger.LogWarning(
+                "SSH authentication failed: public key {FingerPrint} is not authorized.",
                 clientKey.GetFingerPrint());
             return null;
         }
 
+        // A successful remote login is the event most worth auditing — record it
+        // (with the key fingerprint) at Information.
+        logger.LogInformation(
+            "SSH client authenticated with key {FingerPrint}.",
+            clientKey.GetFingerPrint());
         return new ClaimsPrincipal();
     }
 

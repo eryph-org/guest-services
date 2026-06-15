@@ -1,6 +1,9 @@
 using AwesomeAssertions;
 using Eryph.GuestServices.Core;
-using Eryph.GuestServices.Core.Logging;
+using Eryph.GuestServices.Provisioning.Logging;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Service.Tests.Logging;
@@ -48,15 +51,29 @@ public sealed class AgentLogWiringTests : IDisposable
     }
 
     [Fact]
-    public void AddProvider_with_AgentPaths_LogFile_writes_the_agent_log()
+    public void AddAgentFileLogging_writes_the_agent_log_via_serilog()
     {
-        // Faithful to the composition roots (Program.cs / RunCommand), which do
-        // logging.AddProvider(new FileLoggerProvider(AgentPaths.LogFile)).
-        using (var factory = LoggerFactory.Create(builder =>
-                   builder.AddProvider(new FileLoggerProvider(AgentPaths.LogFile))))
+        // Faithful to the composition roots (Program.cs / RunCommand), which call
+        // builder.AddAgentFileLogging(). The Serilog File sink (size/rolling/
+        // retention) is configured from the Serilog section; supply a minimal one
+        // here. The helper injects AgentPaths.LogFile as the path.
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
-            factory.CreateLogger("Eryph.Wiring.Test").LogInformation("wired line");
-        }
+            ["Serilog:MinimumLevel:Default"] = "Information",
+            ["Serilog:WriteTo:agentFile:Name"] = "File",
+            ["Serilog:WriteTo:agentFile:Args:rollOnFileSizeLimit"] = "true",
+            ["Serilog:WriteTo:agentFile:Args:fileSizeLimitBytes"] = "1048576",
+            ["Serilog:WriteTo:agentFile:Args:retainedFileCountLimit"] = "3",
+            ["Serilog:WriteTo:agentFile:Args:shared"] = "true",
+        });
+        builder.AddAgentFileLogging();
+
+        var host = builder.Build();
+        host.Services.GetRequiredService<ILogger<AgentLogWiringTests>>()
+            .LogInformation("wired line");
+        // Dispose flushes and closes the Serilog file sink.
+        host.Dispose();
 
         File.Exists(AgentPaths.LogFile).Should().BeTrue();
         File.ReadAllText(AgentPaths.LogFile).Should().Contain("wired line");
