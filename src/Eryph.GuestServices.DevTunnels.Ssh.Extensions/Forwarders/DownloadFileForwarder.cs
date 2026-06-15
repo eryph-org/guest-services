@@ -22,7 +22,10 @@ public sealed class DownloadFileForwarder(string path) : IForwarder
                 return;
             }
 
-            _fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
+            // FileShare.ReadWrite so a file that is currently held open for
+            // writing — e.g. the live agent.log held by the service's Serilog
+            // sink — can still be downloaded instead of failing "file in use".
+            _fileStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             _ = CopyFromFileToStreamAsync(stream);
         }
         catch (Exception ex)

@@ -33,7 +33,10 @@ public static class DirectoryTransferExtensions
 
             try
             {
-                await using var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read);
+                // FileShare.ReadWrite so a file held open for writing (e.g. the
+                // live agent.log under the Serilog sink) is still transferred
+                // instead of failing "file in use".
+                await using var fileStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 var result = await session.UploadFileAsync(targetPath, relativePath, fileStream, overwrite, CancellationToken.None);
                 
                 if (result == 0)
