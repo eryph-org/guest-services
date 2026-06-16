@@ -86,7 +86,7 @@ public sealed class EgsUpdater(
         ReleaseFile file,
         CancellationToken cancellationToken)
     {
-        var versionDir = Path.Combine(AgentPaths.UpdateDirectory, SanitizeVersion(targetVersion));
+        var versionDir = StagingDirFor(targetVersion);
         var payloadDir = Path.Combine(versionDir, "payload");
         var zipPath = Path.Combine(versionDir, "package.zip");
 
@@ -214,8 +214,33 @@ public sealed class EgsUpdater(
             .FirstOrDefault();
     }
 
-    // Defend the staging path against odd version strings (a pinned value comes
-    // straight from user-data). Keep only filename-safe characters.
+    /// <summary>
+    /// Resolves the per-version staging directory, defending against a hostile
+    /// pinned <c>version</c> from user-data. Invalid filename chars (including
+    /// path separators) are neutralised, the relative-traversal tokens
+    /// <c>.</c>/<c>..</c> are rejected outright, and the final path is asserted
+    /// to be a real child of <see cref="AgentPaths.UpdateDirectory"/> — so a
+    /// crafted value can never make the later <c>Directory.Delete</c> escape the
+    /// update root and wipe the service's state/logs.
+    /// </summary>
+    internal static string StagingDirFor(string version)
+    {
+        var sanitized = SanitizeVersion(version);
+        if (sanitized is "." or ".." || sanitized.Length == 0)
+            throw new ArgumentException($"Refusing unsafe update version '{version}'.", nameof(version));
+
+        var root = Path.GetFullPath(AgentPaths.UpdateDirectory);
+        var rootWithSep = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(Path.Combine(root, sanitized));
+        if (!full.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Refusing unsafe update version '{version}'.", nameof(version));
+
+        return full;
+    }
+
+    // Keep only filename-safe characters (path separators become '_').
     private static string SanitizeVersion(string version)
     {
         var invalid = Path.GetInvalidFileNameChars();

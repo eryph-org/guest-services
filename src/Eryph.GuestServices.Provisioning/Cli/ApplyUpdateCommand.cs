@@ -90,7 +90,20 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
                 await StopServiceAsync(settings.Service).ConfigureAwait(false);
                 if (Directory.Exists(to))
                     await MoveWithRetryAsync(to, to + ".failed", TimeSpan.FromSeconds(30)).ConfigureAwait(false);
-                await MoveWithRetryAsync(backup, to, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                try
+                {
+                    await MoveWithRetryAsync(backup, to, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Restoring the old binary failed and `to` is now empty — put
+                    // the (failed) new build back so the service still has
+                    // SOMETHING to start, rather than leaving the guest with no
+                    // binary at all, then resurface the failure.
+                    if (!Directory.Exists(to) && Directory.Exists(to + ".failed"))
+                        await MoveWithRetryAsync(to + ".failed", to, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                    throw;
+                }
                 await StartServiceAsync(settings.Service).ConfigureAwait(false);
 
                 if (Directory.Exists(to + ".failed"))
@@ -132,13 +145,17 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
         throw last ?? new TimeoutException($"Could not move '{source}' to '{destination}' within {timeout}.");
     }
 
-    private static void CopyDirectory(string source, string destination)
+    // Internal for unit tests. Rebuilds each path RELATIVE to `source` rather
+    // than string-replacing `source` — a substring replace mangles paths where
+    // the source name recurs, and silently no-ops when the OS returns a
+    // differently-cased path than the caller passed.
+    internal static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
         foreach (var dir in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(dir.Replace(source, destination));
+            Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, dir)));
         foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            File.Copy(file, file.Replace(source, destination), overwrite: true);
+            File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), overwrite: true);
     }
 
     private static async Task StopServiceAsync(string service)
@@ -146,7 +163,10 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
         // sc.exe stop returns 1062 (not started) / 1060 (not installed); both
         // are fine — we just need it not running before the swap.
         await RunScAsync(["stop", service]).ConfigureAwait(false);
-        await WaitForStateAsync(service, "STOPPED", TimeSpan.FromMinutes(1)).ConfigureAwait(false);
+        // Must actually reach STOPPED before we move the install dir — moving it
+        // while a DLL is still mapped corrupts the running service.
+        if (!await WaitForStateAsync(service, "STOPPED", TimeSpan.FromMinutes(1)).ConfigureAwait(false))
+            throw new TimeoutException($"Service '{service}' did not reach STOPPED within the timeout.");
     }
 
     private static async Task StartServiceAsync(string service) =>

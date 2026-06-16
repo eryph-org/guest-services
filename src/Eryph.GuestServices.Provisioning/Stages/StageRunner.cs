@@ -329,6 +329,21 @@ public sealed class StageRunner(
                             var capMessage = $"Module {moduleKey} exceeded the update/reboot cap " +
                                 $"({MaxRebootsPerModule} attempts); the self-update is not converging.";
                             logger.LogError(capMessage);
+                            // Mirror the reboot-cap path: persist the bumped count
+                            // and surface a per-module failure (not just the run
+                            // failure) so KVP reporting shows which module gave up.
+                            state = state with
+                            {
+                                ModuleRebootCounts = WithCount(state.ModuleRebootCounts, moduleKey, nextUpdateCount),
+                                LastUpdated = DateTimeOffset.UtcNow,
+                            };
+                            await stateStore.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                            await reporter.EmitAsync(
+                                new ReportingEvent.ModuleFailed(moduleName, capMessage, Exception: null)
+                                {
+                                    Origin = $"module:{moduleName}",
+                                },
+                                cancellationToken).ConfigureAwait(false);
                             await reporter.EmitAsync(
                                 new ReportingEvent.ProvisioningFailed(capMessage, Exception: null)
                                 {

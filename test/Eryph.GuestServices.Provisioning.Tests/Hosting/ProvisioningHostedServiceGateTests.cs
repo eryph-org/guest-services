@@ -56,6 +56,52 @@ public class ProvisioningHostedServiceGateTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ExecuteAsync_UpdateRequested_LaunchesUpdaterAndStopsHost()
+    {
+        // The update outcome must spawn the staged updater (which restarts the
+        // service onto the new binary) and stop the host — no OS reboot.
+        var runner = Substitute.For<IStageRunner>();
+        runner.RunAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<StageRunOutcome>(
+                new StageRunOutcome.UpdateRequested("update to 0.4.0", @"C:\stage\payload", "0.4.0")));
+
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var launcher = Substitute.For<Eryph.GuestServices.Provisioning.Update.IUpdateLauncher>();
+        var service = new ProvisioningHostedService(
+            runner, lifetime, new FixedFlags(true), Substitute.For<IReportingDispatcher>(),
+            launcher, NullLogger<ProvisioningHostedService>.Instance);
+
+        await RunOnceAsync(service);
+
+        launcher.Received(1).Launch(Arg.Is<Eryph.GuestServices.Provisioning.Update.UpdatePlan>(
+            p => p.StagingDirectory == @"C:\stage\payload" && p.TargetVersion == "0.4.0"));
+        lifetime.Received(1).StopApplication();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UpdateLaunchFails_DoesNotStopHost()
+    {
+        // If the updater can't be launched, the agent must keep serving on the
+        // old binary (don't stop the host); the next boot retries.
+        var runner = Substitute.For<IStageRunner>();
+        runner.RunAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<StageRunOutcome>(
+                new StageRunOutcome.UpdateRequested("update to 0.4.0", @"C:\stage\payload", "0.4.0")));
+
+        var lifetime = Substitute.For<IHostApplicationLifetime>();
+        var launcher = Substitute.For<Eryph.GuestServices.Provisioning.Update.IUpdateLauncher>();
+        launcher.When(l => l.Launch(Arg.Any<Eryph.GuestServices.Provisioning.Update.UpdatePlan>()))
+            .Do(_ => throw new InvalidOperationException("no updater"));
+        var service = new ProvisioningHostedService(
+            runner, lifetime, new FixedFlags(true), Substitute.For<IReportingDispatcher>(),
+            launcher, NullLogger<ProvisioningHostedService>.Instance);
+
+        await RunOnceAsync(service);
+
+        lifetime.DidNotReceive().StopApplication();
+    }
+
     private static ProvisioningHostedService CreateService(
         IStageRunner runner, bool provisioningEnabled, IReportingDispatcher? reporter = null)
     {

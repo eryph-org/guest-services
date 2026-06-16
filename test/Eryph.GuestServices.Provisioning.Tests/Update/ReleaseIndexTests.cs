@@ -18,8 +18,8 @@ public sealed class ReleaseIndexTests
               "version": "0.4.0",
               "files": [
                 {
-                  "filename": "eryph_guest-services_0.4.0_windows_amd64.zip",
-                  "url": "https://releases.dbosoft.eu/eryph/guest-services/0.4.0/eryph_guest-services_0.4.0_windows_amd64.zip",
+                  "filename": "egs_0.4.0_windows_amd64.zip",
+                  "url": "https://releases.dbosoft.eu/eryph/guest-services/0.4.0/egs_0.4.0_windows_amd64.zip",
                   "sha256Checksum": "deadbeef",
                   "os": "windows",
                   "arch": "amd64"
