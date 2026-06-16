@@ -173,6 +173,7 @@ internal static class ProvisioningContainerBuilder
         {
             // A single shared HttpClient for index fetch + package download.
             container.RegisterInstance(new HttpClient());
+            container.Register<IReleaseSignatureVerifier, ReleaseSignatureVerifier>(Lifestyle.Singleton);
             container.Register<IEgsUpdater, EgsUpdater>(Lifestyle.Singleton);
         }
 

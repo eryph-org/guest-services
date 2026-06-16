@@ -15,6 +15,7 @@ namespace Eryph.GuestServices.Provisioning.Update;
 public sealed class EgsUpdater(
     HttpClient httpClient,
     IAgentVersionProvider versionProvider,
+    IReleaseSignatureVerifier signatureVerifier,
     ILogger<EgsUpdater> logger) : IEgsUpdater
 {
     public const string DefaultIndexUrl = "https://releases.dbosoft.eu/eryph/guest-services/index.json";
@@ -44,7 +45,8 @@ public sealed class EgsUpdater(
             logger.LogInformation(
                 "Self-update: {Reason} (running {Current}).", decision.Reason, current);
 
-            var payloadDir = await StageAsync(decision.TargetVersion!, decision.File!, cancellationToken)
+            var release = index.Versions![decision.TargetVersion!];
+            var payloadDir = await StageAsync(decision.TargetVersion!, release, decision.File!, cancellationToken)
                 .ConfigureAwait(false);
             if (payloadDir is null)
                 return null;
@@ -80,6 +82,7 @@ public sealed class EgsUpdater(
     /// </summary>
     private async Task<string?> StageAsync(
         string targetVersion,
+        ReleaseVersion release,
         ReleaseFile file,
         CancellationToken cancellationToken)
     {
@@ -97,11 +100,19 @@ public sealed class EgsUpdater(
         await DownloadAsync(file.Url!, zipPath, cancellationToken).ConfigureAwait(false);
 
         var actual = await ComputeSha256Async(zipPath, cancellationToken).ConfigureAwait(false);
-        if (!actual.Equals(file.Sha256Checksum!.Trim(), StringComparison.OrdinalIgnoreCase))
+
+        // The authoritative hash is the one in the signed SHA256SUMS, not the
+        // index's per-file value (the index is only HTTPS, not signed). Verify
+        // the OpenPGP signature, then check the package against the signed hash.
+        var signedHash = await VerifySignedHashAsync(release, file, cancellationToken).ConfigureAwait(false);
+        if (signedHash is null)
+            return null; // signature missing/invalid or file absent from SUMS (logged)
+
+        if (!actual.Equals(signedHash, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogError(
-                "Self-update: SHA256 mismatch (expected {Expected}, got {Actual}); aborting.",
-                file.Sha256Checksum, actual);
+                "Self-update: SHA256 mismatch against signed checksums (expected {Expected}, got {Actual}); aborting.",
+                signedHash, actual);
             return null;
         }
 
@@ -119,6 +130,56 @@ public sealed class EgsUpdater(
         logger.LogInformation(
             "Self-update: staged {Version} at {Dir} (verified).", targetVersion, agentPath);
         return Path.GetDirectoryName(agentPath)!;
+    }
+
+    /// <summary>
+    /// Downloads the signed <c>SHA256SUMS</c> + its detached signature
+    /// (siblings of the package URL), verifies the signature with a bundled
+    /// dbosoft key, and returns the signed hash for the package — or null when
+    /// the signature is missing/invalid or the file isn't listed (fail closed:
+    /// an unsigned/untrusted payload is never applied).
+    /// </summary>
+    private async Task<string?> VerifySignedHashAsync(
+        ReleaseVersion release,
+        ReleaseFile file,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(release.ChecksumsFile)
+            || string.IsNullOrWhiteSpace(release.ChecksumsSignatureFile))
+        {
+            logger.LogError("Self-update: release has no signed SHA256SUMS; refusing to update unsigned.");
+            return null;
+        }
+
+        var baseUrl = BaseUrl(file.Url!);
+        var sumsBytes = await DownloadBytesAsync(baseUrl + release.ChecksumsFile, cancellationToken).ConfigureAwait(false);
+        var sigBytes = await DownloadBytesAsync(baseUrl + release.ChecksumsSignatureFile, cancellationToken).ConfigureAwait(false);
+
+        if (!signatureVerifier.Verify(sumsBytes, sigBytes))
+        {
+            logger.LogError("Self-update: SHA256SUMS signature did not verify against the dbosoft keys; aborting.");
+            return null;
+        }
+
+        var sums = Sha256Sums.Parse(System.Text.Encoding.UTF8.GetString(sumsBytes));
+        var hash = sums.GetHash(file.Filename!);
+        if (hash is null)
+            logger.LogError("Self-update: {File} is not listed in the signed SHA256SUMS; aborting.", file.Filename);
+        return hash;
+    }
+
+    // The SUMS and signature sit next to the package in the same version dir.
+    private static string BaseUrl(string packageUrl)
+    {
+        var slash = packageUrl.LastIndexOf('/');
+        return slash >= 0 ? packageUrl[..(slash + 1)] : packageUrl;
+    }
+
+    private async Task<byte[]> DownloadBytesAsync(string url, CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task DownloadAsync(string url, string destination, CancellationToken cancellationToken)

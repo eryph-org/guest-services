@@ -157,4 +157,22 @@ public sealed class UpdateTargetResolverTests
         };
         UpdateTargetResolver.SelectWindowsPackage(files)!.Filename.Should().Be("win.zip");
     }
+
+    [Fact]
+    public void SelectWindowsPackage_prefers_service_over_cli_tool()
+    {
+        // The real index ships BOTH egs-tool_…_windows_amd64.zip (the CLI) and
+        // egs_…_windows_amd64.zip (the service). The CLI package has no
+        // egs-service.exe — must never be picked. Order mirrors the real index
+        // (tool first).
+        var files = new[]
+        {
+            new ReleaseFile { Filename = "egs-tool_0.4.0_windows_amd64.zip", Os = "windows", Arch = "amd64" },
+            new ReleaseFile { Filename = "egs_0.4.0.iso", Tags = ["iso"] },
+            new ReleaseFile { Filename = "egs_0.4.0_linux_amd64.tar.gz", Os = "linux", Arch = "amd64" },
+            new ReleaseFile { Filename = "egs_0.4.0_windows_amd64.zip", Os = "windows", Arch = "amd64" },
+        };
+        UpdateTargetResolver.SelectWindowsPackage(files)!.Filename
+            .Should().Be("egs_0.4.0_windows_amd64.zip");
+    }
 }

@@ -133,6 +133,22 @@ BeforeAll {
     }
   }
 
+  # Runs a scriptblock in a background job and returns its output, or $null if it
+  # does not finish within TimeoutSec. The self-update test stops/restarts the
+  # service, during which a guest call (egs-tool / ssh) can block on a dead
+  # Hyper-V socket with no timeout of its own — bounding every such call keeps a
+  # transient block from wedging the whole suite (it killed a prior run).
+  function script:Invoke-Bounded {
+    param([scriptblock] $Script, [object[]] $ArgumentList = @(), [int] $TimeoutSec = 30)
+    $j = Start-Job -ScriptBlock $Script -ArgumentList $ArgumentList
+    try {
+      if (Wait-Job $j -Timeout $TimeoutSec) { return (Receive-Job $j) }
+      Stop-Job $j
+      return $null
+    }
+    finally { Remove-Job $j -Force }
+  }
+
   # Give SSH a moment to settle after the final boot — egs-service comes up
   # and registers Hyper-V sockets, but the Pester test process can race ahead.
   # The probe NEEDS to tolerate the early "connection refused" — keep the
@@ -481,6 +497,86 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
       $skipped = [bool](Select-String -LiteralPath $localLog -Pattern 'no matching adapter' -Quiet)
       $matched | Should -BeTrue
       $skipped | Should -BeFalse
+    }
+  }
+
+  Context 'self-update process' {
+
+    # Runs LAST: it restarts the service. Exercises the mechanical half of the
+    # self-update (the `apply-update` verb: stop service -> swap install dir ->
+    # restart, with rollback on failure) end-to-end in a real guest, with the
+    # SAME version (a reinstall) — no network, signing, or version bump needed.
+    # The download/verify/resolve half is covered by unit tests.
+    It 'apply-update swaps the install dir and the service returns healthy' {
+      $hostName = "$($catlet.VmId).hyper-v.alt"
+
+      # 1. Stage a copy of the live install dir. (Single-quoted, no $-vars and no
+      #    embedded double quotes, so it survives the harness powershell wrap.)
+      $stage = Invoke-GuestPS -HostName $hostName -Script @'
+Remove-Item -Recurse -Force 'C:\Windows\Temp\egs-stage' -ErrorAction SilentlyContinue
+Copy-Item -Recurse 'C:\Program Files\eryph\guest-services\bin' 'C:\Windows\Temp\egs-stage'
+Test-Path 'C:\Windows\Temp\egs-stage\egs-service.exe'
+'@
+      $stage.ExitCode | Should -Be 0
+      $stage.Output.Trim() | Should -Be 'True'
+
+      # 2. Write the updater invocation to a .cmd. Uses the 8.3 short path for
+      #    "Program Files" (C:\PROGRA~1) so no path needs quoting — embedded
+      #    double quotes would not survive the harness wrapping on this branch.
+      $write = Invoke-GuestPS -HostName $hostName -Script @'
+Set-Content -LiteralPath 'C:\Windows\Temp\egs-apply.cmd' -Value 'C:\Windows\Temp\egs-stage\egs-service.exe apply-update --from C:\Windows\Temp\egs-stage --to C:\PROGRA~1\eryph\guest-services\bin --service eryph-guest-services'
+Test-Path 'C:\Windows\Temp\egs-apply.cmd'
+'@
+      $write.ExitCode | Should -Be 0
+      $write.Output.Trim() | Should -Be 'True'
+
+      # 3. Run the updater as SYSTEM via a one-shot scheduled task — fully
+      #    detached from the SSH session and the service, so stopping the
+      #    service (which hosts that SSH channel) can't kill the updater.
+      Invoke-GuestPS -HostName $hostName -Script @'
+schtasks /create /tn egs-e2e-apply /tr C:\Windows\Temp\egs-apply.cmd /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
+schtasks /run /tn egs-e2e-apply
+'@ | Out-Null
+
+      # 4. The updater stops the service, swaps, and restarts. Poll for the
+      #    channel to come back — every probe is bounded (Invoke-Bounded) so a
+      #    call that blocks while the service is down can't hang the suite.
+      $vmId = $catlet.VmId
+      $deadline = (Get-Date).AddMinutes(4)
+      $back = $false
+      while ((Get-Date) -lt $deadline) {
+        $status = Invoke-Bounded -TimeoutSec 20 -ArgumentList $vmId -Script {
+          param($id)
+          $PSNativeCommandUseErrorActionPreference = $false
+          (egs-tool get-status $id) 2>$null
+        }
+        if (($status -join '') -match 'available') { $back = $true; break }
+        Start-Sleep -Seconds 5
+      }
+      $back | Should -BeTrue -Because 'the service must restart after the binary swap'
+
+      # 5. Provisioning state survived the swap (state.json untouched).
+      $kvpJson = Invoke-Bounded -TimeoutSec 30 -ArgumentList $vmId -Script {
+        param($id)
+        $PSNativeCommandUseErrorActionPreference = $false
+        (egs-tool get-data --json $id) 2>$null
+      }
+      $kvp = ($kvpJson -join "`n") | ConvertFrom-Json -AsHashtable
+      $kvp.guest.'eryph.provisioning.state' | Should -Be 'completed'
+
+      # 6. The running binary is the swapped-in (patched) build — proving the
+      #    swap applied the staged files and did NOT roll back. SHA compared
+      #    whitespace-insensitively (Spectre wraps at 80 cols without a TTY).
+      $hostProductVersion = (Get-Item "$resolvedPublishPath\egs-service.exe").VersionInfo.ProductVersion
+      $hostSha = if ($hostProductVersion -match 'Sha\.([0-9a-f]{7,})') { $Matches[1] } else { $null }
+      $hostSha | Should -Not -BeNullOrEmpty
+      $verOut = Invoke-Bounded -TimeoutSec 30 -ArgumentList $hostName -Script {
+        param($h)
+        ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=10 $h `
+          "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version"
+      }
+      $verOut | Should -Not -BeNullOrEmpty
+      (($verOut -join '') -replace '\s', '') | Should -Match ([regex]::Escape($hostSha))
     }
   }
 }

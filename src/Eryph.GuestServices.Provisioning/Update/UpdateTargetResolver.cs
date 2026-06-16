@@ -62,18 +62,29 @@ public static class UpdateTargetResolver
     }
 
     /// <summary>
-    /// Picks the Windows x64 guest-services archive: os=windows, arch=amd64, a
-    /// <c>.zip</c>, and not the bootable ISO (tagged <c>iso</c>). The ISO and
-    /// the Linux/tool artifacts are excluded so the updater only ever stages
-    /// the in-place Windows binaries.
+    /// Picks the Windows x64 <em>service</em> archive: os=windows, arch=amd64, a
+    /// <c>.zip</c>, not the ISO. Crucially this excludes the CLI-tool package
+    /// (<c>egs-tool_…_windows_amd64.zip</c>) — which is also windows/amd64/.zip
+    /// but does NOT contain <c>egs-service.exe</c> — and prefers the service
+    /// archive (<c>egs_…_windows_amd64.zip</c>).
     /// </summary>
-    internal static ReleaseFile? SelectWindowsPackage(IReadOnlyList<ReleaseFile> files) =>
-        files.FirstOrDefault(f =>
-            string.Equals(f.Os, "windows", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(f.Arch, "amd64", StringComparison.OrdinalIgnoreCase)
-            && f.Filename is not null
-            && f.Filename.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-            && (f.Tags is null || !f.Tags.Any(t => string.Equals(t, "iso", StringComparison.OrdinalIgnoreCase))));
+    internal static ReleaseFile? SelectWindowsPackage(IReadOnlyList<ReleaseFile> files)
+    {
+        var candidates = files.Where(f =>
+                string.Equals(f.Os, "windows", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(f.Arch, "amd64", StringComparison.OrdinalIgnoreCase)
+                && f.Filename is not null
+                && f.Filename.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                && !f.Filename.StartsWith("egs-tool", StringComparison.OrdinalIgnoreCase)
+                && (f.Tags is null || !f.Tags.Any(t => string.Equals(t, "iso", StringComparison.OrdinalIgnoreCase))))
+            .ToList();
+
+        // Prefer the canonical service archive name; otherwise the first
+        // non-tool windows zip.
+        return candidates.FirstOrDefault(f =>
+                   f.Filename!.StartsWith("egs_", StringComparison.OrdinalIgnoreCase))
+               ?? candidates.FirstOrDefault();
+    }
 
     // Compare the SemVer core+prerelease, ignoring build metadata (everything
     // after '+'). The running InformationalVersion carries a "+Branch.x.Sha.y"

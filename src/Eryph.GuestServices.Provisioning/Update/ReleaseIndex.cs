@@ -38,6 +38,19 @@ public sealed record ReleaseVersion
 
     [JsonPropertyName("files")]
     public IReadOnlyList<ReleaseFile>? Files { get; init; }
+
+    /// <summary>
+    /// The signed checksums file name (e.g.
+    /// <c>eryph_guest-services_0.4.0_SHA256SUMS</c>). Despite the JSON key
+    /// <c>sha1Checksum</c> this names a SHA256SUMS file, a sibling of the
+    /// package URLs.
+    /// </summary>
+    [JsonPropertyName("sha1Checksum")]
+    public string? ChecksumsFile { get; init; }
+
+    /// <summary>Detached OpenPGP signature file name for <see cref="ChecksumsFile"/>.</summary>
+    [JsonPropertyName("sha1ChecksumSignature")]
+    public string? ChecksumsSignatureFile { get; init; }
 }
 
 public sealed record ReleaseFile
