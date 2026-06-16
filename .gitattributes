@@ -1,3 +1,9 @@
 *     text=auto
 *.sh  text eol=lf
 *.bat text eol=crlf
+
+# Release-signing material: the OpenPGP signature is verified over the EXACT
+# bytes of these files. Any EOL conversion (LF->CRLF on Windows checkout) breaks
+# verification, so treat them as binary and never normalize line endings.
+test/fixtures/update/**                                        -text
+src/Eryph.GuestServices.Provisioning/Update/dbosoft-release-keys.asc  -text
