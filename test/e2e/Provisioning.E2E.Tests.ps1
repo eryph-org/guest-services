@@ -121,7 +121,12 @@ BeforeAll {
   # test can use them.
   function script:Invoke-GuestPS {
     param([string] $HostName, [string] $Script)
-    $output = ssh.exe -o StrictHostKeyChecking=no $HostName "powershell -NoProfile -Command `"$Script`""
+    # egs runs every SSH exec command through its configured shell, which on
+    # Windows is `powershell -Command "<command>"` (since #42). Send the bare
+    # script: re-wrapping it in another `powershell -Command` here would make
+    # the guest evaluate it TWICE, so the outer shell expands $env:COMPUTERNAME
+    # / $z / $e before the inner powershell ever runs (issue #52).
+    $output = ssh.exe -o StrictHostKeyChecking=no $HostName $Script
     return @{
       ExitCode = $LASTEXITCODE
       Output   = ($output | Out-String).Trim()
@@ -233,7 +238,10 @@ Describe 'Embedded provisioning at first boot' {
       $r = Invoke-GuestPS -HostName $hostName `
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version"
       $r.ExitCode | Should -Be 0
-      $r.Output | Should -Match ([regex]::Escape($hostSha))
+      # `egs-service version` (Spectre.Console) hard-wraps at 80 columns when
+      # stdout is redirected (no TTY), so the SHA can straddle a newline. Strip
+      # all whitespace before matching so a wrapped SHA still compares (#52).
+      ($r.Output -replace '\s', '') | Should -Match ([regex]::Escape($hostSha))
     }
 
     It 'did not run cloudbase-init' {
@@ -418,9 +426,9 @@ Describe 'Embedded provisioning at first boot' {
       # bundle is useful even when no user-data scripts ran — without it the
       # only sink was the Windows Event Log, which collect-logs never reads.
       # Build the bundle, then inspect it in-guest: the egs SSH server has no
-      # SFTP subsystem so scp can't pull it. Both probes are single-quoted
-      # (no double quotes) so they survive the ssh.exe "powershell -Command"
-      # wrapping in Invoke-GuestPS.
+      # SFTP subsystem so scp can't pull it. Invoke-GuestPS sends the script for
+      # a single guest-side powershell evaluation (issue #52), so the probe's
+      # $z / $e locals are evaluated by the guest, not pre-expanded host-side.
       $hostName = "$($catlet.VmId).hyper-v.alt"
       $build = Invoke-GuestPS -HostName $hostName `
         -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-e2e-bundle.zip"
