@@ -96,18 +96,19 @@ public sealed class EgsUpdater(
             Directory.Delete(versionDir, recursive: true);
         Directory.CreateDirectory(versionDir);
 
-        logger.LogInformation("Self-update: downloading {Url}.", file.Url);
-        await DownloadAsync(file.Url!, zipPath, cancellationToken).ConfigureAwait(false);
-
-        var actual = await ComputeSha256Async(zipPath, cancellationToken).ConfigureAwait(false);
-
-        // The authoritative hash is the one in the signed SHA256SUMS, not the
-        // index's per-file value (the index is only HTTPS, not signed). Verify
-        // the OpenPGP signature, then check the package against the signed hash.
+        // Establish trust FIRST: fetch the small SHA256SUMS + signature, verify
+        // the OpenPGP signature (the index itself is only HTTPS, not signed),
+        // and read the authoritative package hash. Only then download the
+        // (large) package — so a tampered index can't make us pull a huge file
+        // before any trust is established.
         var signedHash = await VerifySignedHashAsync(release, file, cancellationToken).ConfigureAwait(false);
         if (signedHash is null)
             return null; // signature missing/invalid or file absent from SUMS (logged)
 
+        logger.LogInformation("Self-update: downloading {Url}.", file.Url);
+        await DownloadAsync(file.Url!, zipPath, cancellationToken).ConfigureAwait(false);
+
+        var actual = await ComputeSha256Async(zipPath, cancellationToken).ConfigureAwait(false);
         if (!actual.Equals(signedHash, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogError(

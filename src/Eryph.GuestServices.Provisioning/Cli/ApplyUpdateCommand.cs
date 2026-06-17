@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
+using Eryph.GuestServices.Core;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -29,7 +30,7 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
 
         [CommandOption("--service <NAME>")]
         [Description("Windows service to stop/start around the swap.")]
-        public string Service { get; init; } = "eryph-guest-services";
+        public string Service { get; init; } = Constants.DaemonServiceName;
     }
 
     public override async Task<int> ExecuteAsync(CommandContext context, Settings settings)
