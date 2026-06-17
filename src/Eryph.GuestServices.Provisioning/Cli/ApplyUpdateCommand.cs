@@ -171,17 +171,35 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
 
     private static async Task StopServiceAsync(string service)
     {
-        // sc.exe stop returns 1062 (not started) / 1060 (not installed); both
-        // are fine — we just need it not running before the swap.
-        await RunScAsync(["stop", service]).ConfigureAwait(false);
+        // sc.exe stop tolerates 1062 (not started) / 1060 (not installed) — we
+        // just need it not running before the swap. A hard failure (e.g. 5,
+        // access denied) is surfaced now rather than as a generic timeout below.
+        var (_, output) = await RunScAsync(["stop", service]).ConfigureAwait(false);
+        ThrowOnScFailure(output, "stop", tolerated: [1060, 1062]);
         // Must actually reach STOPPED before we move the install dir — moving it
         // while a DLL is still mapped corrupts the running service.
         if (!await WaitForStateAsync(service, "STOPPED", TimeSpan.FromMinutes(1)).ConfigureAwait(false))
             throw new TimeoutException($"Service '{service}' did not reach STOPPED within the timeout.");
     }
 
-    private static async Task StartServiceAsync(string service) =>
-        await RunScAsync(["start", service]).ConfigureAwait(false);
+    private static async Task StartServiceAsync(string service)
+    {
+        // 1056 = already running; anything else that FAILED is a real problem.
+        var (_, output) = await RunScAsync(["start", service]).ConfigureAwait(false);
+        ThrowOnScFailure(output, "start", tolerated: [1056]);
+    }
+
+    // sc.exe reports errors as "[SC] <Op> FAILED <code>: ...". Surface an
+    // untolerated failure with its output so access-denied etc. is diagnosable
+    // instead of silently turning into a state-wait timeout.
+    private static void ThrowOnScFailure(string output, string operation, int[] tolerated)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(output, @"FAILED\s+(\d+)");
+        if (!match.Success || tolerated.Contains(int.Parse(match.Groups[1].Value)))
+            return;
+
+        throw new InvalidOperationException($"sc.exe {operation} failed: {output.Trim()}");
+    }
 
     private static async Task<bool> WaitForRunningAsync(string service, TimeSpan timeout) =>
         await WaitForStateAsync(service, "RUNNING", timeout).ConfigureAwait(false);
