@@ -130,5 +130,15 @@ public class ServiceControlFlagsTests
         flags.IsProvisioningEnabled().Should().BeTrue();
         flags.IsRemoteAccessEnabled().Should().BeTrue();
         flags.IsKvpAuthEnabled().Should().BeTrue();
+        // Auto-patch is opt-out too: ON for every long-running guest unless
+        // explicitly disabled (the random window keeps it clear of provisioning).
+        flags.IsAutoUpdateEnabled().Should().BeTrue();
+    }
+
+    [Fact]
+    public void AutoUpdate_GetValueName_MapsToAutoUpdateEnabled()
+    {
+        PlatformServiceControlFlags.GetValueName(ServiceControlFlag.AutoUpdate)
+            .Should().Be("AutoUpdateEnabled");
     }
 }

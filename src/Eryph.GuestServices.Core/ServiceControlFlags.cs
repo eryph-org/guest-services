@@ -19,6 +19,9 @@ public enum ServiceControlFlag
 
     /// <summary>Honoring of KVP-delivered client keys (<c>KvpAuthEnabled</c>).</summary>
     KvpAuth,
+
+    /// <summary>The standalone background auto-patch loop (<c>AutoUpdateEnabled</c>).</summary>
+    AutoUpdate,
 }
 
 /// <summary>
@@ -52,6 +55,18 @@ public interface IServiceControlFlags
     /// should be rejected. <c>true</c> unless an operator turned it off.
     /// </summary>
     bool IsKvpAuthEnabled();
+
+    /// <summary>
+    /// Gates the standalone background auto-patch loop, which periodically
+    /// self-updates the agent over the machine's lifetime — independently of
+    /// provisioning. <c>true</c> unless an operator turned it off. It applies to
+    /// every long-running guest (remote-access-only AND provisioned), so
+    /// provisioned machines keep getting patched; the random multi-day check
+    /// window keeps a check from ever coinciding with the short first-boot
+    /// provisioning run, so the two never interfere. Operators who manage
+    /// updates centrally set it to <c>0</c>.
+    /// </summary>
+    bool IsAutoUpdateEnabled();
 }
 
 /// <summary>
@@ -89,6 +104,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     internal const string ProvisioningEnabledValue = "ProvisioningEnabled";
     internal const string RemoteAccessEnabledValue = "RemoteAccessEnabled";
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
+    internal const string AutoUpdateEnabledValue = "AutoUpdateEnabled";
 
     /// <summary>
     /// Persisted value name for a flag — the REG_DWORD value name on Windows
@@ -100,6 +116,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         ServiceControlFlag.Provisioning => ProvisioningEnabledValue,
         ServiceControlFlag.RemoteAccess => RemoteAccessEnabledValue,
         ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
+        ServiceControlFlag.AutoUpdate => AutoUpdateEnabledValue,
         _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
     };
 
@@ -108,6 +125,8 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     public bool IsRemoteAccessEnabled() => ReadFlag(RemoteAccessEnabledValue);
 
     public bool IsKvpAuthEnabled() => ReadFlag(KvpAuthEnabledValue);
+
+    public bool IsAutoUpdateEnabled() => ReadFlag(AutoUpdateEnabledValue);
 
     /// <summary>
     /// Pure value→bool interpretation for a Windows REG_DWORD opt-out flag.

@@ -460,6 +460,25 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
     }
   }
 
+  Context 'auto-update loop' {
+
+    It 'started the background auto-patch loop (enabled by default)' {
+      # Auto-patch is opt-out, so even this provisioned guest starts the loop.
+      # It only logs "enabled" + schedules a check 36-48h out (never fires in the
+      # test), proving the service is wired and gated on by default. Asserted
+      # from the agent log pulled host-side, matched as booleans (no log echoed).
+      $localLog = Join-Path ([System.IO.Path]::GetTempPath()) "egs-au-$($catlet.VmId).log"
+      Remove-Item $localLog -ErrorAction SilentlyContinue
+      egs-tool download-file $catlet.VmId 'C:\ProgramData\eryph\guest-services\logs\agent.log' $localLog
+      Test-Path $localLog | Should -BeTrue
+
+      $enabled = [bool](Select-String -LiteralPath $localLog -Pattern 'Auto-update enabled' -Quiet)
+      $disabled = [bool](Select-String -LiteralPath $localLog -Pattern 'Auto-update disabled' -Quiet)
+      $enabled | Should -BeTrue
+      $disabled | Should -BeFalse
+    }
+  }
+
   Context 'network-config' {
 
     It 'matched the NIC by MAC and applied the network-config (not skipped)' {
@@ -572,20 +591,47 @@ Test-Path 'C:\Windows\Temp\egs-apply.cmd'
       }
       $back | Should -BeTrue -Because 'the service must restart after the binary swap'
 
-      # 5. Provisioning state survived the swap (state.json untouched).
-      $kvp = egs-tool get-data --json $vmId | ConvertFrom-Json -AsHashtable
+      # 5. Provisioning state survived the swap (state.json untouched). The
+      #    channel can still blip in the seconds after the service first reports
+      #    available, so this read is bounded + retried too (every egs-channel
+      #    call in the restart window must be, or a blip wedges the suite).
+      $kvpJson = $null
+      for ($i = 0; $i -lt 6 -and -not $kvpJson; $i++) {
+        $j = Start-Job -ArgumentList $vmId -ScriptBlock {
+          param($id)
+          $PSNativeCommandUseErrorActionPreference = $false
+          (egs-tool get-data --json $id) 2>$null
+        }
+        if (Wait-Job $j -Timeout 20) { $kvpJson = (Receive-Job $j) -join "`n" }
+        else { Stop-Job $j }
+        Remove-Job $j -Force
+        if (-not $kvpJson) { Start-Sleep -Seconds 5 }
+      }
+      $kvpJson | Should -Not -BeNullOrEmpty
+      $kvp = $kvpJson | ConvertFrom-Json -AsHashtable
       $kvp.guest.'eryph.provisioning.state' | Should -Be 'completed'
 
       # 6. The running binary is the swapped-in (patched) build — proving the
-      #    swap applied the staged files and did NOT roll back. SHA compared
-      #    whitespace-insensitively (Spectre wraps at 80 cols without a TTY).
+      #    swap applied the staged files and did NOT roll back. Bounded ssh
+      #    (ConnectTimeout + job); SHA compared whitespace-insensitively
+      #    (Spectre wraps at 80 cols without a TTY).
       $hostProductVersion = (Get-Item "$resolvedPublishPath\egs-service.exe").VersionInfo.ProductVersion
       $hostSha = if ($hostProductVersion -match 'Sha\.([0-9a-f]{7,})') { $Matches[1] } else { $null }
       $hostSha | Should -Not -BeNullOrEmpty
-      $r = Invoke-GuestPS -HostName $hostName `
-        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version"
-      $r.ExitCode | Should -Be 0
-      ($r.Output -replace '\s', '') | Should -Match ([regex]::Escape($hostSha))
+      $verOut = $null
+      for ($i = 0; $i -lt 6 -and -not $verOut; $i++) {
+        $j = Start-Job -ArgumentList $hostName -ScriptBlock {
+          param($h)
+          ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=10 $h `
+            "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' version" 2>&1
+        }
+        if (Wait-Job $j -Timeout 25) { $verOut = (Receive-Job $j) -join '' }
+        else { Stop-Job $j }
+        Remove-Job $j -Force
+        if (-not $verOut) { Start-Sleep -Seconds 5 }
+      }
+      $verOut | Should -Not -BeNullOrEmpty
+      ($verOut -replace '\s', '') | Should -Match ([regex]::Escape($hostSha))
     }
   }
 }

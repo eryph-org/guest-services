@@ -138,6 +138,11 @@ internal static class Program
             builder.Services.AddSimpleInjector(provisioningContainer, options =>
             {
                 options.AddHostedService<ProvisioningHostedService>();
+                // Standalone auto-patch loop (Windows). Resolved from the
+                // provisioning container because it reuses the updater wired
+                // there; it self-gates on AutoUpdateEnabled and runs regardless
+                // of whether provisioning itself is enabled.
+                options.AddHostedService<AutoUpdateService>();
                 options.AddLogging();
             });
         }
