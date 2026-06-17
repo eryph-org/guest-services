@@ -484,6 +484,23 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
     }
   }
 
+  Context 'self-update download' {
+
+    It 'resolves, downloads and signature-verifies the released package (no apply)' {
+      # Exercises the real auto-update path UP TO staging — resolve target,
+      # download the package + signed SHA256SUMS from releases.dbosoft.eu, verify
+      # the OpenPGP signature and the package hash, extract — without applying it
+      # (no service stop / swap). The guest runs a dev build, so pinning 0.4.0
+      # is a real cross-version download. A printed "STAGED 0.4.0" proves the
+      # signature + hash verified (PrepareAsync only stages on success).
+      $hostName = "$($catlet.VmId).hyper-v.alt"
+      $r = Invoke-GuestPS -HostName $hostName `
+        -Script "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' check-update --version 0.4.0"
+      $r.ExitCode | Should -Be 0
+      ($r.Output -replace '\s', '') | Should -Match 'STAGED0\.4\.0'
+    }
+  }
+
   Context 'self-update process' {
 
     # Runs LAST: it restarts the service. Exercises the mechanical half of the
