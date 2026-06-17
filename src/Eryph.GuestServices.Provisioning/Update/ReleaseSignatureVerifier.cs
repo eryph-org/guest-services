@@ -32,17 +32,27 @@ public sealed class ReleaseSignatureVerifier : IReleaseSignatureVerifier
 
     public bool Verify(byte[] signedData, byte[] detachedSignature)
     {
-        var signature = ReadSignature(detachedSignature);
-        if (signature is null)
+        try
+        {
+            var signature = ReadSignature(detachedSignature);
+            if (signature is null)
+                return false;
+
+            var key = keyring.Value.GetPublicKey(signature.KeyId);
+            if (key is null)
+                return false; // signed by a key we don't trust
+
+            signature.InitVerify(key);
+            signature.Update(signedData);
+            return signature.Verify();
+        }
+        catch (Exception)
+        {
+            // The signature bytes are attacker-controlled; malformed input must
+            // never throw out of here — an unparseable/garbage signature is
+            // simply "not valid" (the caller fails closed on false).
             return false;
-
-        var key = keyring.Value.GetPublicKey(signature.KeyId);
-        if (key is null)
-            return false; // signed by a key we don't trust
-
-        signature.InitVerify(key);
-        signature.Update(signedData);
-        return signature.Verify();
+        }
     }
 
     private static PgpSignature? ReadSignature(byte[] detachedSignature)

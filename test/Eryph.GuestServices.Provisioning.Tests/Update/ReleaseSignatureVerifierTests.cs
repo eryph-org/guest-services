@@ -35,6 +35,19 @@ public sealed class ReleaseSignatureVerifierTests
         new ReleaseSignatureVerifier().Verify(Sums, [0x01, 0x02, 0x03]).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData(new byte[0])]                                  // empty
+    [InlineData(new byte[] { 0x99, 0x00 })]                    // truncated packet header
+    [InlineData(new byte[] { 0x2D, 0x2D, 0x2D, 0x2D, 0x2D })]  // looks like an armor "-----" start
+    public void Malformed_signature_returns_false_without_throwing(byte[] signature)
+    {
+        // The signature bytes are attacker-controlled; parsing must never throw.
+        var verifier = new ReleaseSignatureVerifier();
+        var act = () => verifier.Verify(Sums, signature);
+        act.Should().NotThrow();
+        verifier.Verify(Sums, signature).Should().BeFalse();
+    }
+
     [Fact]
     public void Signed_sums_lists_the_windows_service_package_hash()
     {

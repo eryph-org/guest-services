@@ -612,7 +612,9 @@ internal sealed class WindowsOs : IWindowsOs
             // pre-seeded key.
             var valueName = PlatformServiceControlFlags.GetValueName(flag);
             using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(
-                PlatformServiceControlFlags.WindowsServiceControlKey, writable: true);
+                PlatformServiceControlFlags.WindowsServiceControlKey, writable: true)
+                ?? throw new InvalidOperationException(
+                    $@"Could not open/create HKLM\{PlatformServiceControlFlags.WindowsServiceControlKey}.");
             key.SetValue(valueName, enabled ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
             logger.LogInformation(
                 "Service-control flag {Flag} set to {Value} (effective on next service start).",
