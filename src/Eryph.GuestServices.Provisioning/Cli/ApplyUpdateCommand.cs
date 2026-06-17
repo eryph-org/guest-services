@@ -135,10 +135,20 @@ public sealed class ApplyUpdateCommand : AsyncCommand<ApplyUpdateCommand.Setting
             catch (IOException ex)
             {
                 // A binary in `source` is still mapped (service not fully
-                // exited yet). Drop any partial destination and wait.
+                // exited yet). Drop any partial destination and wait. The
+                // cleanup is best-effort — if it too is transiently locked
+                // (AV scan), swallow it and keep retrying rather than failing
+                // the whole update on a transient lock.
                 last = ex;
-                if (Directory.Exists(destination))
-                    Directory.Delete(destination, recursive: true);
+                try
+                {
+                    if (Directory.Exists(destination))
+                        Directory.Delete(destination, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // ignore; next iteration retries the move + cleanup
+                }
                 await Task.Delay(1000).ConfigureAwait(false);
             }
         }

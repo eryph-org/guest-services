@@ -110,7 +110,9 @@ internal static class Program
             builder.Services.AddSingleton<IGuestDataExchange, WindowsGuestDataExchange>();
             builder.Services.AddWindowsService(options =>
             {
-                options.ServiceName = "eryph guest services";
+                // Same name the self-updater stops/starts (Constants.DaemonServiceName)
+                // so the host registration and `apply-update` can't drift.
+                options.ServiceName = Constants.DaemonServiceName;
             });
         }
         else if (OperatingSystem.IsLinux())
