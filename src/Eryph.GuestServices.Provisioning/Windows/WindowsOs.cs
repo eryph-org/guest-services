@@ -14,6 +14,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
+using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Provisioning.Windows.Win32;
 using Microsoft.Extensions.Logging;
 
@@ -597,6 +598,27 @@ internal sealed class WindowsOs : IWindowsOs
                     @"HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation is missing.");
             key.SetValue("RealTimeIsUniversal", utc ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
             logger.LogInformation("RealTimeIsUniversal set to {Value}.", utc ? 1 : 0);
+        }, cancellationToken);
+
+    public Task SetServiceControlFlagAsync(
+        ServiceControlFlag flag,
+        bool enabled,
+        CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            // Same key + value names the service reads at start
+            // (PlatformServiceControlFlags). CreateSubKey opens-or-creates so
+            // the very first flag write on a stock image works without a
+            // pre-seeded key.
+            var valueName = PlatformServiceControlFlags.GetValueName(flag);
+            using var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(
+                PlatformServiceControlFlags.WindowsServiceControlKey, writable: true)
+                ?? throw new InvalidOperationException(
+                    $@"Could not open/create HKLM\{PlatformServiceControlFlags.WindowsServiceControlKey}.");
+            key.SetValue(valueName, enabled ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+            logger.LogInformation(
+                "Service-control flag {Flag} set to {Value} (effective on next service start).",
+                valueName, enabled ? 1 : 0);
         }, cancellationToken);
 
     public async Task SetTimezoneAsync(string windowsTimezoneId, CancellationToken cancellationToken)

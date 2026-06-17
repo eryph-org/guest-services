@@ -129,10 +129,20 @@ provisioning tunables above.
 | `ProvisioningEnabled` | The first-boot provisioning agent — no user-data is applied. | on |
 | `RemoteAccessEnabled` | The remote-access transport `egs-tool` connects to. | on |
 | `KvpAuthEnabled` | Honoring of authorized client keys delivered via Hyper-V data exchange. When off, only the locally provisioned key in `id_egs.pub` authorizes — pushes via `egs-tool add-ssh-config` and other KVP writers are ignored. | on |
+| `AutoUpdateEnabled` | The background auto-patch loop that keeps the agent updated over the machine's lifetime (Windows). When off, the agent never self-updates on its own. | on |
 
-All three are opt-out: a capability is on unless the value is set to `0`. A
-missing value, a read error, or an unknown OS all leave it on. The flags are
-read at service start, so restart `eryph-guest-services` after changing them.
+All are opt-out: a capability is on unless the value is set to `0`. A missing
+value, a read error, or an unknown OS all leave it on. The flags are read at
+service start, so restart `eryph-guest-services` after changing them.
+
+`AutoUpdateEnabled` runs on every long-running guest — remote-access-only AND
+provisioned — so provisioned machines keep getting patched too. It checks the
+stable channel on a random 36–48 h cadence (re-rolled each cycle, including
+before the first check); that multi-day window means a check never coincides
+with the short first-boot provisioning run, so auto-patch and provisioning never
+interfere. Set it to `0` on fleets where updates are managed centrally
+(eryph / geneset). Windows-only — Linux guests update through their package
+manager.
 
 ### Windows
 
@@ -145,6 +155,7 @@ New-Item -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Force | Out-Null
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'ProvisioningEnabled' -Type DWord -Value 0
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'RemoteAccessEnabled' -Type DWord -Value 0
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'KvpAuthEnabled' -Type DWord -Value 0
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'AutoUpdateEnabled' -Type DWord -Value 0
 Restart-Service -Name eryph-guest-services
 ```
 

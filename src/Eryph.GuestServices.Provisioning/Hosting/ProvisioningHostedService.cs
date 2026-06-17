@@ -22,6 +22,7 @@ internal sealed class ProvisioningHostedService(
     IHostApplicationLifetime lifetime,
     IServiceControlFlags controlFlags,
     IReportingDispatcher reporter,
+    Update.IUpdateLauncher updateLauncher,
     ILogger<ProvisioningHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -88,6 +89,33 @@ internal sealed class ProvisioningHostedService(
                 Environment.ExitCode = 0;
                 // Stop the host so egs-service shuts down cleanly before the
                 // OS reboot fires.
+                lifetime.StopApplication();
+                return;
+
+            case StageRunOutcome.UpdateRequested update:
+                logger.LogInformation(
+                    "Provisioning self-update requested to {Version}: {Reason}",
+                    update.TargetVersion, update.Reason);
+                // Spawn the staged updater (it stops this service, swaps the
+                // binaries, and restarts), then stop the host so the file locks
+                // release. No OS reboot — provisioning resumes on the new binary
+                // when the service comes back up.
+                try
+                {
+                    updateLauncher.Launch(new Update.UpdatePlan
+                    {
+                        StagingDirectory = update.StagingDirectory,
+                        TargetVersion = update.TargetVersion,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to launch the updater; leaving the current version running.");
+                    // Don't stop the host — the agent keeps serving on the old
+                    // binary; the next boot will retry the staged update.
+                    return;
+                }
+                Environment.ExitCode = 0;
                 lifetime.StopApplication();
                 return;
 

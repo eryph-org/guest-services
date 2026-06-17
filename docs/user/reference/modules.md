@@ -12,6 +12,7 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | NtpClient | Network / 3 | per-instance | `ntp` |
 | Timezone | Network / 4 | per-instance | `timezone` |
 | SetLocale | Network / 5 | per-instance | `locale`, `keyboard` |
+| Egs | Network / 6 | per-instance | `egs` (eryph extension) |
 | UsersGroups | Config / 0 | per-instance | `users`, `groups` |
 | SetPasswords | Config / 1 | per-instance | `chpasswd`, `password` |
 | SshModule | Config / 2 | per-instance | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` |
@@ -111,6 +112,42 @@ keyboard:
 The two are independent — a keyboard-only change (German layout, English UI) is
 fine. Changing the system locale needs a reboot, which the module requests only
 when that value actually changed.
+
+## Egs
+
+An eryph extension (not cloud-init): configures the guest-services agent itself.
+Windows-only. It runs last in the Network stage — after networking is up but
+before any user-facing config — so a self-update restarts the agent and the rest
+of provisioning runs on the new binary.
+
+```yaml
+egs:
+  settings:
+    remote_access: true     # the SSH transport egs-tool connects to
+    provisioning: false     # disable further first-boot provisioning
+    kvp_auth: true          # honor client keys pushed via Hyper-V KVP
+  update:
+    enabled: true           # opt-in; no update unless true
+    channel: stable         # stable (default) | unstable
+    version: "0.4.0"        # optional: pin an exact version (wins over channel)
+```
+
+### settings
+
+Each switch maps to a service-control flag (see [settings](settings.md#service-control)).
+All three are three-state: omit a switch to leave it untouched. The flags are
+read at the next service start, so a change made during provisioning takes
+effect after the agent restarts.
+
+### update
+
+Opt-in self-update. With `enabled: true` the agent reads the
+[release index](https://releases.dbosoft.eu/eryph/guest-services/index.json),
+resolves the target (a pinned `version`, else the newest on `channel`),
+downloads and SHA256-verifies the Windows package, then swaps itself in and
+restarts the service — no OS reboot. A target equal to the running version is a
+no-op. A failed download/verify never fails provisioning; a new build that won't
+start is rolled back to the previous version.
 
 ## UsersGroups
 

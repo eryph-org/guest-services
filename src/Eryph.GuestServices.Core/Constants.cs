@@ -17,6 +17,13 @@ public static class Constants
 
     public static readonly string ServiceName = "Eryph Guest Services";
 
+    /// <summary>
+    /// The SCM / systemd unit name of the long-running guest-services daemon
+    /// (Windows service name and Linux unit base name alike). Used by the
+    /// self-updater to stop/start the service around a binary swap.
+    /// </summary>
+    public static readonly string DaemonServiceName = "eryph-guest-services";
+
     public static readonly string OperatingSystemKey = "eryph:guest-services:operating-system";
 
     public static readonly string StatusKey = "eryph:guest-services:status";

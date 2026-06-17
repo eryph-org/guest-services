@@ -1,4 +1,5 @@
 using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.Core;
 using Microsoft.Extensions.Logging;
 
 namespace Eryph.GuestServices.Provisioning.Windows;
@@ -369,6 +370,15 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
     public Task SetTimezoneAsync(string windowsTimezoneId, CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would set timezone to {TimezoneId}", windowsTimezoneId);
+        return Task.CompletedTask;
+    }
+
+    public Task SetServiceControlFlagAsync(
+        ServiceControlFlag flag,
+        bool enabled,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would set service-control flag {Flag}={Enabled}", flag, enabled);
         return Task.CompletedTask;
     }
 

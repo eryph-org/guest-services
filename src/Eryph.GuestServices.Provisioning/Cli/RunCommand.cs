@@ -153,7 +153,8 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
                 return 1;
             }
 
-            return ReportOutcome(outcome, dryRun: settings.DryRun);
+            var launcher = container.GetInstance<Update.IUpdateLauncher>();
+            return ReportOutcome(outcome, dryRun: settings.DryRun, launcher);
         }
         finally
         {
@@ -161,7 +162,7 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
         }
     }
 
-    private static int ReportOutcome(StageRunOutcome outcome, bool dryRun)
+    private static int ReportOutcome(StageRunOutcome outcome, bool dryRun, Update.IUpdateLauncher launcher)
     {
         switch (outcome)
         {
@@ -182,6 +183,21 @@ public sealed class RunCommand : AsyncCommand<RunCommand.Settings>
                     return 0;
                 }
                 TriggerReboot();
+                return 0;
+
+            case StageRunOutcome.UpdateRequested update:
+                AnsiConsole.MarkupLineInterpolated(
+                    $"[yellow]Self-update requested to {update.TargetVersion}: {update.Reason}[/]");
+                if (dryRun)
+                {
+                    AnsiConsole.MarkupLine("[grey]DRY-RUN: updater not launched.[/]");
+                    return 0;
+                }
+                launcher.Launch(new Update.UpdatePlan
+                {
+                    StagingDirectory = update.StagingDirectory,
+                    TargetVersion = update.TargetVersion,
+                });
                 return 0;
 
             case StageRunOutcome.Failed failed:

@@ -368,6 +368,11 @@ public sealed class CloudConfigMergeTests
         Locale = "en-US",
         Keyboard = new KeyboardConfig { Layout = "en-US" },
         License = new LicenseConfig { ProductKey = "k" },
+        Egs = new EgsConfig
+        {
+            Settings = new EgsSettingsConfig { RemoteAccess = false, Provisioning = true, KvpAuth = false },
+            Update = new EgsUpdateConfig { Enabled = true, Version = "0.4.0", Channel = "stable" },
+        },
         Apt = new AptConfig { Proxy = "http://proxy:8080" },
         AptPipelining = "default",
         Packages = "pkgs",

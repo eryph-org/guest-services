@@ -593,5 +593,6 @@ public class ClientKeyProviderTests
         public bool IsProvisioningEnabled() => true;
         public bool IsRemoteAccessEnabled() => true;
         public bool IsKvpAuthEnabled() => kvpAuthEnabled;
+        public bool IsAutoUpdateEnabled() => false;
     }
 }

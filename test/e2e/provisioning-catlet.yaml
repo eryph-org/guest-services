@@ -32,6 +32,15 @@ fodder:
       hostname: egs-prov-e2e
       ssh_authorized_keys:
         - "{{ sshPublicKey }}"
+      # eryph extension: exercise the EgsModule's service-control writes. Both
+      # values are the DEFAULT (true), so this proves the module writes the
+      # registry flags WITHOUT changing behaviour — disabling remote_access here
+      # would cut off the very SSH channel these tests use. The 'network-config'
+      # Context asserts the resulting REG_DWORDs.
+      egs:
+        settings:
+          remote_access: true
+          kvp_auth: true
       # Two users exercise BOTH password-expiry outcomes. Setting a password must
       # NEVER expire the ACCOUNT: an earlier bug wrote the "must change at next
       # logon" flag through info level 1017 — which is actually usri_acct_expires

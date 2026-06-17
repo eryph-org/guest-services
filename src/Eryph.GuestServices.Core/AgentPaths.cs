@@ -32,4 +32,22 @@ public static class AgentPaths
 
     /// <summary>The agent's operational log file (<c>agent.log</c>).</summary>
     public static string LogFile => Path.Combine(LogsDirectory, "agent.log");
+
+    /// <summary>
+    /// Working directory for self-update staging (downloaded + extracted
+    /// payloads, per target version). Sits alongside <see cref="LogsDirectory"/>
+    /// under the service-wide config root.
+    /// <list type="bullet">
+    /// <item>Windows: <c>%ProgramData%\eryph\guest-services\update</c></item>
+    /// <item>Linux: <c>/var/lib/eryph/guest-services/update</c></item>
+    /// </list>
+    /// </summary>
+    public static string UpdateDirectory =>
+        RootOverride is not null
+            ? Path.Combine(RootOverride, "update")
+            : OperatingSystem.IsWindows()
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "eryph", "guest-services", "update")
+                : "/var/lib/eryph/guest-services/update";
 }

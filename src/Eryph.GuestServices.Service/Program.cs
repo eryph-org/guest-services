@@ -22,7 +22,7 @@ internal static class Program
     // the Windows-service host (the SCM invokes the binary with no args).
     private static readonly HashSet<string> KnownSubcommands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "run", "status", "reset", "collect-logs", "validate", "version",
+        "run", "status", "reset", "collect-logs", "validate", "version", "apply-update", "check-update",
         // Spectre's built-in help / version flags also short-circuit before
         // dispatching to a command.
         "--help", "-h", "--version",
@@ -110,7 +110,9 @@ internal static class Program
             builder.Services.AddSingleton<IGuestDataExchange, WindowsGuestDataExchange>();
             builder.Services.AddWindowsService(options =>
             {
-                options.ServiceName = "eryph guest services";
+                // Same name the self-updater stops/starts (Constants.DaemonServiceName)
+                // so the host registration and `apply-update` can't drift.
+                options.ServiceName = Constants.DaemonServiceName;
             });
         }
         else if (OperatingSystem.IsLinux())
@@ -138,6 +140,11 @@ internal static class Program
             builder.Services.AddSimpleInjector(provisioningContainer, options =>
             {
                 options.AddHostedService<ProvisioningHostedService>();
+                // Standalone auto-patch loop (Windows). Resolved from the
+                // provisioning container because it reuses the updater wired
+                // there; it self-gates on AutoUpdateEnabled and runs regardless
+                // of whether provisioning itself is enabled.
+                options.AddHostedService<AutoUpdateService>();
                 options.AddLogging();
             });
         }
@@ -182,5 +189,11 @@ internal static class Program
             .WithDescription("Run the provisioning agent once (synchronous one-shot).");
         config.AddCommand<ValidateCommand>("validate")
             .WithDescription("Validate a cloud-config user-data file without applying it.");
+        config.AddCommand<ApplyUpdateCommand>("apply-update")
+            .WithDescription("Internal: apply a staged self-update (stop service, swap binaries, restart).")
+            .IsHidden();
+        config.AddCommand<CheckUpdateCommand>("check-update")
+            .WithDescription("Diagnostic: resolve + download + verify a self-update without applying it.")
+            .IsHidden();
     }
 }

@@ -10,6 +10,7 @@ using Eryph.GuestServices.Provisioning.Semaphores;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.State;
+using Eryph.GuestServices.Provisioning.Update;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.UserData.Handlers;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -158,6 +159,23 @@ internal static class ProvisioningContainerBuilder
                 container.GetInstance<IBootClock>(),
                 container.GetInstance<ILogger<BootSessionDetector>>()),
             Lifestyle.Singleton);
+
+        // Self-update (egs.update). The version provider + launcher are always
+        // registered; the updater that actually fetches/stages is swapped for a
+        // no-op in dry-run so a what-if run has no network/disk side effects.
+        container.Register<IAgentVersionProvider, AgentVersionProvider>(Lifestyle.Singleton);
+        container.Register<IUpdateLauncher, UpdateLauncher>(Lifestyle.Singleton);
+        if (options.DryRun)
+        {
+            container.Register<IEgsUpdater, NullEgsUpdater>(Lifestyle.Singleton);
+        }
+        else
+        {
+            // A single shared HttpClient for index fetch + package download.
+            container.RegisterInstance(new HttpClient());
+            container.Register<IReleaseSignatureVerifier, ReleaseSignatureVerifier>(Lifestyle.Singleton);
+            container.Register<IEgsUpdater, EgsUpdater>(Lifestyle.Singleton);
+        }
 
         // Stage runner.
         container.Register<IStageRunner, StageRunner>(Lifestyle.Singleton);
