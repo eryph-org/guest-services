@@ -22,14 +22,20 @@ public enum ServiceControlFlag
 
     /// <summary>The standalone background auto-patch loop (<c>AutoUpdateEnabled</c>).</summary>
     AutoUpdate,
+
+    /// <summary>SSH port forwarding / tunneling (<c>PortForwardingEnabled</c>).</summary>
+    PortForwarding,
 }
 
 /// <summary>
 /// Operator on/off switches for the top-level guest-services capabilities.
-/// All flags are <b>opt-out</b>: a capability is ON unless an operator has
-/// explicitly turned it off. This is an injectable seam so the gated services
-/// (provisioning agent, remote-access transport, KVP-auth honoring) can be
-/// unit-tested without touching the real config sources.
+/// Most flags are <b>opt-out</b>: a capability is ON unless an operator has
+/// explicitly turned it off. The exception is <see cref="IsPortForwardingEnabled"/>,
+/// which is <b>opt-in</b> (OFF unless explicitly turned on) because tunneling
+/// widens the guest's exposure and should never be open by default. This is an
+/// injectable seam so the gated services (provisioning agent, remote-access
+/// transport, KVP-auth honoring, port forwarding) can be unit-tested without
+/// touching the real config sources.
 /// </summary>
 public interface IServiceControlFlags
 {
@@ -67,6 +73,17 @@ public interface IServiceControlFlags
     /// updates centrally set it to <c>0</c>.
     /// </summary>
     bool IsAutoUpdateEnabled();
+
+    /// <summary>
+    /// Gates SSH port forwarding / tunneling over the remote-access transport
+    /// (<c>direct-tcpip</c> for <c>ssh -L</c> and <c>tcpip-forward</c> for
+    /// <c>ssh -R</c>). Unlike the other switches this is <b>opt-in</b>:
+    /// <c>false</c> unless an operator turned it on. Tunneling lets a connected
+    /// client reach arbitrary host:port endpoints through the guest, so it stays
+    /// closed by default and is opened deliberately where the guest is meant to
+    /// act as a jump host.
+    /// </summary>
+    bool IsPortForwardingEnabled();
 }
 
 /// <summary>
@@ -81,11 +98,13 @@ public interface IServiceControlFlags
 /// </list>
 /// </summary>
 /// <remarks>
-/// These are <b>fail-open</b> flags: a missing key/value, missing file, or any
-/// I/O / permission error yields <c>true</c>. We never disable a capability
-/// because of a read error — only an explicit <c>0</c> (or <c>false</c> on
-/// Linux) turns a capability off. The value→bool interpretation lives in two
-/// pure helpers — <see cref="InterpretWindowsRegistryValue"/> for the
+/// Each flag fails to its own default: a missing key/value, missing file, or any
+/// I/O / permission error yields the flag's <c>defaultWhenUnset</c>. The opt-out
+/// flags default <c>true</c> (fail-open — we never disable a capability because
+/// of a read error; only an explicit <c>0</c> / <c>false</c> turns them off);
+/// the opt-in port-forwarding flag defaults <c>false</c>, so an unreadable
+/// config never silently opens tunneling. The value→bool interpretation lives in
+/// two pure helpers — <see cref="InterpretWindowsRegistryValue"/> for the
 /// REG_DWORD path and <see cref="InterpretLinuxConfigValue"/> for the
 /// KEY=VALUE path — kept separate so a mistyped REG_SZ on Windows cannot
 /// accidentally exercise the Linux string-parsing rules. Platform-gated reads
@@ -105,6 +124,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     internal const string RemoteAccessEnabledValue = "RemoteAccessEnabled";
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
     internal const string AutoUpdateEnabledValue = "AutoUpdateEnabled";
+    internal const string PortForwardingEnabledValue = "PortForwardingEnabled";
 
     /// <summary>
     /// Persisted value name for a flag — the REG_DWORD value name on Windows
@@ -117,6 +137,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         ServiceControlFlag.RemoteAccess => RemoteAccessEnabledValue,
         ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
         ServiceControlFlag.AutoUpdate => AutoUpdateEnabledValue,
+        ServiceControlFlag.PortForwarding => PortForwardingEnabledValue,
         _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
     };
 
@@ -128,63 +149,72 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
 
     public bool IsAutoUpdateEnabled() => ReadFlag(AutoUpdateEnabledValue);
 
-    /// <summary>
-    /// Pure value→bool interpretation for a Windows REG_DWORD opt-out flag.
-    /// Off iff the registry value is the integer <c>0</c>. Anything else —
-    /// <see langword="null"/>, a REG_SZ string (even <c>"0"</c>), an
-    /// unrecognised kind — yields <c>true</c> (default ON / fail-open).
-    /// The documented Windows control surface is REG_DWORD only; honouring
-    /// strings would silently change long-standing behaviour.
-    /// </summary>
-    internal static bool InterpretWindowsRegistryValue(object? regValue) =>
-        regValue is int i ? i != 0 : true;
+    // Opt-in (default OFF): port forwarding stays closed unless an operator
+    // explicitly turns it on. A missing value / read error therefore yields
+    // false, so an unreadable config can never silently open tunneling.
+    public bool IsPortForwardingEnabled() => ReadFlag(PortForwardingEnabledValue, defaultWhenUnset: false);
 
     /// <summary>
-    /// Pure value→bool interpretation for a Linux config-file opt-out flag.
-    /// Off iff the value is the literal string <c>"0"</c> or <c>"false"</c>
-    /// (case-insensitive, whitespace tolerated). Anything else — including
-    /// <see langword="null"/>, empty, or unparseable strings — yields
-    /// <c>true</c> (default ON / fail-open).
+    /// Pure value→bool interpretation for a Windows REG_DWORD flag.
+    /// On iff the registry value is a non-zero integer, off iff it is the
+    /// integer <c>0</c>. Anything else — <see langword="null"/>, a REG_SZ string
+    /// (even <c>"0"</c>), an unrecognised kind — yields
+    /// <paramref name="defaultWhenUnset"/> (the flag's default: <c>true</c> for
+    /// opt-out flags / fail-open, <c>false</c> for opt-in flags). The documented
+    /// Windows control surface is REG_DWORD only; honouring strings would
+    /// silently change long-standing behaviour.
     /// </summary>
-    internal static bool InterpretLinuxConfigValue(string? rawValue) => rawValue switch
+    internal static bool InterpretWindowsRegistryValue(object? regValue, bool defaultWhenUnset = true) =>
+        regValue is int i ? i != 0 : defaultWhenUnset;
+
+    /// <summary>
+    /// Pure value→bool interpretation for a Linux config-file flag.
+    /// Off iff the value is the literal string <c>"0"</c> or <c>"false"</c>
+    /// (case-insensitive, whitespace tolerated), on for a truthy int/bool.
+    /// Anything else — including <see langword="null"/>, empty, or unparseable
+    /// strings — yields <paramref name="defaultWhenUnset"/> (the flag's default:
+    /// <c>true</c> for opt-out flags, <c>false</c> for opt-in flags).
+    /// </summary>
+    internal static bool InterpretLinuxConfigValue(string? rawValue, bool defaultWhenUnset = true) => rawValue switch
     {
-        null => true,
+        null => defaultWhenUnset,
         var s when int.TryParse(s.Trim(), out var n) => n != 0,
         var s when bool.TryParse(s.Trim(), out var b) => b,
-        _ => true,
+        _ => defaultWhenUnset,
     };
 
-    private static bool ReadFlag(string valueName)
+    private static bool ReadFlag(string valueName, bool defaultWhenUnset = true)
     {
         try
         {
             if (OperatingSystem.IsWindows())
-                return ReadWindowsFlag(valueName);
+                return ReadWindowsFlag(valueName, defaultWhenUnset);
             if (OperatingSystem.IsLinux())
-                return ReadLinuxFlag(valueName);
-            return true;
+                return ReadLinuxFlag(valueName, defaultWhenUnset);
+            return defaultWhenUnset;
         }
         catch
         {
-            // Fail-open: any I/O / permission error must never disable a
-            // capability. These are opt-out flags; only an explicit "0" /
-            // "false" turns them off.
-            return true;
+            // Fail to the flag's default: any I/O / permission error must leave a
+            // capability at its safe default. Opt-out flags default ON (only an
+            // explicit "0" / "false" turns them off); the opt-in port-forwarding
+            // flag defaults OFF, so a read error never silently opens tunneling.
+            return defaultWhenUnset;
         }
     }
 
     [SupportedOSPlatform("windows")]
-    private static bool ReadWindowsFlag(string valueName)
+    private static bool ReadWindowsFlag(string valueName, bool defaultWhenUnset)
     {
         using var key = Registry.LocalMachine.OpenSubKey(WindowsServiceControlKey);
-        return InterpretWindowsRegistryValue(key?.GetValue(valueName));
+        return InterpretWindowsRegistryValue(key?.GetValue(valueName), defaultWhenUnset);
     }
 
     [SupportedOSPlatform("linux")]
-    private static bool ReadLinuxFlag(string valueName)
+    private static bool ReadLinuxFlag(string valueName, bool defaultWhenUnset)
     {
         if (!File.Exists(LinuxServiceControlConfigPath))
-            return true;
+            return defaultWhenUnset;
 
         foreach (var line in File.ReadAllLines(LinuxServiceControlConfigPath))
         {
@@ -193,10 +223,10 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
                 continue;
             if (!string.Equals(entry.Value.key, valueName, StringComparison.OrdinalIgnoreCase))
                 continue;
-            return InterpretLinuxConfigValue(entry.Value.value);
+            return InterpretLinuxConfigValue(entry.Value.value, defaultWhenUnset);
         }
 
-        return true;
+        return defaultWhenUnset;
     }
 
     /// <summary>

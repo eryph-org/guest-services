@@ -370,7 +370,7 @@ public sealed class CloudConfigMergeTests
         License = new LicenseConfig { ProductKey = "k" },
         Egs = new EgsConfig
         {
-            Settings = new EgsSettingsConfig { RemoteAccess = false, Provisioning = true, KvpAuth = false },
+            Settings = new EgsSettingsConfig { RemoteAccess = false, Provisioning = true, KvpAuth = false, PortForwarding = true },
             Update = new EgsUpdateConfig { Enabled = true, Version = "0.4.0", Channel = "stable" },
         },
         Apt = new AptConfig { Proxy = "http://proxy:8080" },

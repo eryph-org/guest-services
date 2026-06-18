@@ -141,4 +141,97 @@ public class ServiceControlFlagsTests
         PlatformServiceControlFlags.GetValueName(ServiceControlFlag.AutoUpdate)
             .Should().Be("AutoUpdateEnabled");
     }
+
+    [Fact]
+    public void PortForwarding_GetValueName_MapsToPortForwardingEnabled()
+    {
+        PlatformServiceControlFlags.GetValueName(ServiceControlFlag.PortForwarding)
+            .Should().Be("PortForwardingEnabled");
+    }
+
+    // ---- Opt-in (default OFF) flag interpretation ----
+    // Port forwarding is the lone opt-in switch: with no value present it must
+    // read OFF, and only an explicit truthy value opens it. The interpreters
+    // take the flag's default; passing false models the opt-in path.
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_OptIn_NullValue_IsOff()
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(null, defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_OptIn_DwordOne_IsOn()
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(1, defaultWhenUnset: false)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_OptIn_DwordZero_IsOff()
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(0, defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("1")]   // REG_SZ is not the documented surface -> falls to default OFF
+    [InlineData("true")]
+    public void InterpretWindowsRegistryValue_OptIn_RegSzTruthy_IsStillOff(string regSzValue)
+    {
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(regSzValue, defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void InterpretLinuxConfigValue_OptIn_NullValue_IsOff()
+    {
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(null, defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("true")]
+    [InlineData(" True ")]
+    public void InterpretLinuxConfigValue_OptIn_TruthyValue_IsOn(string value)
+    {
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(value, defaultWhenUnset: false)
+            .Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("false")]
+    [InlineData("")]          // empty -> default OFF
+    [InlineData("garbage")]   // unparseable -> default OFF
+    [InlineData("yes")]       // operator gotcha: "yes" is NOT truthy here -> stays OFF
+    public void InterpretLinuxConfigValue_OptIn_FalsyOrUnknown_IsOff(string value)
+    {
+        PlatformServiceControlFlags.InterpretLinuxConfigValue(value, defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void InterpretWindowsRegistryValue_OptIn_NonDwordKind_IsOff()
+    {
+        // Only REG_DWORD is honored. A REG_QWORD (long) or any other kind — even
+        // a truthy-looking 1L — falls to the opt-in default OFF, so a mistyped
+        // value can never silently open tunneling.
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(1L, defaultWhenUnset: false)
+            .Should().BeFalse();
+        PlatformServiceControlFlags.InterpretWindowsRegistryValue(new object(), defaultWhenUnset: false)
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void Default_PortForwarding_IsOff()
+    {
+        // The lone opt-in switch: with no value set on the machine it reads OFF
+        // (fail-closed) so an unreadable config can never silently open tunneling.
+        var flags = new PlatformServiceControlFlags();
+
+        flags.IsPortForwardingEnabled().Should().BeFalse();
+    }
 }

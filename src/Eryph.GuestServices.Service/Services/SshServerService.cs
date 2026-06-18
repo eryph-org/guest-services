@@ -10,6 +10,7 @@ using Eryph.GuestServices.Sockets;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Events;
+using Microsoft.DevTunnels.Ssh.Tcp;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -28,6 +29,7 @@ internal sealed class SshServerService(
     private SocketSshServer? _server;
     private Task? _listenTask;
     private bool _started;
+    private bool _portForwardingEnabled;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -41,6 +43,7 @@ internal sealed class SshServerService(
         }
 
         _started = true;
+        _portForwardingEnabled = controlFlags.IsPortForwardingEnabled();
 
         var hostKey = await keyStorage.GetHostKeyAsync();
         if (hostKey is null)
@@ -50,18 +53,10 @@ internal sealed class SshServerService(
             await keyStorage.SetHostKeyAsync(hostKey);
         }
 
-        var config = new SshSessionConfiguration(useSecurity: true);
-
-        config.Services.Add(typeof(SubsystemService), null);
-        // The shell selector is passed as the service activation config object.
-        // DevTunnels.Ssh activates the matching 2-arg ctor. Both the interactive
-        // ShellService and the exec CommandService run the client request through
-        // the selected shell, so they share the selector.
-        config.Services.Add(typeof(CommandService), shellSelector);
-        config.Services.Add(typeof(ShellService), shellSelector);
-        config.Services.Add(typeof(UploadFileService), null);
-        config.Services.Add(typeof(DownloadFileService), null);
-        config.Services.Add(typeof(ListDirectoryService), null);
+        var config = BuildConfiguration(shellSelector, _portForwardingEnabled);
+        if (_portForwardingEnabled)
+            logger.LogInformation(
+                "Port forwarding enabled (PortForwardingEnabled); SSH tunneling (-L/-R) is available.");
 
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
         _server.Credentials = new SshServerCredentials(hostKey);
@@ -153,6 +148,47 @@ internal sealed class SshServerService(
         _socket?.Dispose();
     }
 
+    /// <summary>
+    /// Builds the SSH session configuration: the fixed set of egs services
+    /// (subsystem / shell / exec / file transfer / directory listing) plus,
+    /// only when <paramref name="portForwardingEnabled"/> is set, the
+    /// <see cref="PortForwardingService"/> that handles <c>direct-tcpip</c>
+    /// (<c>ssh -L</c>) and <c>tcpip-forward</c> (<c>ssh -R</c>) requests. Leaving
+    /// the service unregistered means the server rejects every forwarding
+    /// request, so forwarding is off unless an operator opts in.
+    /// </summary>
+    internal static SshSessionConfiguration BuildConfiguration(
+        IShellSelector shellSelector, bool portForwardingEnabled)
+    {
+        var config = new SshSessionConfiguration(useSecurity: true);
+
+        config.Services.Add(typeof(SubsystemService), null);
+        // The shell selector is passed as the service activation config object.
+        // DevTunnels.Ssh activates the matching 2-arg ctor. Both the interactive
+        // ShellService and the exec CommandService run the client request through
+        // the selected shell, so they share the selector.
+        config.Services.Add(typeof(CommandService), shellSelector);
+        config.Services.Add(typeof(ShellService), shellSelector);
+        config.Services.Add(typeof(UploadFileService), null);
+        config.Services.Add(typeof(DownloadFileService), null);
+        config.Services.Add(typeof(ListDirectoryService), null);
+
+        if (portForwardingEnabled)
+            config.Services.Add(typeof(PortForwardingService), null);
+
+        return config;
+    }
+
+    /// <summary>
+    /// The optional features advertised to the host via <see cref="Constants.FeaturesKey"/>.
+    /// Port forwarding is only listed when it is actually enabled, so a client
+    /// can tell whether <c>-L</c>/<c>-R</c> will be honored.
+    /// </summary>
+    internal static string[] GetSupportedFeatures(bool portForwardingEnabled) =>
+        portForwardingEnabled
+            ? [Constants.ShellOverrideFeature, Constants.PortForwardingFeature]
+            : [Constants.ShellOverrideFeature];
+
     private async Task SetStatusAsync(string? status)
     {
         // FeaturesKey is cleared on shutdown so capability discovery stays
@@ -165,13 +201,10 @@ internal sealed class SshServerService(
             [Constants.StatusKey] = status,
             [Constants.VersionKey] = GitVersionInformation.SemVer,
             [Constants.OperatingSystemKey] = RuntimeInformation.OSDescription,
-            [Constants.FeaturesKey] = status is null ? null : string.Join(' ', SupportedFeatures),
+            [Constants.FeaturesKey] = status is null
+                ? null
+                : string.Join(' ', GetSupportedFeatures(_portForwardingEnabled)),
         };
         await guestDataExchange.SetGuestValuesAsync(values);
     }
-
-    private static readonly string[] SupportedFeatures =
-    [
-        Constants.ShellOverrideFeature,
-    ];
 }

@@ -130,5 +130,6 @@ public class ProvisioningHostedServiceGateTests
         public bool IsRemoteAccessEnabled() => true;
         public bool IsKvpAuthEnabled() => true;
         public bool IsAutoUpdateEnabled() => false;
+        public bool IsPortForwardingEnabled() => false;
     }
 }

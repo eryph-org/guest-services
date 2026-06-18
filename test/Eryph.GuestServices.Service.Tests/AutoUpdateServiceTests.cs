@@ -99,6 +99,7 @@ public sealed class AutoUpdateServiceTests
         public bool IsRemoteAccessEnabled() => true;
         public bool IsKvpAuthEnabled() => true;
         public bool IsAutoUpdateEnabled() => autoUpdate;
+        public bool IsPortForwardingEnabled() => false;
     }
 
     private sealed class FakeUpdater(Func<EgsUpdateConfig?, UpdatePlan?> behavior) : IEgsUpdater
