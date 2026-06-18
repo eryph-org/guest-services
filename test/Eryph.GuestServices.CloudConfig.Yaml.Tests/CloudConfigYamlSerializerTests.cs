@@ -54,6 +54,7 @@ public class CloudConfigYamlSerializerTests
                                 remote_access: false
                                 provisioning: true
                                 kvp_auth: false
+                                port_forwarding: true
                               update:
                                 enabled: true
                                 version: "0.4.0"
@@ -67,6 +68,7 @@ public class CloudConfigYamlSerializerTests
         config.Egs.Settings!.RemoteAccess.Should().BeFalse();
         config.Egs.Settings.Provisioning.Should().BeTrue();
         config.Egs.Settings.KvpAuth.Should().BeFalse();
+        config.Egs.Settings.PortForwarding.Should().BeTrue();
         config.Egs.Update.Should().NotBeNull();
         config.Egs.Update!.Enabled.Should().BeTrue();
         config.Egs.Update.Version.Should().Be("0.4.0");
@@ -89,6 +91,7 @@ public class CloudConfigYamlSerializerTests
         config.Egs!.Settings!.RemoteAccess.Should().BeFalse();
         config.Egs.Settings.Provisioning.Should().BeNull();
         config.Egs.Settings.KvpAuth.Should().BeNull();
+        config.Egs.Settings.PortForwarding.Should().BeNull();
     }
 
     [Fact]

@@ -59,6 +59,7 @@ public class SshServerServiceRemoteAccessGateTests
         public bool IsRemoteAccessEnabled() => remoteAccessEnabled;
         public bool IsKvpAuthEnabled() => true;
         public bool IsAutoUpdateEnabled() => false;
+        public bool IsPortForwardingEnabled() => false;
     }
 
     private sealed class ThrowingKeyStorage : IKeyStorage

@@ -43,6 +43,14 @@ public static class Constants
     /// </summary>
     public static readonly string ShellOverrideFeature = "shell-override";
 
+    /// <summary>
+    /// Feature flag advertised by services that have SSH port forwarding /
+    /// tunneling enabled (the opt-in <c>PortForwardingEnabled</c> switch). Absent
+    /// when forwarding is off, so a client can tell whether <c>-L</c>/<c>-R</c>
+    /// will be honored before attempting it.
+    /// </summary>
+    public static readonly string PortForwardingFeature = "port-forwarding";
+
     public static readonly string ClientAuthKey = "eryph:guest-services:client-public-key";
 
     /// <summary>

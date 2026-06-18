@@ -15,7 +15,7 @@ public sealed record EgsConfig
     /// surface the service reads at start (Windows registry
     /// <c>HKLM\SOFTWARE\eryph\guest-services</c>).
     /// </summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services capability switches (remote access / provisioning / kvp auth)")]
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services capability switches (remote access / provisioning / kvp auth / port forwarding)")]
     public EgsSettingsConfig? Settings { get; init; }
 
     /// <summary>
@@ -27,11 +27,11 @@ public sealed record EgsConfig
 }
 
 /// <summary>
-/// The three opt-out capability switches, mirroring
-/// <c>IServiceControlFlags</c>. Each is three-state: <c>null</c> leaves the
-/// flag untouched, <c>true</c>/<c>false</c> writes the switch. The values are
-/// read at the next service start, so a change made during provisioning takes
-/// effect after the agent restarts — not mid-run.
+/// The operator capability switches, mirroring <c>IServiceControlFlags</c>.
+/// Each is three-state: <c>null</c> leaves the flag untouched,
+/// <c>true</c>/<c>false</c> writes the switch. The values are read at the next
+/// service start, so a change made during provisioning takes effect after the
+/// agent restarts — not mid-run.
 /// </summary>
 [CloudInitRecord]
 public sealed record EgsSettingsConfig
@@ -54,4 +54,11 @@ public sealed record EgsSettingsConfig
     /// authority over guest access.
     /// </summary>
     public bool? KvpAuth { get; init; }
+
+    /// <summary>
+    /// Gates SSH port forwarding / tunneling (<c>ssh -L</c> / <c>-R</c>) over the
+    /// remote-access transport. <b>Opt-in</b>: it is off unless set to
+    /// <c>true</c>, so leaving this unset keeps tunneling closed.
+    /// </summary>
+    public bool? PortForwarding { get; init; }
 }

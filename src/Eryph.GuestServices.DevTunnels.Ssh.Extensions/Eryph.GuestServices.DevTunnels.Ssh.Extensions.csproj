@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.29" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Tcp" Version="3.12.29" />
   </ItemGroup>
 
   <ItemGroup>

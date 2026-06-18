@@ -238,4 +238,62 @@ Describe 'Remote-access client auth' {
       $exit | Should -Be 0
     }
   }
+
+  Context 'PortForwardingEnabled gate' {
+
+    # Port forwarding is the lone OPT-IN switch: off unless explicitly turned
+    # on. The guest runs a loopback TCP probe; the host opens `ssh -L` through
+    # the egs proxy to 127.0.0.1:<probe> inside the guest and reads the token.
+    # That exercises the same direct-tcpip path a jump host uses.
+
+    BeforeAll {
+      $script:FwdGuestPort = 28080
+      $script:FwdToken = "egs-portfwd-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+      Start-CatletLoopbackTcpProbe -Catlet $catlet -Port $script:FwdGuestPort `
+        -Token $script:FwdToken -Credential $script:CatletAdminCredential
+    }
+
+    AfterAll {
+      # When keeping the VM for inspection, leave forwarding ON and the probe
+      # running so `ssh -L` can be debugged by hand against the kept catlet.
+      if ($env:EGS_E2E_KEEP_VM) { return }
+      try {
+        Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+          -Value $null -Credential $script:CatletAdminCredential
+      } catch { }
+      try {
+        Stop-CatletLoopbackTcpProbe -Catlet $catlet -Credential $script:CatletAdminCredential
+      } catch { }
+    }
+
+    It 'does not advertise the feature and refuses -L when unset (default OFF)' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value $null -Credential $script:CatletAdminCredential
+
+      $data = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
+      ($data.guest['eryph:guest-services:features'] -split ' ') | Should -Not -Contain 'port-forwarding'
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPort -ExpectedToken $script:FwdToken) | Should -BeFalse
+    }
+
+    It 'advertises the feature and forwards -L when PortForwardingEnabled=1' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value 1 -Credential $script:CatletAdminCredential
+
+      $data = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
+      ($data.guest['eryph:guest-services:features'] -split ' ') | Should -Contain 'port-forwarding'
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPort -ExpectedToken $script:FwdToken) | Should -BeTrue
+    }
+
+    It 'refuses -L again when set back to 0' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value 0 -Credential $script:CatletAdminCredential
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPort -ExpectedToken $script:FwdToken) | Should -BeFalse
+    }
+  }
 }

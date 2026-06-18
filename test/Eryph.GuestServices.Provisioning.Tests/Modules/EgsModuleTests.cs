@@ -97,6 +97,46 @@ public sealed class EgsModuleTests
             ServiceControlFlag.Provisioning, false, Arg.Any<CancellationToken>());
         await os.Received(1).SetServiceControlFlagAsync(
             ServiceControlFlag.KvpAuth, true, Arg.Any<CancellationToken>());
+        // The opt-in PortForwarding switch was not in the block, so it must not
+        // be written (a regression that wrote it would silently open tunneling).
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.PortForwarding, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Writes_port_forwarding_switch_when_set()
+    {
+        // Port forwarding is opt-in; provisioning must still be able to turn it
+        // on (and only when explicitly set, like every other switch).
+        var (os, outcome) = await RunAsync(new EgsConfig
+        {
+            Settings = new EgsSettingsConfig { PortForwarding = true },
+        });
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).SetServiceControlFlagAsync(
+            ServiceControlFlag.PortForwarding, true, Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.RemoteAccess, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.Provisioning, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.KvpAuth, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Writes_port_forwarding_false_when_explicitly_disabled()
+    {
+        // The opt-in switch can also be explicitly turned back off; the
+        // three-state write must carry the false through verbatim.
+        var (os, outcome) = await RunAsync(new EgsConfig
+        {
+            Settings = new EgsSettingsConfig { PortForwarding = false },
+        });
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).SetServiceControlFlagAsync(
+            ServiceControlFlag.PortForwarding, false, Arg.Any<CancellationToken>());
     }
 
     [Fact]

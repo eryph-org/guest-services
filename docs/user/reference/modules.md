@@ -126,6 +126,7 @@ egs:
     remote_access: true     # the SSH transport egs-tool connects to
     provisioning: false     # disable further first-boot provisioning
     kvp_auth: true          # honor client keys pushed via Hyper-V KVP
+    port_forwarding: true   # opt-in; allow SSH tunneling (-L/-R) through the guest
   update:
     enabled: true           # opt-in; no update unless true
     channel: stable         # stable (default) | unstable
@@ -135,9 +136,10 @@ egs:
 ### settings
 
 Each switch maps to a service-control flag (see [settings](settings.md#service-control)).
-All three are three-state: omit a switch to leave it untouched. The flags are
-read at the next service start, so a change made during provisioning takes
-effect after the agent restarts.
+All are three-state: omit a switch to leave it untouched. `port_forwarding` is
+opt-in (off unless set to `true`); the others are opt-out (on unless set to
+`false`). The flags are read at the next service start, so a change made during
+provisioning takes effect after the agent restarts.
 
 ### update
 

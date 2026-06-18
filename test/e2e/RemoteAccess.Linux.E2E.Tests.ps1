@@ -235,4 +235,61 @@ Describe 'Remote-access client auth (Linux)' {
       $exit | Should -Be 0
     }
   }
+
+  Context 'PortForwardingEnabled gate (Linux service-control.conf)' {
+
+    # Opt-in switch (off by default). A loopback python TCP probe answers a
+    # token on 127.0.0.1:<port> inside the guest; the host opens `ssh -L`
+    # through the egs proxy and reads it back — the direct-tcpip jump-host path.
+
+    BeforeAll {
+      $script:FwdGuestPortLinux = 28081
+      $script:FwdTokenLinux = "egs-portfwd-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+      Start-CatletLoopbackTcpProbeLinux -Catlet $catlet -Username $adminUsername `
+        -Port $script:FwdGuestPortLinux -Token $script:FwdTokenLinux
+    }
+
+    AfterAll {
+      try {
+        Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+          -Name 'PortForwardingEnabled' -Value $null
+      } catch { }
+      try {
+        Stop-CatletLoopbackTcpProbeLinux -Catlet $catlet -Username $adminUsername
+      } catch { }
+    }
+
+    It 'does not advertise the feature and refuses -L when unset (default OFF)' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value $null
+
+      $data = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
+      ($data.guest['eryph:guest-services:features'] -split ' ') | Should -Not -Contain 'port-forwarding'
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPortLinux -ExpectedToken $script:FwdTokenLinux `
+        -KeepAliveCommand 'sleep 30') | Should -BeFalse
+    }
+
+    It 'advertises the feature and forwards -L when PortForwardingEnabled=1' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value 1
+
+      $data = egs-tool get-data --json $catlet.VmId | ConvertFrom-Json -AsHashtable
+      ($data.guest['eryph:guest-services:features'] -split ' ') | Should -Contain 'port-forwarding'
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPortLinux -ExpectedToken $script:FwdTokenLinux `
+        -KeepAliveCommand 'sleep 30') | Should -BeTrue
+    }
+
+    It 'refuses -L again when set back to 0' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value 0
+
+      (Test-CatletPortForward -VmId $catlet.VmId -IdentityFile $provisionedKey `
+        -GuestPort $script:FwdGuestPortLinux -ExpectedToken $script:FwdTokenLinux `
+        -KeepAliveCommand 'sleep 30') | Should -BeFalse
+    }
+  }
 }

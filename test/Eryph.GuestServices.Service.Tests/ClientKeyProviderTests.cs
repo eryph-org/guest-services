@@ -594,5 +594,6 @@ public class ClientKeyProviderTests
         public bool IsRemoteAccessEnabled() => true;
         public bool IsKvpAuthEnabled() => kvpAuthEnabled;
         public bool IsAutoUpdateEnabled() => false;
+        public bool IsPortForwardingEnabled() => false;
     }
 }

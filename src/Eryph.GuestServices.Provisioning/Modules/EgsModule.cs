@@ -10,7 +10,8 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// <summary>
 /// eryph extension (not cloud-init): applies the <c>egs:</c> block, which
 /// configures the guest-services agent itself — its operator capability
-/// switches (remote access / provisioning / KVP auth) and, later, self-update.
+/// switches (remote access / provisioning / KVP auth / port forwarding) and,
+/// later, self-update.
 /// </summary>
 /// <remarks>
 /// Runs last in the Network stage (after network-config, NTP, timezone and
@@ -80,6 +81,8 @@ internal sealed class EgsModule(ILogger<EgsModule> logger, IEgsUpdater updater) 
         await WriteFlagIfSetAsync(ServiceControlFlag.Provisioning, settings.Provisioning, context, cancellationToken)
             .ConfigureAwait(false);
         await WriteFlagIfSetAsync(ServiceControlFlag.KvpAuth, settings.KvpAuth, context, cancellationToken)
+            .ConfigureAwait(false);
+        await WriteFlagIfSetAsync(ServiceControlFlag.PortForwarding, settings.PortForwarding, context, cancellationToken)
             .ConfigureAwait(false);
     }
 

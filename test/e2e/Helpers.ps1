@@ -1074,14 +1074,14 @@ function Test-CatletSshWithKey {
   }
 }
 
-function Set-CatletKvpAuthEnabled {
+function Set-CatletServiceControlFlag {
   <#
   .SYNOPSIS
-    Writes (or clears) the HKLM\SOFTWARE\eryph\guest-services\KvpAuthEnabled
-    DWORD inside a running catlet AND restarts eryph-guest-services so the
-    new flag value is in force. The service caches the flag at startup
-    (matches IsRemoteAccessEnabled semantics), so a registry change alone
-    is invisible to the running service until restart.
+    Writes (or clears) a HKLM\SOFTWARE\eryph\guest-services\<Name> REG_DWORD
+    inside a running catlet AND restarts eryph-guest-services so the new flag
+    value is in force. The service caches its control flags at startup
+    (matches IsRemoteAccessEnabled semantics), so a registry change alone is
+    invisible to the running service until restart.
 
     Uses PowerShell Direct (Hyper-V VMBus) for BOTH the registry write and
     the service restart — no networking, no SSH, no firewall. The caller
@@ -1092,6 +1092,7 @@ function Set-CatletKvpAuthEnabled {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter()] [Nullable[int]] $Value,  # null = delete, otherwise REG_DWORD
     [Parameter(Mandatory = $true)] [pscredential] $Credential
   )
@@ -1099,31 +1100,31 @@ function Set-CatletKvpAuthEnabled {
   # All registry I/O + the restart go through PowerShell Direct. Same
   # channel for write, verify, and restart — survives the service stop.
   Invoke-Command -VMId $Catlet.VmId -Credential $Credential -ScriptBlock {
-    param([Nullable[int]] $TargetValue)
+    param([string] $FlagName, [Nullable[int]] $TargetValue)
     $key = 'HKLM:\SOFTWARE\eryph\guest-services'
     if ($null -eq $TargetValue) {
       if (Test-Path -LiteralPath $key) {
-        Remove-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -ErrorAction SilentlyContinue
+        Remove-ItemProperty -LiteralPath $key -Name $FlagName -ErrorAction SilentlyContinue
       }
     } else {
       if (-not (Test-Path -LiteralPath $key)) {
         New-Item -Path $key -Force | Out-Null
       }
-      Set-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -Type DWord -Value $TargetValue
+      Set-ItemProperty -LiteralPath $key -Name $FlagName -Type DWord -Value $TargetValue
     }
     # Read back so the caller can fail fast if the write didn't land
     # where egs-service reads from.
-    $kvp = Get-ItemProperty -LiteralPath $key -Name 'KvpAuthEnabled' -ErrorAction SilentlyContinue
-    if ($null -ne $kvp) { $kvp.KvpAuthEnabled } else { $null }
-  } -ArgumentList $Value -OutVariable readBack | Out-Null
+    $reg = Get-ItemProperty -LiteralPath $key -Name $FlagName -ErrorAction SilentlyContinue
+    if ($null -ne $reg) { $reg.$FlagName } else { $null }
+  } -ArgumentList $Name, $Value -OutVariable readBack | Out-Null
 
   if ($null -eq $Value) {
     if ($null -ne $readBack[0]) {
-      throw "KvpAuthEnabled clear did not take effect on $($Catlet.Name); still reads $($readBack[0])."
+      throw "$Name clear did not take effect on $($Catlet.Name); still reads $($readBack[0])."
     }
   } else {
     if ($readBack[0] -ne $Value) {
-      throw "KvpAuthEnabled=$Value not visible on $($Catlet.Name) (read back $($readBack[0]))."
+      throw "$Name=$Value not visible on $($Catlet.Name) (read back $($readBack[0]))."
     }
   }
 
@@ -1146,6 +1147,22 @@ function Set-CatletKvpAuthEnabled {
   if ($status -ne 'available') {
     throw "egs-service did not return to 'available' within 2 minutes after restart (status=$status)"
   }
+}
+
+function Set-CatletKvpAuthEnabled {
+  <#
+  .SYNOPSIS
+    Convenience wrapper over Set-CatletServiceControlFlag for the
+    KvpAuthEnabled flag (Windows).
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter()] [Nullable[int]] $Value,
+    [Parameter(Mandatory = $true)] [pscredential] $Credential
+  )
+  Set-CatletServiceControlFlag -Catlet $Catlet -Name 'KvpAuthEnabled' `
+    -Value $Value -Credential $Credential
 }
 
 function New-EphemeralSshKey {
@@ -1480,13 +1497,17 @@ function Write-LinuxEgsClientKey {
   }
 }
 
-function Set-CatletKvpAuthEnabledLinux {
+function Set-CatletServiceControlFlagLinux {
   <#
   .SYNOPSIS
-    Writes / clears the KvpAuthEnabled flag in
+    Writes / clears a single control flag in
     /etc/opt/eryph/guest-services/service-control.conf on a running
     Linux catlet, then restarts eryph-guest-services so the new value
     is in force (PlatformServiceControlFlags caches at startup).
+
+    The conf is written with just the one KEY=VALUE line (clearing
+    removes the file entirely → all flags back to default). That single-
+    flag-per-file shape is fine for the isolated e2e contexts here.
 
     Channel: direct sshd as the admin user — independent of
     eryph-guest-services lifecycle.
@@ -1495,17 +1516,18 @@ function Set-CatletKvpAuthEnabledLinux {
   param(
     [Parameter(Mandatory = $true)] $Catlet,
     [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [string] $Name,
     [Parameter()] [Nullable[int]] $Value
   )
 
   $confPath = '/etc/opt/eryph/guest-services/service-control.conf'
 
   if ($null -eq $Value) {
-    # Clear: just remove the file (no flags = all default ON). Tolerate
+    # Clear: just remove the file (no flags = all defaults). Tolerate
     # "file already absent" — rm -f is idempotent.
     $writeCmd = "sudo rm -f $confPath"
   } else {
-    $content = "KvpAuthEnabled=$Value`n"
+    $content = "$Name=$Value`n"
     $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($content))
     $writeCmd = "echo $b64 | base64 -d | sudo tee $confPath > /dev/null"
   }
@@ -1519,17 +1541,17 @@ function Set-CatletKvpAuthEnabledLinux {
       throw "service-control.conf write on $($Catlet.Name) returned $LASTEXITCODE."
     }
 
-    # Read back so a hive/path mismatch surfaces immediately.
+    # Read back so a path mismatch surfaces immediately.
     $verifyCmd = "test -f $confPath && cat $confPath || echo MISSING"
     $readBack = (Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
       -Command $verifyCmd) | Out-String
     if ($null -eq $Value) {
       if ($readBack -notmatch 'MISSING') {
-        throw "KvpAuthEnabled clear did not take effect on $($Catlet.Name); conf still:`n$readBack"
+        throw "$Name clear did not take effect on $($Catlet.Name); conf still:`n$readBack"
       }
     } else {
-      if ($readBack -notmatch "KvpAuthEnabled\s*=\s*$Value") {
-        throw "KvpAuthEnabled=$Value not visible in conf on $($Catlet.Name). Got:`n$readBack"
+      if ($readBack -notmatch "$Name\s*=\s*$Value") {
+        throw "$Name=$Value not visible in conf on $($Catlet.Name). Got:`n$readBack"
       }
     }
 
@@ -1557,5 +1579,282 @@ function Set-CatletKvpAuthEnabledLinux {
   }
   finally {
     $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
+function Set-CatletKvpAuthEnabledLinux {
+  <#
+  .SYNOPSIS
+    Convenience wrapper over Set-CatletServiceControlFlagLinux for the
+    KvpAuthEnabled flag.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter()] [Nullable[int]] $Value
+  )
+  Set-CatletServiceControlFlagLinux -Catlet $Catlet -Username $Username `
+    -Name 'KvpAuthEnabled' -Value $Value
+}
+
+# ---------------------------------------------------------------------------
+# Port-forwarding e2e helpers (shared host side + per-OS guest listeners)
+# ---------------------------------------------------------------------------
+#
+# The port-forwarding gate is proven by a real `ssh -L` tunnel through the egs
+# proxy: a tiny TCP listener inside the guest answers a fixed token on
+# 127.0.0.1:<guestPort>, and the host opens
+#   ssh -L 127.0.0.1:<localPort>:127.0.0.1:<guestPort>
+# then reads the token back through the tunnel. This exercises the same
+# `direct-tcpip` path a jump host uses (the guest dials the target); a loopback
+# target keeps the test self-contained while proving the channel is honored.
+#
+# When PortForwardingEnabled is off the egs SSH server never registers the
+# DevTunnels PortForwardingService, so it refuses the direct-tcpip channel: the
+# client's local listener still accepts the TCP connect, but no data flows and
+# the token read comes back empty.
+
+function Get-FreeLocalTcpPort {
+  <#
+  .SYNOPSIS
+    Returns a currently-free TCP port on the host loopback (bind-to-0 trick).
+    Small TOCTOU window, acceptable for a single test process.
+  #>
+  $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+  $l.Start()
+  try { return [int]($l.LocalEndpoint).Port }
+  finally { $l.Stop() }
+}
+
+function Start-CatletLoopbackTcpProbe {
+  <#
+  .SYNOPSIS
+    Starts a loopback TCP listener inside a WINDOWS catlet (via PowerShell
+    Direct) that writes a fixed token to every client and closes. Runs as a
+    detached SYSTEM scheduled task so it survives the Invoke-Command session
+    and the eryph-guest-services restarts the gate test triggers.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [int] $Port,
+    [Parameter(Mandatory = $true)] [string] $Token,
+    [Parameter(Mandatory = $true)] [pscredential] $Credential,
+    [Parameter()] [string] $TaskName = 'EgsFwdProbe'
+  )
+
+  # Built host-side ("@...@" is expandable: $Port/$Token interpolate here;
+  # backtick-escaped $vars stay literal for the guest-side runtime).
+  $listenerScript = @"
+`$ErrorActionPreference = 'Stop'
+`$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+`$listener.Start()
+while (`$true) {
+  `$client = `$listener.AcceptTcpClient()
+  try {
+    `$stream = `$client.GetStream()
+    `$bytes = [System.Text.Encoding]::ASCII.GetBytes('$Token')
+    `$stream.Write(`$bytes, 0, `$bytes.Length)
+    `$stream.Flush()
+    Start-Sleep -Milliseconds 150
+  } finally { `$client.Close() }
+}
+"@
+
+  Invoke-Command -VMId $Catlet.VmId -Credential $Credential -ScriptBlock {
+    param($scriptText, $tn)
+    $path = 'C:\Windows\Temp\egs-fwdprobe.ps1'
+    Set-Content -LiteralPath $path -Value $scriptText -Encoding utf8
+    schtasks.exe /create /tn $tn `
+      /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $path" `
+      /sc once /st 23:59:59 /ru SYSTEM /rl HIGHEST /f | Out-Null
+    schtasks.exe /run /tn $tn | Out-Null
+  } -ArgumentList $listenerScript, $TaskName | Out-Null
+
+  # Give the task a moment to bind before the first probe.
+  Start-Sleep -Seconds 2
+}
+
+function Stop-CatletLoopbackTcpProbe {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [pscredential] $Credential,
+    [Parameter()] [string] $TaskName = 'EgsFwdProbe'
+  )
+  Invoke-Command -VMId $Catlet.VmId -Credential $Credential -ScriptBlock {
+    param($tn)
+    schtasks.exe /end /tn $tn 2>$null | Out-Null
+    schtasks.exe /delete /tn $tn /f 2>$null | Out-Null
+    Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -like '*egs-fwdprobe.ps1*' } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  } -ArgumentList $TaskName | Out-Null
+}
+
+function Start-CatletLoopbackTcpProbeLinux {
+  <#
+  .SYNOPSIS
+    Starts a loopback TCP listener inside a LINUX catlet (via direct sshd)
+    that writes a fixed token to every client and closes. Detached with
+    setsid+nohup so it survives the admin ssh session and service restarts.
+    Uses python3 (present on the Ubuntu starter).
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [int] $Port,
+    [Parameter(Mandatory = $true)] [string] $Token
+  )
+
+  $py = @"
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', $Port))
+s.listen(5)
+while True:
+    c, _ = s.accept()
+    try:
+        c.sendall(b'$Token')
+    finally:
+        c.close()
+"@
+  $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($py))
+  $cmd = "echo $b64 | base64 -d > /tmp/egs-fwdprobe.py && " +
+         "setsid nohup python3 /tmp/egs-fwdprobe.py >/tmp/egs-fwdprobe.log 2>&1 & echo started"
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username -Command $cmd 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
+function Stop-CatletLoopbackTcpProbeLinux {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username
+  )
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username `
+      -Command 'pkill -f egs-fwdprobe.py; rm -f /tmp/egs-fwdprobe.py' 2>&1 | Out-Null
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+}
+
+function Test-CatletPortForward {
+  <#
+  .SYNOPSIS
+    Opens `ssh -L 127.0.0.1:<local>:127.0.0.1:<GuestPort>` through the egs
+    proxy with the supplied identity, reads from the local end, and returns
+    $true iff the guest-side token came back over the tunnel. $false means
+    the forward was refused (server didn't register PortForwardingService) or
+    no data flowed before timeout.
+
+    The actual data round-trip — not just "did ssh connect" — is the signal:
+    with forwarding off the client's local listener still accepts the connect,
+    so only reading the token distinguishes enabled from disabled.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] [string] $IdentityFile,
+    [Parameter(Mandatory = $true)] [int] $GuestPort,
+    [Parameter(Mandatory = $true)] [string] $ExpectedToken,
+    [Parameter()] [int] $TimeoutSeconds = 12,
+    # Remote command that just holds the session open while we drive the
+    # forward. We deliberately do NOT use `ssh -N`: a channel-less session over
+    # the egs proxy is torn down immediately (the local -L listener never even
+    # comes up), so we keep an exec channel alive — the proven path — and run
+    # the forward alongside it. Default is the Windows guest shell; the Linux
+    # suite passes 'sleep 30'.
+    [Parameter()] [string] $KeepAliveCommand = 'powershell -NoProfile -Command "Start-Sleep -Seconds 30"'
+  )
+
+  $localPort = Get-FreeLocalTcpPort
+  $proxy = "egs-tool.exe proxy $VmId"
+  $knownHosts = "$env:TEMP\egs-portfwd-known_hosts-$([guid]::NewGuid().ToString('N')).tmp"
+
+  $sshArgs = @(
+    '-F', 'NUL',
+    '-i', $IdentityFile,
+    '-o', 'IdentitiesOnly=yes',
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', "UserKnownHostsFile=$knownHosts",
+    '-o', 'BatchMode=yes',
+    '-o', "ConnectTimeout=$TimeoutSeconds",
+    '-o', "ProxyCommand=$proxy",
+    '-L', "127.0.0.1:${localPort}:127.0.0.1:${GuestPort}",
+    "egs@$($VmId).hyper-v.alt",
+    $KeepAliveCommand
+  )
+
+  # Launch ssh in a background JOB, not Start-Process: a Start-Process child has
+  # no console, and the egs-tool ProxyCommand it spawns then dies immediately
+  # ("Connection closed by UNKNOWN port 65535"), so the -L listener never comes
+  # up. A job runs in a child pwsh with proper stdio, exactly like the working
+  # interactive `& ssh` path.
+  $job = Start-Job -ScriptBlock {
+    param($sshExe, $sshArgs)
+    & $sshExe @sshArgs 2>&1
+  } -ArgumentList $script:WinSshExe, $sshArgs
+
+  try {
+    # Wait for ssh's local listener to come up (it accepts regardless of the
+    # server's forwarding policy — this is just readiness, not the verdict).
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $ready = $false
+    while ((Get-Date) -lt $deadline) {
+      if ($job.State -ne 'Running') { break }
+      try {
+        $t = [System.Net.Sockets.TcpClient]::new()
+        $t.Connect('127.0.0.1', $localPort)
+        $t.Close()
+        $ready = $true
+        break
+      } catch { Start-Sleep -Milliseconds 300 }
+    }
+    if (-not $ready) {
+      Write-Host "port-forward probe: local listener never came up (job state=$($job.State)). ssh output:"
+      Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 5 | ForEach-Object { Write-Host "  ssh: $_" }
+      return $false
+    }
+
+    # The real test: read the token through the tunnel. With forwarding off the
+    # local listener still accepts, so only the data round-trip is the verdict.
+    $received = ''
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+      $iar = $client.BeginConnect('127.0.0.1', $localPort, $null, $null)
+      if ($iar.AsyncWaitHandle.WaitOne([TimeSpan]::FromSeconds($TimeoutSeconds))) {
+        $client.EndConnect($iar)
+        $client.ReceiveTimeout = $TimeoutSeconds * 1000
+        $stream = $client.GetStream()
+        $buf = [byte[]]::new(256)
+        try {
+          $n = $stream.Read($buf, 0, $buf.Length)
+          if ($n -gt 0) { $received = [System.Text.Encoding]::ASCII.GetString($buf, 0, $n) }
+        } catch { }
+      }
+    } catch { }
+    finally { $client.Close() }
+
+    return ($received.Trim() -eq $ExpectedToken)
+  }
+  finally {
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
   }
 }
