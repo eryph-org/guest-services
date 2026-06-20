@@ -3,8 +3,10 @@ using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.CloudConfig.Yaml;
 using Eryph.GuestServices.Provisioning.DataSources;
 using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.Tests.Reporting;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
@@ -771,5 +773,128 @@ public sealed class ApplyNetworkConfigModuleTests
         result.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received(1).EnableDhcpAsync(12, Arg.Any<CancellationToken>());
         await os.DidNotReceive().EnableDhcpAsync(23, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Unapplied_device_types_are_warned_not_silently_dropped()
+    {
+        // bonds / bridges / VLANs are parsed but never applied on Windows. The
+        // operator must get a warning per group rather than a silent no-op.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Bonds = new Dictionary<string, NetworkBondConfig>
+            {
+                ["bond0"] = new() { Interfaces = ["eth1", "eth2"] },
+            },
+            Bridges = new Dictionary<string, NetworkBridgeConfig>
+            {
+                ["br0"] = new() { Interfaces = ["eth3"] },
+            },
+            Vlans = new Dictionary<string, NetworkVlanConfig>
+            {
+                ["vlan100"] = new() { Id = 100, Link = "eth0" },
+            },
+            // deliberately no ethernets
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        var logger = new CapturingLogger<ApplyNetworkConfigModule>();
+        var module = new ApplyNetworkConfigModule(logger);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("bond"));
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("bridge"));
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("VLAN"));
+        // Nothing applicable: we never even enumerate adapters.
+        await os.DidNotReceiveWithAnyArgs().GetNetworkAdaptersAsync(default);
+    }
+
+    [Fact]
+    public async Task Unsupported_ethernet_options_are_warned_but_ip_is_still_applied()
+    {
+        // An ethernet carrying options we don't honour (dhcp4-overrides,
+        // routing-policy) must still get its DHCP/IP config applied, AND a
+        // warning that lists the ignored options.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Dhcp4 = true,
+                    UnsupportedOptions = ["dhcp4-overrides", "routing-policy"],
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 6, "00:11:22:33:44:55")],
+            }[0]);
+
+        var logger = new CapturingLogger<ApplyNetworkConfigModule>();
+        var module = new ApplyNetworkConfigModule(logger);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).EnableDhcpAsync(6, Arg.Any<CancellationToken>());
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Warning
+            && e.Message.Contains("dhcp4-overrides")
+            && e.Message.Contains("routing-policy"));
+    }
+
+    [Fact]
+    public async Task Setting_a_new_adapter_mac_is_warned()
+    {
+        // A top-level macaddress that differs from the match selector is a
+        // request to SET the MAC, which Windows side does not do. Warn.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    Match = new NetworkMatch { MacAddress = "00:11:22:33:44:55" },
+                    MacAddress = "aa:bb:cc:dd:ee:ff",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 6, "00:11:22:33:44:55")],
+            }[0]);
+
+        var logger = new CapturingLogger<ApplyNetworkConfigModule>();
+        var module = new ApplyNetworkConfigModule(logger);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).EnableDhcpAsync(6, Arg.Any<CancellationToken>());
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("MAC"));
     }
 }

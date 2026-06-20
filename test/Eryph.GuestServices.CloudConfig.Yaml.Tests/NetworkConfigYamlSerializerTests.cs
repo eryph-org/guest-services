@@ -250,13 +250,17 @@ public class NetworkConfigYamlSerializerTests
         eth0.Gateway4.Should().BeNull();
         eth0.Addresses.Should().BeNull();
         eth0.Routes.Should().BeNull();
+        // ...but their presence is surfaced so the applier can warn.
+        eth0.UnsupportedOptions.Should().BeEquivalentTo(["dhcp4-overrides", "dhcp6-overrides"]);
     }
 
     [Fact]
     public void Deserialize_v2_unmodelled_scalar_keys_are_tolerated()
     {
         // set-name / wakeonlan / optional / accept-ra are valid netplan keys
-        // the Windows applier does not act on. They must not break parsing.
+        // the Windows applier does not act on. They must not break parsing, and
+        // the noteworthy ones are surfaced via UnsupportedOptions so the applier
+        // can warn (optional is benign and intentionally not surfaced).
         const string yaml = """
                             version: 2
                             ethernets:
@@ -275,6 +279,7 @@ public class NetworkConfigYamlSerializerTests
         var eth0 = result.Ethernets!["eth0"];
         eth0.Match!.MacAddress.Should().Be("00:11:22:33:44:55");
         eth0.Dhcp4.Should().BeTrue();
+        eth0.UnsupportedOptions.Should().BeEquivalentTo(["set-name", "wakeonlan", "accept-ra"]);
     }
 
     [Fact]
@@ -515,8 +520,10 @@ public class NetworkConfigYamlSerializerTests
 
         var eth0 = result.Ethernets!["eth0"];
         eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
-        // routing-policy is dropped, not misread into modelled routes.
+        // routing-policy is dropped, not misread into modelled routes...
         eth0.Routes.Should().BeNull();
+        // ...and surfaced so the applier can warn.
+        eth0.UnsupportedOptions.Should().BeEquivalentTo(["routing-policy"]);
     }
 
     [Fact]
