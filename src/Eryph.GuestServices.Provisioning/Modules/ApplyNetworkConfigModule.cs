@@ -29,7 +29,18 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         // CloudConfig. ResolvedUserData carries the latter; the former is
         // surfaced via IModuleContext.DataSource.StructuredNetworkConfig.
         var network = context.DataSource.StructuredNetworkConfig;
-        if (network is null || network.Ethernets is null || network.Ethernets.Count == 0)
+        if (network is null)
+        {
+            logger.LogDebug("No network-config present; nothing to do.");
+            return ModuleOutcome.Ok();
+        }
+
+        // Surface constructs we parse but never apply on Windows so an operator
+        // isn't left guessing why their bond/VLAN/etc. did nothing — better a
+        // visible warning than a silent drop (the issue #59 lesson).
+        WarnUnappliedDeviceTypes(network);
+
+        if (network.Ethernets is null || network.Ethernets.Count == 0)
         {
             logger.LogDebug("No network-config ethernets to apply; nothing to do.");
             return ModuleOutcome.Ok();
@@ -78,10 +89,61 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
                 continue;
             }
 
+            WarnUnappliedEthernetOptions(key, mac, ethernet);
+
             await ApplyToAdapter(context, adapter, ethernet, cancellationToken).ConfigureAwait(false);
         }
 
         return ModuleOutcome.Ok();
+    }
+
+    // Bonds, bridges and VLANs are modelled by the parser (so they don't break
+    // the document) but the Windows applier only configures ethernets. Warn for
+    // each group that is present rather than dropping it silently.
+    private void WarnUnappliedDeviceTypes(NetworkConfig network)
+    {
+        WarnDeviceGroup("bond", network.Bonds?.Keys);
+        WarnDeviceGroup("bridge", network.Bridges?.Keys);
+        WarnDeviceGroup("VLAN", network.Vlans?.Keys);
+    }
+
+    private void WarnDeviceGroup(string kind, IEnumerable<string>? names)
+    {
+        if (names is null)
+            return;
+        var list = names.ToList();
+        if (list.Count == 0)
+            return;
+        logger.LogWarning(
+            "Network-config defines {Count} {Kind}(s) ({Names}) which are not applied on Windows; ignoring.",
+            list.Count, kind, string.Join(", ", list));
+    }
+
+    // Per-interface v2 keys we parse but don't honour on Windows. They are
+    // surfaced (not applied) so an operator sees why e.g. a routing-policy or
+    // dhcp4-overrides had no effect.
+    private void WarnUnappliedEthernetOptions(string key, string mac, NetworkEthernetConfig ethernet)
+    {
+        if (ethernet.UnsupportedOptions is { Count: > 0 } options)
+        {
+            logger.LogWarning(
+                "Network-config entry '{Name}' ({Mac}): option(s) {Options} are not applied on Windows; ignoring.",
+                key, mac, string.Join(", ", options));
+        }
+
+        // A top-level `macaddress` that differs from the match selector is a
+        // request to SET/spoof the adapter MAC — we never change the MAC.
+        if (!string.IsNullOrEmpty(ethernet.Match?.MacAddress)
+            && !string.IsNullOrEmpty(ethernet.MacAddress)
+            && !string.Equals(
+                NormaliseMac(ethernet.MacAddress),
+                NormaliseMac(ethernet.Match!.MacAddress),
+                StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Network-config entry '{Name}': setting a new adapter MAC ({Mac}) is not supported on Windows; the adapter MAC is left unchanged.",
+                key, ethernet.MacAddress);
+        }
     }
 
     private async Task ApplyToAdapter(

@@ -44,6 +44,12 @@ public sealed record NetworkEthernetConfig
     public string? MacAddress { get; init; }
 
     public IReadOnlyList<NetworkRoute>? Routes { get; init; }
+
+    // v2 keys that are present in the document but NOT applied on Windows
+    // (e.g. dhcp4-overrides, routing-policy, set-name). Captured at parse time
+    // purely so the applier can warn instead of silently dropping them — the
+    // names are the cloud-init/netplan spellings, for the log message.
+    public IReadOnlyList<string>? UnsupportedOptions { get; init; }
 }
 
 public sealed record NetworkBondConfig

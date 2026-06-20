@@ -222,7 +222,23 @@ public static class NetworkConfigYamlSerializer
             Mtu = raw.Mtu,
             MacAddress = raw.MacAddress,
             Routes = raw.Routes?.Select(ConvertRoute).ToList(),
+            UnsupportedOptions = CollectUnsupportedOptions(raw),
         };
+    }
+
+    // Surface v2 keys that are present but not honoured on Windows so the
+    // applier can warn. Order matches the document's logical grouping; only
+    // non-null (present) keys are listed.
+    private static IReadOnlyList<string>? CollectUnsupportedOptions(RawEthernetConfig raw)
+    {
+        var options = new List<string>();
+        if (raw.Dhcp4Overrides is not null) options.Add("dhcp4-overrides");
+        if (raw.Dhcp6Overrides is not null) options.Add("dhcp6-overrides");
+        if (raw.RoutingPolicy is not null) options.Add("routing-policy");
+        if (raw.SetName is not null) options.Add("set-name");
+        if (raw.WakeOnLan is not null) options.Add("wakeonlan");
+        if (raw.AcceptRa is not null) options.Add("accept-ra");
+        return options.Count == 0 ? null : options;
     }
 
     private static NetworkBondConfig ConvertBond(RawBondConfig? raw)
@@ -377,6 +393,23 @@ public static class NetworkConfigYamlSerializer
         [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
         public string? MacAddress { get; set; }
         public List<RawRoute>? Routes { get; set; }
+
+        // v2 keys we parse only to detect their PRESENCE so the applier can
+        // warn that they are not applied on Windows (rather than dropping them
+        // silently via IgnoreUnmatchedProperties). Typed loosely (object) so an
+        // arbitrary sub-shape can never throw. See CollectUnsupportedOptions.
+        [YamlMember(Alias = "dhcp4-overrides", ApplyNamingConventions = false)]
+        public object? Dhcp4Overrides { get; set; }
+        [YamlMember(Alias = "dhcp6-overrides", ApplyNamingConventions = false)]
+        public object? Dhcp6Overrides { get; set; }
+        [YamlMember(Alias = "routing-policy", ApplyNamingConventions = false)]
+        public object? RoutingPolicy { get; set; }
+        [YamlMember(Alias = "set-name", ApplyNamingConventions = false)]
+        public string? SetName { get; set; }
+        [YamlMember(Alias = "wakeonlan", ApplyNamingConventions = false)]
+        public bool? WakeOnLan { get; set; }
+        [YamlMember(Alias = "accept-ra", ApplyNamingConventions = false)]
+        public bool? AcceptRa { get; set; }
     }
 
     // cloud-init v2 'match' sub-map. Modelled as an object (not a string) so a

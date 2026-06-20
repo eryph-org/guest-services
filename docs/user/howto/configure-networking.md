@@ -71,7 +71,11 @@ An entry with no MAC address is skipped with a warning — Windows needs a MAC t
 bind to an adapter — as is an entry whose MAC matches no adapter.
 
 Bonds, bridges, VLANs, and wifi aren't applied, even though the schemas allow
-them.
+them — when present they're logged with a warning rather than dropped silently.
+The same goes for per-interface options the agent doesn't honour on Windows
+(`dhcp4-overrides`/`dhcp6-overrides`, `routing-policy`, `set-name`, `wakeonlan`,
+`accept-ra`) and for a top-level `macaddress` that asks to change an adapter's
+MAC: the rest of the entry is still applied, and the ignored parts are warned.
 
 `ApplyNetworkConfig` runs after `SetHostname`, so a hostname change isn't
 disrupted by an address change in the same run. It's per-instance; to re-apply on
