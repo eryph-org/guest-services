@@ -4,7 +4,7 @@
 
 Eryph Guest Services (EGS) is a small service that runs **inside** a Windows or Linux VM. One binary, two capabilities:
 
-1. **A cloud-init-compatible provisioning agent** — reads `#cloud-config` user-data (NoCloud / ConfigDrive / Azure / Hyper-V KVP) on first boot and applies it (hostname, users, SSH keys, files, scripts, network).
+1. **A cloud-init-compatible provisioning agent** — reads `#cloud-config` user-data (NoCloud / ConfigDrive / Azure) on first boot and applies it (hostname, users, SSH keys, files, scripts, network).
 2. **Userless SSH to the guest** — a dedicated SSH server you reach either over the **Hyper-V socket** (from the host, no IP/firewall/password) or, with eryph, over an **authorized channel through the eryph API** (from any machine, no host access).
 
 EGS is the runtime baked into every [eryph](https://www.eryph.io) catlet, where both run together; either capability also works on its own.
@@ -34,10 +34,10 @@ eryph bakes EGS into every catlet, so there is nothing to install. Provisioning 
 
 ### Provisioning
 
-eryph injects a ConfigDrive ISO into every catlet at create time; the EGS agent applies that cloud-config fodder on first boot and reports `eryph.provisioning.state = completed` via Hyper-V KVP. The fodder normally comes from your **catlet spec, packs, or genes** — so for the eryph path provisioning "just happens", no EGS configuration involved.
+eryph injects a ConfigDrive ISO into every catlet at create time; the EGS agent applies that cloud-config fodder on first boot and reports `eryph.provisioning.state = completed` via Hyper-V KVP. The fodder normally comes from your **catlet spec or genes** — so for the eryph path provisioning "just happens", no EGS configuration involved.
 
 
-The default is to compose catlets from specs/packs/genes. When you are authoring or testing directly, you can also create one from an inline spec (its fodder included):
+The default is to compose catlets from specs/genes. When you are authoring or testing directly, you can also create one from an inline spec (its fodder included):
 
 ```yaml
 name: my-vm
