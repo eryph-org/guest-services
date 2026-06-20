@@ -21,6 +21,12 @@ public static class NetworkConfigYamlSerializer
             .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
+            // The v2 `addresses:` list accepts both plain scalars and the
+            // advanced single-key map form; this converter keeps the address
+            // and never throws on the map shape (issue #59 failure class).
+            .WithAttributeOverride<RawEthernetConfig>(
+                e => e.Addresses!,
+                new YamlConverterAttribute(typeof(NetworkAddressListYamlConverter)))
             // PyYAML SafeLoader-equivalent YAML 1.1 scalar resolution. The
             // network-config schema has int? fields (mtu, vlan id, route
             // metric) where leading-zero octal / underscore forms must parse
@@ -28,6 +34,9 @@ public static class NetworkConfigYamlSerializer
             .WithNodeDeserializer(
                 new Yaml11ScalarResolver(),
                 s => s.Before<ScalarNodeDeserializer>())
+            // Registered so YamlDotNet can resolve the converter attached via
+            // WithAttributeOverride above (it reports Accepts(_) => false).
+            .WithTypeConverter(new NetworkAddressListYamlConverter())
             .Build());
 
     public static NetworkConfig Deserialize(string yaml)
@@ -39,7 +48,15 @@ public static class NetworkConfigYamlSerializer
         // expanded — netplan/network-config uses anchors to share common
         // interface settings, matching PyYAML SafeLoader.
         var parser = new MergingParser(new Parser(new StringReader(yaml)));
-        var raw = Deserializer.Value.Deserialize<RawNetworkConfig?>(parser) ?? new RawNetworkConfig();
+        var root = Deserializer.Value.Deserialize<RawNetworkRoot?>(parser) ?? new RawNetworkRoot();
+
+        // netplan and many cloud-init samples wrap the whole document under a
+        // top-level `network:` key (the form every /etc/netplan file uses);
+        // the bare form (version/ethernets at the root) is equally valid. When
+        // the wrapper is present it carries the real config — unwrap it so both
+        // forms parse identically instead of the wrapped one yielding an empty
+        // result (the issue #59 silent-failure class).
+        var raw = root.Network ?? root;
 
         // v1 carries a 'config' list rather than top-level ethernets/bonds/.. —
         // project the physical entries to the v2-shape Ethernets dictionary so
@@ -278,9 +295,19 @@ public static class NetworkConfigYamlSerializer
         _ => NetworkDhcpRenderer.Other,
     };
 
+    // Root shape that also accepts the `network:`-wrapped form. When the wrapper
+    // is present, YamlDotNet populates Network and leaves the inherited
+    // top-level fields at their defaults; the bare form populates the inherited
+    // fields and leaves Network null. Deserialize() picks whichever carries the
+    // config.
+    private sealed class RawNetworkRoot : RawNetworkConfig
+    {
+        public RawNetworkConfig? Network { get; set; }
+    }
+
     // Mutable raw shape so YamlDotNet can populate it; converted into the
     // immutable model above.
-    private sealed class RawNetworkConfig
+    private class RawNetworkConfig
     {
         public int Version { get; set; }
         public string? Renderer { get; set; }
