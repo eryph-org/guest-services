@@ -104,6 +104,7 @@ public sealed class FileDataSourceCacheTests : IDisposable
         eth0.Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
         eth0.Addresses.Should().BeEquivalentTo(["192.168.8.210/24"]);
         eth0.Gateway4.Should().Be("192.168.8.1");
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["192.168.8.1"]);
     }
 
     [Fact]

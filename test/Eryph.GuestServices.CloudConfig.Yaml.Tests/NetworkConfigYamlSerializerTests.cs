@@ -245,6 +245,11 @@ public class NetworkConfigYamlSerializerTests
         var eth0 = result.Ethernets!["eth0"];
         eth0.Dhcp4.Should().BeTrue();
         eth0.MacAddress.Should().Be("00:11:22:33:44:55");
+        // The drained override blocks must not leak into sibling fields.
+        eth0.Dhcp6.Should().BeNull();
+        eth0.Gateway4.Should().BeNull();
+        eth0.Addresses.Should().BeNull();
+        eth0.Routes.Should().BeNull();
     }
 
     [Fact]
@@ -508,7 +513,10 @@ public class NetworkConfigYamlSerializerTests
 
         var result = NetworkConfigYamlSerializer.Deserialize(yaml);
 
-        result.Ethernets!["eth0"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        // routing-policy is dropped, not misread into modelled routes.
+        eth0.Routes.Should().BeNull();
     }
 
     [Fact]
@@ -674,6 +682,326 @@ public class NetworkConfigYamlSerializerTests
         result.Bonds.Should().ContainKey("bond0");
         result.Bridges.Should().ContainKey("br0");
         result.Vlans.Should().ContainKey("vlan100");
+    }
+
+    // ----- YAML syntax robustness (cross-model review gaps) -----
+
+    [Fact]
+    public void Deserialize_v2_anchors_and_merge_keys_are_expanded()
+    {
+        // netplan factors shared interface settings out with a YAML anchor and
+        // pulls them in via a `<<:` merge key. The serializer wraps input in a
+        // MergingParser specifically for this; prove it for network-config.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              _base: &base
+                                dhcp4: true
+                                mtu: 1500
+                                nameservers:
+                                  addresses: [1.1.1.1]
+                              eth0:
+                                <<: *base
+                                match:
+                                  macaddress: "00:11:22:33:44:55"
+                                addresses: [10.0.0.5/24]
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Dhcp4.Should().BeTrue();                 // merged from anchor
+        eth0.Mtu.Should().Be(1500);                   // merged from anchor
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["1.1.1.1"]); // merged
+        eth0.Match!.MacAddress.Should().Be("00:11:22:33:44:55");          // local
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);          // local
+    }
+
+    [Fact]
+    public void Deserialize_v2_unquoted_mac_in_match_and_top_level()
+    {
+        // Hand-written netplan and several generators emit MACs WITHOUT quotes.
+        // A MAC is a plain scalar (no colon-space), and MAC/macaddress are
+        // string targets so the YAML 1.1 resolver never coerces them.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                match:
+                                  macaddress: 02:00:00:ad:e2:71
+                                dhcp4: true
+                              eth1:
+                                macaddress: 00:00:00:00:00:12
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
+        // An all-decimal-looking MAC must not be mangled into a number.
+        result.Ethernets!["eth1"].MacAddress.Should().Be("00:00:00:00:00:12");
+    }
+
+    [Fact]
+    public void Deserialize_v2_unquoted_ipv6_addresses_and_gateway()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - fd00::5/64
+                                gateway6: fd00::1
+                                nameservers:
+                                  addresses:
+                                    - 2606:4700:4700::1111
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Addresses.Should().BeEquivalentTo(["fd00::5/64"]);
+        eth0.Gateway6.Should().Be("fd00::1");
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["2606:4700:4700::1111"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_quoted_bool_tokens_still_parse_as_bool()
+    {
+        // dhcp4/dhcp6 are bool? targets; the YAML 1.1 resolver accepts the bool
+        // token whether plain or quoted (cloud-init parity), so "no"/"yes" parse.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                dhcp4: "no"
+                                dhcp6: "yes"
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Dhcp4.Should().BeFalse();
+        result.Ethernets!["eth0"].Dhcp6.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Deserialize_v2_addresses_empty_list_yields_empty()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses: []
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().NotBeNull().And.BeEmpty();
+    }
+
+    [Fact]
+    public void Deserialize_v2_addresses_explicit_null_yields_empty()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses: ~
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().NotBeNull().And.BeEmpty();
+    }
+
+    [Fact]
+    public void Deserialize_v2_addresses_lone_scalar_is_promoted_to_list()
+    {
+        // Some old generators emit a single address as a scalar, not a list.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses: 10.0.0.5/24
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_addresses_null_entry_in_list_is_dropped()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - 10.0.0.5/24
+                                  - ~
+                                  - fd00::1/64
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses
+            .Should().BeEquivalentTo(["10.0.0.5/24", "fd00::1/64"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_advanced_address_map_empty_and_null_values()
+    {
+        // The advanced map form with an empty `{}` or a null value still yields
+        // just the address (the map key); it must not throw.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - "10.0.0.5/24": {}
+                                  - "10.0.0.6/24":
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses
+            .Should().BeEquivalentTo(["10.0.0.5/24", "10.0.0.6/24"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_advanced_address_flow_map_item()
+    {
+        // Flow-form of the advanced map item, as MAAS/cloud-init tooling emits.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - 10.0.0.5/24
+                                  - {"fd00::5/64": {lifetime: 0}}
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses
+            .Should().BeEquivalentTo(["10.0.0.5/24", "fd00::5/64"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_advanced_address_multi_key_map_keeps_first_strict()
+    {
+        // A multi-key map item does not occur in netplan; we deliberately keep
+        // only the first key (strict). This pins that behavior so it can't
+        // change silently.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - "10.0.0.5/24": {label: a}
+                                    "10.0.0.6/24": {label: b}
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_with_comments_and_crlf_line_endings()
+    {
+        // Windows-authored configs use CRLF and operators add comments.
+        var yaml =
+            "version: 2\r\n" +
+            "ethernets:\r\n" +
+            "  eth0:  # primary nic\r\n" +
+            "    macaddress: \"00:11:22:33:44:55\"\r\n" +
+            "    # static address follows\r\n" +
+            "    addresses: [10.0.0.5/24]\r\n";
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.MacAddress.Should().Be("00:11:22:33:44:55");
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_leading_utf8_bom_is_stripped()
+    {
+        // A UTF-8 BOM from a Windows editor must not break the parse.
+        var yaml =
+            "\uFEFF" +
+            "version: 2\n" +
+            "ethernets:\n" +
+            "  eth0:\n" +
+            "    macaddress: \"00:11:22:33:44:55\"\n" +
+            "    dhcp4: true\n";
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Version.Should().Be(2);
+        result.Ethernets!["eth0"].Dhcp4.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Deserialize_v2_mac_address_underscore_form_does_not_bind_strict()
+    {
+        // v2 spells the selector `macaddress` (no underscore); `mac_address`
+        // is the v1 spelling. In a v2 ethernet it is not bound — strict, matching
+        // netplan. Pinned so the alias behavior can't regress silently.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                mac_address: "00:11:22:33:44:55"
+                                dhcp4: true
+                              eth1:
+                                match:
+                                  mac_address: "00:11:22:33:44:66"
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].MacAddress.Should().BeNull();
+        result.Ethernets!["eth1"].Match.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_v2_wrapper_takes_precedence_over_root_keys_strict()
+    {
+        // A malformed doc carrying BOTH a top-level ethernet and a `network:`
+        // wrapper: the wrapper wins and the root-level entry is dropped. Pin
+        // this precedence (strict) so it's intentional, not accidental.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              rootonly:
+                                macaddress: "00:11:22:33:44:01"
+                                dhcp4: true
+                            network:
+                              version: 2
+                              ethernets:
+                                wrapped:
+                                  macaddress: "00:11:22:33:44:02"
+                                  dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets.Should().ContainKey("wrapped");
+        result.Ethernets.Should().NotContainKey("rootonly");
     }
 
     [Fact]
