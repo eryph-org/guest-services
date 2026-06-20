@@ -52,12 +52,18 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var mac = NormaliseMac(ethernet.MacAddress);
+            // cloud-init/netplan binds an entry to a NIC via `match.macaddress`
+            // (the selector); the top-level `macaddress` instead SETS/spoofs the
+            // adapter MAC. Prefer the selector, then fall back to the top-level
+            // value so configs that (ab)use it as a key — like our synthetic
+            // fixtures — keep resolving. See issue #59.
+            var mac = NormaliseMac(ethernet.Match?.MacAddress ?? ethernet.MacAddress);
             if (string.IsNullOrEmpty(mac))
             {
-                // v1 sometimes omits mac_address; we have no way to bind that
-                // entry to a specific Windows adapter, so log and continue
-                // (matching cloud-init's "skip unmatched" semantics).
+                // No MAC selector at all (v1 may omit mac_address; a v2 match
+                // may carry only name/driver). We have no way to bind that entry
+                // to a specific Windows adapter, so log and continue (matching
+                // cloud-init's "skip unmatched" semantics).
                 logger.LogWarning(
                     "Network-config entry '{Name}' has no MAC address; skipping (Windows requires MAC matching).",
                     key);

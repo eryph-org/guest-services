@@ -188,7 +188,7 @@ public static class NetworkConfigYamlSerializer
 
         return new NetworkEthernetConfig
         {
-            Match = raw.Match,
+            Match = ConvertMatch(raw.Match),
             Dhcp4 = raw.Dhcp4,
             Dhcp6 = raw.Dhcp6,
             Addresses = raw.Addresses,
@@ -233,6 +233,21 @@ public static class NetworkConfigYamlSerializer
         {
             Link = raw.Link,
             Id = raw.Id,
+        };
+    }
+
+    private static NetworkMatch? ConvertMatch(RawMatch? raw)
+    {
+        // Drop an empty/all-null match block so downstream "has a selector?"
+        // checks stay a simple null test.
+        if (raw is null || (raw.Name is null && raw.MacAddress is null && raw.Driver is null))
+            return null;
+
+        return new NetworkMatch
+        {
+            Name = raw.Name,
+            MacAddress = raw.MacAddress,
+            Driver = raw.Driver,
         };
     }
 
@@ -313,7 +328,7 @@ public static class NetworkConfigYamlSerializer
 
     private sealed class RawEthernetConfig
     {
-        public string? Match { get; set; }
+        public RawMatch? Match { get; set; }
         public bool? Dhcp4 { get; set; }
         public bool? Dhcp6 { get; set; }
         public List<string>? Addresses { get; set; }
@@ -328,6 +343,21 @@ public static class NetworkConfigYamlSerializer
         [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
         public string? MacAddress { get; set; }
         public List<RawRoute>? Routes { get; set; }
+    }
+
+    // cloud-init v2 'match' sub-map. Modelled as an object (not a string) so a
+    // `match: {macaddress: ..}` block parses instead of throwing — the bug
+    // behind issue #59, where the swallowed parse failure nulled the whole
+    // network-config.
+    private sealed class RawMatch
+    {
+        public string? Name { get; set; }
+        // netplan spells it 'macaddress' (no underscore), same as the
+        // top-level ethernet field; pin the alias so the underscored naming
+        // convention can't rewrite it to 'mac_address'.
+        [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
+        public string? MacAddress { get; set; }
+        public string? Driver { get; set; }
     }
 
     private sealed class RawBondConfig
