@@ -1,0 +1,8 @@
+ethernets:
+  eth0:
+    addresses: [192.168.8.210/24]
+    gateway4: 192.168.8.1
+    match: {macaddress: '02:00:00:ad:e2:71'}
+    nameservers:
+      addresses: [192.168.8.1]
+version: 2

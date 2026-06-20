@@ -184,6 +184,121 @@ public sealed class ApplyNetworkConfigModuleTests
     }
 
     [Fact]
+    public async Task Match_macaddress_block_binds_adapter_and_applies_static()
+    {
+        // Regression for issue #59: the network-config binds the NIC via a v2
+        // `match: {macaddress}` block (the standard netplan selector), not the
+        // top-level `macaddress`. The applier must resolve the adapter from
+        // match.macaddress and apply the static IPv4 config + DNS.
+        var yaml = LoadFixtureText("issue-59-v2-match.yaml");
+        var network = NetworkConfigYamlSerializer.Deserialize(yaml);
+        network.Version.Should().Be(2);
+        network.Ethernets.Should().ContainKey("eth0");
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 8, "02:00:00:ad:e2:71")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).DisableDhcpAsync(8, Arg.Any<CancellationToken>());
+        await os.Received(1).SetStaticIpv4AddressesAsync(
+            8,
+            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "192.168.8.210/24"),
+            Arg.Any<CancellationToken>());
+        await os.Received(1).SetIpv4DefaultGatewayAsync(8, "192.168.8.1", Arg.Any<CancellationToken>());
+        await os.Received(1).SetDnsServersAsync(
+            8,
+            Arg.Is<IReadOnlyList<string>>(d => d.Count == 1 && d[0] == "192.168.8.1"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Match_macaddress_takes_precedence_over_top_level_for_binding()
+    {
+        // When both a match.macaddress (the selector) and a top-level
+        // macaddress (the MAC to set/spoof) are present, the adapter is
+        // selected by match — that is what netplan/cloud-init does.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    Match = new NetworkMatch { MacAddress = "02:00:00:ad:e2:71" },
+                    MacAddress = "aa:bb:cc:dd:ee:ff",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 4, "02:00:00:ad:e2:71")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).EnableDhcpAsync(4, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Match_with_only_name_and_no_mac_is_skipped()
+    {
+        // Windows binds by MAC only. A match block that carries only a name /
+        // driver gives us no MAC to resolve, so the entry is skipped (no
+        // writes, no failure) — same semantics as a missing macaddress.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    Match = new NetworkMatch { Name = "en*" },
+                    Addresses = ["10.0.0.5/24"],
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 1, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceiveWithAnyArgs().DisableDhcpAsync(default, default);
+        await os.DidNotReceiveWithAnyArgs().SetStaticIpv4AddressesAsync(default, default!, default);
+    }
+
+    [Fact]
     public async Task Adapter_unmatched_by_mac_is_skipped_without_writes()
     {
         // The cloud-init entry references a MAC that doesn't exist on the
