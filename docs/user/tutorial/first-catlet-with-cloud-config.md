@@ -41,7 +41,7 @@ fodder:
 ## Step 2 — create the catlet
 
 ```powershell
-eryph catlet new --config demo-catlet.yaml --start
+gc demo-catlet.yaml | New-Catlet
 ```
 
 eryph-zero attaches a `config-2` ConfigDrive to the VM with the fodder
