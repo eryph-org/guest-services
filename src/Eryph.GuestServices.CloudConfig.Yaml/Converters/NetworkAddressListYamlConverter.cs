@@ -32,7 +32,7 @@ internal sealed class NetworkAddressListYamlConverter : IYamlTypeConverter
         // tolerant — treat it as a single address, or nothing.
         if (parser.TryConsume<Scalar>(out var lone))
         {
-            if (!string.IsNullOrWhiteSpace(lone.Value))
+            if (!IsNullOrEmptyAddress(lone.Value))
                 result.Add(lone.Value);
             return result;
         }
@@ -48,7 +48,9 @@ internal sealed class NetworkAddressListYamlConverter : IYamlTypeConverter
         {
             if (parser.TryConsume<Scalar>(out var item))
             {
-                if (!string.IsNullOrWhiteSpace(item.Value))
+                // A null/empty list entry (`- ~`, `- null`, `-`) is dropped
+                // rather than kept as a junk address.
+                if (!IsNullOrEmptyAddress(item.Value))
                     result.Add(item.Value);
             }
             else if (parser.TryConsume<MappingStart>(out _))
@@ -60,7 +62,7 @@ internal sealed class NetworkAddressListYamlConverter : IYamlTypeConverter
                 while (!parser.TryConsume<MappingEnd>(out _))
                 {
                     var key = parser.Consume<Scalar>();
-                    if (first && !string.IsNullOrWhiteSpace(key.Value))
+                    if (first && !IsNullOrEmptyAddress(key.Value))
                         result.Add(key.Value);
                     first = false;
                     _ = rootDeserializer(typeof(object));
@@ -78,4 +80,9 @@ internal sealed class NetworkAddressListYamlConverter : IYamlTypeConverter
 
     public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer) =>
         serializer(value, type);
+
+    // YAML 1.1 null tokens (and empty/whitespace) are not addresses. A plain
+    // `~`/`null` entry is a placeholder, not an address literal, so we drop it.
+    private static bool IsNullOrEmptyAddress(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value is "~" or "null" or "Null" or "NULL";
 }

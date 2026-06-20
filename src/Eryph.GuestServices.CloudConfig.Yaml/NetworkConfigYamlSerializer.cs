@@ -44,6 +44,13 @@ public static class NetworkConfigYamlSerializer
         if (string.IsNullOrWhiteSpace(yaml))
             return new NetworkConfig();
 
+        // Strip a leading UTF-8 BOM if a producer (often a Windows editor, and
+        // this is Windows-side tooling) emitted one. The StringReader path below
+        // does not skip it and the parser would choke on U+FEFF before the
+        // document. Mirrors NoCloudDataSource.DecodeUtf8.
+        if (yaml[0] == '\uFEFF')
+            yaml = yaml[1..];
+
         // Wrap in a MergingParser so YAML 1.1 merge keys (`<<: *anchor`) are
         // expanded — netplan/network-config uses anchors to share common
         // interface settings, matching PyYAML SafeLoader.
