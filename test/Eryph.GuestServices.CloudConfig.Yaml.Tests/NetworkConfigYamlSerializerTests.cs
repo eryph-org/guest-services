@@ -332,6 +332,351 @@ public class NetworkConfigYamlSerializerTests
     }
 
     [Fact]
+    public void Deserialize_v2_match_combines_name_macaddress_and_driver()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                match:
+                                  name: "eth*"
+                                  macaddress: "00:11:22:33:44:55"
+                                  driver: "virtio_net"
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var match = result.Ethernets!["eth0"].Match!;
+        match.Name.Should().Be("eth*");
+        match.MacAddress.Should().Be("00:11:22:33:44:55");
+        match.Driver.Should().Be("virtio_net");
+    }
+
+    [Fact]
+    public void Deserialize_v2_static_dualstack_with_both_gateways()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - 10.0.0.5/24
+                                  - "fd00::5/64"
+                                gateway4: 10.0.0.1
+                                gateway6: "fd00::1"
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24", "fd00::5/64"]);
+        eth0.Gateway4.Should().Be("10.0.0.1");
+        eth0.Gateway6.Should().Be("fd00::1");
+    }
+
+    [Fact]
+    public void Deserialize_v2_dhcp4_and_dhcp6_both_true()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                dhcp4: true
+                                dhcp6: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Dhcp4.Should().BeTrue();
+        eth0.Dhcp6.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Deserialize_v2_multiple_ethernets_in_one_document()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              primary:
+                                match:
+                                  macaddress: "00:11:22:33:44:01"
+                                addresses: [10.0.0.5/24]
+                              secondary:
+                                match:
+                                  macaddress: "00:11:22:33:44:02"
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets.Should().HaveCount(2);
+        result.Ethernets!["primary"].Match!.MacAddress.Should().Be("00:11:22:33:44:01");
+        result.Ethernets!["primary"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        result.Ethernets!["secondary"].Match!.MacAddress.Should().Be("00:11:22:33:44:02");
+        result.Ethernets!["secondary"].Dhcp4.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Deserialize_v2_network_wrapper_is_equivalent_to_bare_form()
+    {
+        // netplan / many cloud-init samples nest everything under a top-level
+        // `network:` key. It must parse identically to the bare form (which it
+        // previously did not — the wrapper produced an empty config).
+        const string wrapped = """
+                            network:
+                              version: 2
+                              ethernets:
+                                eth0:
+                                  match:
+                                    macaddress: "00:11:22:33:44:55"
+                                  addresses: [10.0.0.5/24]
+                                  gateway4: 10.0.0.1
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(wrapped);
+
+        result.Version.Should().Be(2);
+        var eth0 = result.Ethernets!["eth0"];
+        eth0.Match!.MacAddress.Should().Be("00:11:22:33:44:55");
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        eth0.Gateway4.Should().Be("10.0.0.1");
+    }
+
+    [Fact]
+    public void Deserialize_v1_network_wrapper_is_unwrapped()
+    {
+        const string yaml = """
+                            network:
+                              version: 1
+                              config:
+                                - type: physical
+                                  name: eth0
+                                  mac_address: 00:11:22:33:44:55
+                                  subnets:
+                                    - type: dhcp
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Version.Should().Be(1);
+        result.Ethernets!["eth0"].Dhcp4.Should().BeTrue();
+        result.Ethernets!["eth0"].MacAddress.Should().Be("00:11:22:33:44:55");
+    }
+
+    [Fact]
+    public void Deserialize_v2_advanced_address_map_form_keeps_the_address()
+    {
+        // netplan's advanced form attaches per-address options via a single-key
+        // map. We keep the address (the key) and drop label/lifetime. The map
+        // form previously threw and nulled the whole config.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - 10.0.0.5/24
+                                  - "fd00::5/64":
+                                      lifetime: 0
+                                      label: "maas"
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses
+            .Should().BeEquivalentTo(["10.0.0.5/24", "fd00::5/64"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_routing_policy_block_is_tolerated()
+    {
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses: [10.0.0.5/24]
+                                routing-policy:
+                                  - from: 10.0.0.0/24
+                                    table: 101
+                                    priority: 100
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_bond_with_parameters_and_addressing_is_tolerated()
+    {
+        // Bonds aren't applied on Windows, but a bond carrying addressing keys
+        // and a parameters map must still parse (and be preserved as a bond).
+        const string yaml = """
+                            version: 2
+                            bonds:
+                              bond0:
+                                interfaces: [eth0, eth1]
+                                parameters:
+                                  mode: 802.3ad
+                                  mii-monitor-interval: 100
+                                addresses: [10.0.0.9/24]
+                                dhcp4: false
+                                nameservers:
+                                  addresses: [1.1.1.1]
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Bonds.Should().ContainKey("bond0");
+        result.Bonds!["bond0"].Interfaces.Should().BeEquivalentTo(["eth0", "eth1"]);
+        result.Bonds!["bond0"].Parameters.Should().ContainKey("mode");
+    }
+
+    [Fact]
+    public void Deserialize_v2_bridge_with_parameters_and_addressing_is_tolerated()
+    {
+        const string yaml = """
+                            version: 2
+                            bridges:
+                              br0:
+                                interfaces: [eth0]
+                                parameters:
+                                  stp: true
+                                  forward-delay: 12
+                                addresses: [10.0.0.2/24]
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Bridges.Should().ContainKey("br0");
+        result.Bridges!["br0"].Interfaces.Should().BeEquivalentTo(["eth0"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_vlan_with_addressing_is_tolerated()
+    {
+        const string yaml = """
+                            version: 2
+                            vlans:
+                              vlan100:
+                                id: 100
+                                link: eth0
+                                addresses: [10.0.100.5/24]
+                                gateway4: 10.0.100.1
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Vlans.Should().ContainKey("vlan100");
+        result.Vlans!["vlan100"].Id.Should().Be(100);
+        result.Vlans!["vlan100"].Link.Should().Be("eth0");
+    }
+
+    [Fact]
+    public void Deserialize_v2_kitchen_sink_document_parses_all_modelled_fields()
+    {
+        // A single document exercising the full v2 surface at once: every
+        // device type, the renderer, match selectors, both IP families, DNS,
+        // routes, MTU, and a pile of keys we tolerate but don't apply
+        // (set-name, wakeonlan, optional, accept-ra, dhcp overrides,
+        // routing-policy). The whole thing must parse without throwing and
+        // populate every field the applier consumes.
+        const string yaml = """
+                            network:
+                              version: 2
+                              renderer: networkd
+                              ethernets:
+                                primary:
+                                  match:
+                                    name: "eth*"
+                                    macaddress: "00:11:22:33:44:55"
+                                    driver: "virtio_net"
+                                  set-name: primary
+                                  wakeonlan: true
+                                  optional: true
+                                  accept-ra: false
+                                  dhcp4: false
+                                  dhcp6: false
+                                  dhcp4-overrides:
+                                    route-metric: 200
+                                  addresses:
+                                    - 10.0.0.5/24
+                                    - "fd00::5/64":
+                                        lifetime: 0
+                                  gateway4: 10.0.0.1
+                                  gateway6: "fd00::1"
+                                  nameservers:
+                                    addresses: [1.1.1.1, "2606:4700:4700::1111"]
+                                    search: [corp.local, example.com]
+                                  routes:
+                                    - to: 10.10.0.0/16
+                                      via: 10.0.0.254
+                                      metric: 100
+                                      on-link: true
+                                    - to: default
+                                      via: 10.0.0.1
+                                  routing-policy:
+                                    - from: 10.0.0.0/24
+                                      table: 101
+                                  mtu: 9000
+                                  macaddress: "00:11:22:33:44:55"
+                                fallback:
+                                  match:
+                                    macaddress: "00:11:22:33:44:66"
+                                  dhcp4: true
+                              bonds:
+                                bond0:
+                                  interfaces: [eth2, eth3]
+                                  parameters:
+                                    mode: active-backup
+                              bridges:
+                                br0:
+                                  interfaces: [bond0]
+                                  parameters:
+                                    stp: true
+                              vlans:
+                                vlan100:
+                                  id: 100
+                                  link: br0
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Version.Should().Be(2);
+        result.Renderer.Should().Be(NetworkDhcpRenderer.Networkd);
+
+        var primary = result.Ethernets!["primary"];
+        primary.Match!.Name.Should().Be("eth*");
+        primary.Match.MacAddress.Should().Be("00:11:22:33:44:55");
+        primary.Match.Driver.Should().Be("virtio_net");
+        primary.Dhcp4.Should().BeFalse();
+        primary.Dhcp6.Should().BeFalse();
+        primary.Addresses.Should().BeEquivalentTo(["10.0.0.5/24", "fd00::5/64"]);
+        primary.Gateway4.Should().Be("10.0.0.1");
+        primary.Gateway6.Should().Be("fd00::1");
+        primary.Nameservers!.Addresses.Should().BeEquivalentTo(["1.1.1.1", "2606:4700:4700::1111"]);
+        primary.Nameservers!.Search.Should().BeEquivalentTo(["corp.local", "example.com"]);
+        primary.Routes.Should().HaveCount(2);
+        primary.Routes![0].To.Should().Be("10.10.0.0/16");
+        primary.Routes![0].Via.Should().Be("10.0.0.254");
+        primary.Routes![0].Metric.Should().Be(100);
+        primary.Routes![1].To.Should().Be("default");
+        primary.Mtu.Should().Be(9000);
+        primary.MacAddress.Should().Be("00:11:22:33:44:55");
+
+        result.Ethernets!["fallback"].Dhcp4.Should().BeTrue();
+        result.Bonds.Should().ContainKey("bond0");
+        result.Bridges.Should().ContainKey("br0");
+        result.Vlans.Should().ContainKey("vlan100");
+    }
+
+    [Fact]
     public void Deserialize_v1_physical_with_dhcp_subnet_projects_to_ethernets()
     {
         // v1 has a 'config' list rather than top-level ethernets/..; physical
