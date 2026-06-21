@@ -58,4 +58,7 @@ public sealed class CloudConfigSerializer(ILogger<CloudConfigSerializer> logger)
 
         return config;
     }
+
+    public CloudInitMergeOptions? ReadMergeOptions(string yaml) =>
+        MergeDirectiveReader.Read(yaml);
 }

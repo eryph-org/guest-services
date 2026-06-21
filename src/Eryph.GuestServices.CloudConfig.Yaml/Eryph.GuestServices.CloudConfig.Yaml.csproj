@@ -7,6 +7,15 @@
     <RootNamespace>Eryph.GuestServices.CloudConfig.Yaml</RootNamespace>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Consumed by eryph: cloud-config YAML (de)serialization and
+         CloudConfigComposer, which pre-merges cloud-config fodder into a
+         single document for the NoCloud seed disk. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.CloudConfig.Yaml</PackageId>
+    <Description>YAML (de)serialization for the eryph guest services cloud-config model, including CloudConfigComposer for merging cloud-config fragments into one document.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Eryph.ConfigModel.Yaml" Version="0.10.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />

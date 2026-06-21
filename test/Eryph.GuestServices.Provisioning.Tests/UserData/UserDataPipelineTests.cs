@@ -156,6 +156,33 @@ public sealed class UserDataPipelineTests : IDisposable
     }
 
     [Fact]
+    public async Task ResolveAsync_SecondFragmentMergeHowReplace_ReplacesAccumulatedList()
+    {
+        // The second cloud-config part carries merge_how: list(replace) (RFC 0032),
+        // so its runcmd replaces the first part's rather than appending.
+        const string raw =
+            "Content-Type: multipart/mixed; boundary=\"B\"\r\n" +
+            "\r\n" +
+            "--B\r\n" +
+            "Content-Type: text/x-cloud-config\r\n" +
+            "\r\n" +
+            "#cloud-config\nruncmd:\n  - echo first\n" +
+            "\r\n" +
+            "--B\r\n" +
+            "Content-Type: text/x-cloud-config\r\n" +
+            "\r\n" +
+            "#cloud-config\nmerge_how: list(replace)\nruncmd:\n  - echo second\n" +
+            "\r\n" +
+            "--B--\r\n";
+
+        var pipeline = BuildPipeline(out _);
+        var result = await pipeline.ResolveAsync(Encoding.UTF8.GetBytes(raw), CancellationToken.None);
+
+        result.CloudConfig.Runcmd.Should().ContainSingle();
+        result.CloudConfig.Runcmd![0].Command.Should().Be("echo second");
+    }
+
+    [Fact]
     public async Task ResolveAsync_UnrecognisedRoot_ReturnsEmptyAndWarns()
     {
         var pipeline = BuildPipeline(out _);

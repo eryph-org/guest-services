@@ -10,6 +10,16 @@
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Consumed by eryph: the cloud-config model and the source-generated
+         deep merge (CloudConfigMerge.Merge) used to pre-merge fodder before
+         building the NoCloud seed disk. The merge is baked into this assembly,
+         so the source-generator project does not ship (PrivateAssets below). -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.CloudConfig</PackageId>
+    <Description>Cloud-config model for eryph guest services, with the source-generated cloud-init deep-merge used to compose cloud-config fragments.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Eryph.ConfigModel.Core" Version="0.10.0" />
     <PackageReference Include="Eryph.ConfigModel.Core.Validation" Version="0.10.0" />
@@ -18,7 +28,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Eryph.GuestServices.CloudConfig.SourceGen\Eryph.GuestServices.CloudConfig.SourceGen.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

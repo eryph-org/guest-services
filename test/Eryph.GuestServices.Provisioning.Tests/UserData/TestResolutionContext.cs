@@ -27,9 +27,12 @@ internal sealed class TestResolutionContext : IUserDataResolutionContext
 
     public List<UserDataPart> NestedParts { get; } = [];
 
-    public void MergeCloudConfig(CloudConfigModel fragment)
+    public void MergeCloudConfig(CloudConfigModel fragment) =>
+        MergeCloudConfig(fragment, CloudInitMergeOptions.CloudInitDefault);
+
+    public void MergeCloudConfig(CloudConfigModel fragment, CloudInitMergeOptions options)
     {
-        CloudConfig = CloudConfigMerge.Merge(CloudConfig, fragment);
+        CloudConfig = CloudConfigMerge.Merge(CloudConfig, fragment, options);
     }
 
     public void AddScript(ScriptPayload script) => Scripts.Add(script);
