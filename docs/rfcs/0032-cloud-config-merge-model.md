@@ -1,6 +1,6 @@
 # RFC 0032 — Cloud-config merge model & merge control
 
-Status: Draft
+Status: Accepted
 
 ## Problem
 
@@ -104,37 +104,147 @@ then there is no escape hatch.
    present for parity, expose the native directive as the recommended path.
    Most capable; most surface area.
 
-## Tentative direction
+## Decision
 
 - **Ratify the existing default model** (precedence chain + `MergeKind`
-  taxonomy above) as the agreed design — independent of the control question.
-  This is descriptive, not a behaviour change.
-- **Lean toward (3)** for merge control: an eryph-native per-key `replace`
-  directive, because the concrete need is "let a fragment own a list," it
-  composes cleanly with the source-generated merger, and it avoids committing
-  to cloud-init's full part-level `merge_how` semantics before we have a real
-  fragment that needs them. Revisit (2) if cloud-init-syntax compatibility
-  turns out to matter for imported user-data.
-- **No implementation until a fragment actually needs replace semantics.** The
-  default append behaviour is correct for the composition we do today; this
-  RFC exists so the decision is made deliberately when the need arrives rather
-  than reactively.
+  taxonomy above) as the agreed design.
+- **Adopt option (2): cloud-init `merge_how` / `merge_type`.** A fragment
+  controls how it merges onto the accumulated config with cloud-init's own
+  part-level directive — both the string form
+  (`merge_how: "list(append)+dict(no_replace,recurse_list)+str()"`) and the
+  structured list form (`- name: list` / `settings: [...]`). This keeps eryph
+  on its cloud-init-parity north star and means fodder authored against
+  cloud-init's documented behaviour merges identically here.
+- **Default (no directive) = cloud-init's default merger**, which is the
+  behaviour already implemented (lists append/concat, dicts deep-merge, scalars
+  later-wins). Existing fodder is therefore unaffected.
+- **Supported in both merge sites:** the host-side pre-merge library
+  (`CloudConfigComposer`) and the guest provisioning pipeline
+  (`UserDataResolutionContext` cloud-config accumulation). The directive is
+  read per fragment from its raw YAML and applied as that fragment merges onto
+  the accumulator.
 
-## Open questions
+### Semantics implemented
 
-- **Granularity:** per-key (option 3) or per-part (cloud-init's model)? Gene
-  composition is key-oriented, which argues per-key — but a fragment that
-  wants to replace *everything* it touches would prefer a part-level switch.
-- **Where does the directive live** when a fragment is itself multipart or
-  arrives via `#include`? Presumably on the fragment that declares it, applied
-  as that fragment merges onto the accumulator.
-- **Interaction with `KeyedByName`** (`users`/`groups`): does `replace` drop
-  the whole list, or replace only same-named entries? Cloud-init keeps the
-  by-name semantics; we likely should too.
-- **Validation/observability:** a replace is destructive — should it be logged
-  at Info so a surprising "where did my inherited `runcmd` go" is traceable?
-- **Does eryph's fodder layer** (outside the guest agent) already resolve some
-  of this before it reaches user-data, narrowing what the agent must handle?
+The directive is parsed into a `CloudInitMergeOptions` (list / dict / str
+actions) threaded through the source-generated merge:
+
+- **list:** `append` (default), `prepend`, `replace`, `no_replace`.
+- **dict:** deep-merge/recurse (default), `replace` (incoming value replaces).
+- **str:** `replace` (default). `str(append)` is parsed but not applied to
+  typed scalars — concatenating distinct typed scalars (e.g. two hostnames)
+  is not meaningful; revisit if a real use case appears.
+- **`KeyedByName`** (`users` / `groups` / `chpasswd`): honours the same list
+  actions as plain lists — `replace` swaps the whole list, `no_replace` keeps
+  the accumulated one, `prepend`/`append` set ordering — while same-named
+  entries are deep-merged (incoming wins), matching cloud-init's effective
+  result.
+
+One deliberate simplification: `dict(no_replace)` maps to the default recurse
+merger, in which a conflicting key takes the incoming (right) value — the
+behaviour eryph already had. cloud-init's `no_replace` technically means the
+*accumulated* value is kept on a key conflict. Wholesale `dict(replace)` is
+supported; left-wins-on-key (true `no_replace`) is not modelled, because no
+fodder needs it yet. Revisit if one does.
+
+Settings the model does not represent (e.g. `recurse_array`, `allow_delete`)
+are parsed permissively and ignored rather than rejected.
+
+## Resolved questions
+
+- **Granularity:** part-level (cloud-init's model). A fragment's directive
+  governs every key it carries as it merges onto the accumulator.
+- **Where the directive lives:** on the fragment that declares it, read from
+  that fragment's raw YAML and applied at the point it merges. A fragment
+  arriving via multipart or `#include` carries its own directive.
+- **Interaction with `KeyedByName`:** all four list actions apply —
+  `list(replace)` drops the whole list, `no_replace` keeps the accumulated
+  one, `prepend`/`append` set ordering — with same-named entries deep-merged.
+- **Default behaviour is non-destructive**, so no special logging is required;
+  a `replace` is an explicit, author-chosen directive.
+
+## Implementation — merge as a library feature for eryph
+
+The merge model above is currently reachable only from inside the guest agent.
+Eryph wants to merge fodder **before** the guest boots — collapse the several
+`type: cloud-config` fodder fragments of a catlet into one cloud-config and
+write that single document to the NoCloud seed disk, rather than shipping a
+pile of fragments for cloud-init to reconcile at runtime. That makes the merge
+a build-time, host-side concern, so it must be exposed as a referenceable
+library.
+
+### What already exists
+
+- `CloudConfig.CloudConfigMerge.Merge(CloudConfig left, CloudConfig right)` is
+  **public** and is exactly the source-generated deep merge described above.
+  Folding an ordered list of fragments left-to-right *is* the pre-merge.
+- `CloudConfig.Yaml.CloudConfigYamlSerializer.Deserialize(string)` is
+  **public** (YAML → model, with `onUnknownKey` warnings and
+  `InvalidConfigException` on malformed input). `EryphFodderSmokeTests` already
+  exercises this against real genepool `cloud-config` fodder.
+
+### Gaps to close
+
+1. **Serialization (model → YAML).** The Yaml library only deserializes — the
+   guest agent consumes cloud-config and never emits it. The pre-merge use case
+   is the inverse, so a `Serialize(CloudConfig)` is needed. It MUST reuse the
+   same converter/alias/naming configuration as the deserializer (the
+   `WithAttributeOverride` rules, `BoolOrString`, `write_files` permissions,
+   runcmd shapes, `ssh_deletekeys`/`locale_configfile` aliases, snake_case),
+   emit the `#cloud-config` header, and omit null/empty members. Round-trip
+   fidelity (parse → serialize → parse is stable) is the main risk and must be
+   pinned with tests. Several existing `IYamlTypeConverter`s implement only the
+   read path and will need their write path filled in.
+
+2. **Packaging.** Neither `Eryph.GuestServices.CloudConfig` nor
+   `.CloudConfig.Yaml` is `IsPackable` today (only Core/Sockets/HvDataExchange
+   are). Both opt in with an `IsPackable`/`PackageId` so eryph can take a
+   `PackageReference`. The source-generated `Merge` is baked into the
+   `CloudConfig` assembly, so the analyzer/source-gen project does not ship.
+
+### Proposed surface
+
+A thin facade in the Yaml library (it needs both the model and the serializer):
+
+```csharp
+namespace Eryph.GuestServices.CloudConfig.Yaml;
+
+public static class CloudConfigComposer
+{
+    // Parse each fragment, fold left→right via CloudConfigMerge.Merge,
+    // serialize the single result as a #cloud-config document.
+    public static string Merge(IEnumerable<string> cloudConfigFragments,
+                               Action<string>? onUnknownKey = null);
+
+    // Same, stopping at the merged model (for callers that validate or
+    // post-process before serialising).
+    public static CloudConfig MergeToModel(IEnumerable<string> cloudConfigFragments,
+                                           Action<string>? onUnknownKey = null);
+}
+```
+
+Fragment order is precedence: a later fragment wins on scalars and concatenates
+onto earlier lists, exactly per the model above. Callers may run
+`CloudConfigValidations` on the merged result to fail fast before writing the
+seed disk.
+
+### Relationship to the merge-control decision
+
+This exposure is **decision-neutral** with respect to the open
+`replace`/`merge_how` question. The facade surfaces only the *default* append
+merge, which already exists and is stable. A future per-key `replace` directive
+(or `merge_how` support) extends the same fold without changing the
+`CloudConfigComposer` API, so building the library exposure now does not
+pre-commit the control design. The exposure can therefore land while this RFC's
+*control* sections remain Draft; only the merge-control directive itself waits
+on a concrete fragment that needs it.
+
+### Scope boundary
+
+The facade collapses cloud-config fragments only. Boothooks, `x-shellscript`
+parts, and multipart structure are not merged — eryph decides which fragments
+are cloud-config and feeds those in. Non-cloud-config payloads continue to ride
+as their own user-data parts.
 
 ## Authoring note
 
