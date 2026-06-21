@@ -53,10 +53,16 @@ public static class CloudConfigComposer
         ArgumentNullException.ThrowIfNull(cloudConfigFragments);
 
         CloudConfigModel? merged = null;
-        foreach (var fragment in cloudConfigFragments)
+        foreach (var raw in cloudConfigFragments)
         {
-            if (string.IsNullOrWhiteSpace(fragment))
+            if (string.IsNullOrWhiteSpace(raw))
                 continue;
+
+            // Strip a leading UTF-8 BOM (U+FEFF) — fragments authored via
+            // PowerShell Set-Content -Encoding UTF8 carry one, and YamlDotNet
+            // rejects it before #cloud-config (mirrors the provisioning
+            // pipeline's UserDataEncoding handling).
+            var fragment = StripBom(raw);
 
             var parsed = CloudConfigYamlSerializer.Deserialize(fragment, onUnknownKey);
             if (merged is null)
@@ -76,4 +82,7 @@ public static class CloudConfigComposer
 
         return merged;
     }
+
+    private static string StripBom(string text) =>
+        text.Length > 0 && text[0] == '\uFEFF' ? text[1..] : text;
 }

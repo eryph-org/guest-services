@@ -34,11 +34,12 @@ internal class RuncmdEntryYamlTypeConverter : IYamlTypeConverter
         // shapes — a shell-command string or an argv sequence — NOT to a
         // mapping of its internal fields. Default serialisation would emit
         // the record's properties, which is invalid runcmd.
+        // Fail fast rather than emit a broken runcmd entry: a null or
+        // non-RuncmdEntry value here is a programming error, not valid input.
+        ArgumentNullException.ThrowIfNull(value);
         if (value is not RuncmdEntry entry)
-        {
-            emitter.Emit(new Scalar(string.Empty));
-            return;
-        }
+            throw new InvalidOperationException(
+                $"Expected a {nameof(RuncmdEntry)} to serialise, got {value.GetType().Name}.");
 
         if (entry.IsShellCommand)
         {

@@ -28,6 +28,21 @@ public sealed class CloudConfigComposerTests
     }
 
     [Fact]
+    public void Strips_leading_utf8_bom_from_fragments()
+    {
+        // PowerShell Set-Content -Encoding UTF8 prefixes a U+FEFF; YamlDotNet
+        // would otherwise reject it before #cloud-config.
+        var model = CloudConfigComposer.MergeToModel(
+        [
+            "\uFEFF#cloud-config\nhostname: web01",
+            "\uFEFFssh_authorized_keys: [k]",
+        ]);
+
+        model!.Hostname.Should().Be("web01");
+        model.SshAuthorizedKeys.Should().Equal("k");
+    }
+
+    [Fact]
     public void Later_fragment_wins_on_scalar_conflict()
     {
         var model = CloudConfigComposer.MergeToModel(

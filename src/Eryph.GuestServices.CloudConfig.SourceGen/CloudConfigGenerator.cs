@@ -216,6 +216,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         if (isRootEntryPoint)
         {
             sb.AppendLine("    {");
+            sb.AppendLine("        if (options is null) throw new global::System.ArgumentNullException(nameof(options));");
             sb.Append("        return new ").Append(fq).Append("()");
         }
 
