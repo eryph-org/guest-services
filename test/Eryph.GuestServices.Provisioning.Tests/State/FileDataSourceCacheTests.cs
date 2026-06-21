@@ -71,18 +71,18 @@ public sealed class FileDataSourceCacheTests : IDisposable
     {
         // End-to-end regression for issue #59: `run --stage network` does not
         // re-read the cidata disk — it loads datasource.json and re-parses the
-        // raw NetworkConfig text. The reporter's config selects the NIC via a
-        // v2 `match: {macaddress}` block; that mapping must survive the reload
-        // as a populated StructuredNetworkConfig (it previously came back null
-        // because the parse threw and was swallowed).
+        // raw NetworkConfig text. A v2 config that selects the NIC via a
+        // `match: {macaddress}` block must survive the reload as a populated
+        // StructuredNetworkConfig (it previously came back null because the
+        // parse threw and was swallowed).
         const string rawNetworkConfig =
             "ethernets:\n" +
             "  eth0:\n" +
-            "    addresses: [192.168.8.210/24]\n" +
-            "    gateway4: 192.168.8.1\n" +
-            "    match: {macaddress: '02:00:00:ad:e2:71'}\n" +
+            "    addresses: [10.0.0.5/24]\n" +
+            "    gateway4: 10.0.0.1\n" +
+            "    match: {macaddress: '00:11:22:aa:bb:cc'}\n" +
             "    nameservers:\n" +
-            "      addresses: [192.168.8.1]\n" +
+            "      addresses: [10.0.0.1]\n" +
             "version: 2\n";
 
         var cache = NewCache();
@@ -101,10 +101,10 @@ public sealed class FileDataSourceCacheTests : IDisposable
         restored!.StructuredNetworkConfig.Should().NotBeNull();
         restored.StructuredNetworkConfig!.Ethernets.Should().NotBeNull().And.ContainKey("eth0");
         var eth0 = restored.StructuredNetworkConfig.Ethernets!["eth0"];
-        eth0.Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
-        eth0.Addresses.Should().BeEquivalentTo(["192.168.8.210/24"]);
-        eth0.Gateway4.Should().Be("192.168.8.1");
-        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["192.168.8.1"]);
+        eth0.Match!.MacAddress.Should().Be("00:11:22:aa:bb:cc");
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        eth0.Gateway4.Should().Be("10.0.0.1");
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["10.0.0.1"]);
     }
 
     [Fact]

@@ -201,7 +201,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Adapter("Ethernet", 8, "02:00:00:ad:e2:71")],
+                [Adapter("Ethernet", 8, "00:11:22:aa:bb:cc")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
@@ -215,12 +215,12 @@ public sealed class ApplyNetworkConfigModuleTests
         await os.Received(1).DisableDhcpAsync(8, Arg.Any<CancellationToken>());
         await os.Received(1).SetStaticIpv4AddressesAsync(
             8,
-            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "192.168.8.210/24"),
+            Arg.Is<IReadOnlyList<string>>(a => a.Count == 1 && a[0] == "10.0.0.5/24"),
             Arg.Any<CancellationToken>());
-        await os.Received(1).SetIpv4DefaultGatewayAsync(8, "192.168.8.1", Arg.Any<CancellationToken>());
+        await os.Received(1).SetIpv4DefaultGatewayAsync(8, "10.0.0.1", Arg.Any<CancellationToken>());
         await os.Received(1).SetDnsServersAsync(
             8,
-            Arg.Is<IReadOnlyList<string>>(d => d.Count == 1 && d[0] == "192.168.8.1"),
+            Arg.Is<IReadOnlyList<string>>(d => d.Count == 1 && d[0] == "10.0.0.1"),
             Arg.Any<CancellationToken>());
     }
 
@@ -237,7 +237,7 @@ public sealed class ApplyNetworkConfigModuleTests
             {
                 ["eth0"] = new()
                 {
-                    Match = new NetworkMatch { MacAddress = "02:00:00:ad:e2:71" },
+                    Match = new NetworkMatch { MacAddress = "00:11:22:aa:bb:cc" },
                     MacAddress = "aa:bb:cc:dd:ee:ff",
                     Dhcp4 = true,
                 },
@@ -248,7 +248,7 @@ public sealed class ApplyNetworkConfigModuleTests
         os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
             .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
             {
-                [Adapter("Ethernet", 4, "02:00:00:ad:e2:71")],
+                [Adapter("Ethernet", 4, "00:11:22:aa:bb:cc")],
             }[0]);
 
         var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);

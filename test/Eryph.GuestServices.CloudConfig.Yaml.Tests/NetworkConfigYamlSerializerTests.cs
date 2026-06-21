@@ -161,17 +161,17 @@ public class NetworkConfigYamlSerializerTests
                             ethernets:
                               eth0:
                                 match:
-                                  macaddress: "02:00:00:ad:e2:71"
+                                  macaddress: "00:11:22:aa:bb:cc"
                                 addresses:
-                                  - 192.168.8.210/24
+                                  - 10.0.0.5/24
                             """;
 
         var result = NetworkConfigYamlSerializer.Deserialize(yaml);
 
         var eth0 = result.Ethernets!["eth0"];
         eth0.Match.Should().NotBeNull();
-        eth0.Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
-        eth0.Addresses.Should().BeEquivalentTo(["192.168.8.210/24"]);
+        eth0.Match!.MacAddress.Should().Be("00:11:22:aa:bb:cc");
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
     }
 
     [Fact]
@@ -198,16 +198,16 @@ public class NetworkConfigYamlSerializerTests
     [Fact]
     public void Deserialize_v2_flow_style_from_issue_59()
     {
-        // Verbatim payload from issue #59 (flow mappings + flow sequences),
-        // exactly as the eryph/vagrant generator wrote it to the cidata disk.
+        // Flow-style mappings and sequences (as a generator may emit them),
+        // exercising the issue #59 match-block path end to end.
         const string yaml = """
                             ethernets:
                               eth0:
-                                addresses: [192.168.8.210/24]
-                                gateway4: 192.168.8.1
-                                match: {macaddress: '02:00:00:ad:e2:71'}
+                                addresses: [10.0.0.5/24]
+                                gateway4: 10.0.0.1
+                                match: {macaddress: '00:11:22:aa:bb:cc'}
                                 nameservers:
-                                  addresses: [192.168.8.1]
+                                  addresses: [10.0.0.1]
                             version: 2
                             """;
 
@@ -215,10 +215,10 @@ public class NetworkConfigYamlSerializerTests
 
         result.Version.Should().Be(2);
         var eth0 = result.Ethernets!["eth0"];
-        eth0.Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
-        eth0.Addresses.Should().BeEquivalentTo(["192.168.8.210/24"]);
-        eth0.Gateway4.Should().Be("192.168.8.1");
-        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["192.168.8.1"]);
+        eth0.Match!.MacAddress.Should().Be("00:11:22:aa:bb:cc");
+        eth0.Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+        eth0.Gateway4.Should().Be("10.0.0.1");
+        eth0.Nameservers!.Addresses.Should().BeEquivalentTo(["10.0.0.1"]);
     }
 
     [Fact]
@@ -735,7 +735,7 @@ public class NetworkConfigYamlSerializerTests
                             ethernets:
                               eth0:
                                 match:
-                                  macaddress: 02:00:00:ad:e2:71
+                                  macaddress: 00:11:22:aa:bb:cc
                                 dhcp4: true
                               eth1:
                                 macaddress: 00:00:00:00:00:12
@@ -744,7 +744,7 @@ public class NetworkConfigYamlSerializerTests
 
         var result = NetworkConfigYamlSerializer.Deserialize(yaml);
 
-        result.Ethernets!["eth0"].Match!.MacAddress.Should().Be("02:00:00:ad:e2:71");
+        result.Ethernets!["eth0"].Match!.MacAddress.Should().Be("00:11:22:aa:bb:cc");
         // An all-decimal-looking MAC must not be mangled into a number.
         result.Ethernets!["eth1"].MacAddress.Should().Be("00:00:00:00:00:12");
     }
