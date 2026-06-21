@@ -46,4 +46,4 @@ Implemented in commit `679cb3e` (alongside the OpenStack datasource that motivat
 ## Open questions (resolved)
 
 - *Does Azure's `ovf-env.xml` count as vendor-data once parsed by Azure PA?* — **No.** `AzureDataSource` sets `VendorData = null`; the platform agent has already applied that config, so there is nothing for us to merge. Confirms the original guess.
-- *Should an explicit `cloud_init_merge` directive in user-data be honored, or fixed per RFC outcome?* — **Fixed per this RFC.** The merge strategy is not user-configurable; there is no `cloud_init_merge` / `merge_how` handling. Revisit only if a concrete need for per-payload merge tuning appears.
+- *Should an explicit `cloud_init_merge` directive in user-data be honored, or fixed per RFC outcome?* — **Fixed for vendor-data precedence; the general question moved to [RFC 0032](0032-cloud-config-merge-model.md).** Today the merge strategy is not user-configurable (no `cloud_init_merge` / `merge_how` handling). Whether eryph should add per-fragment merge control across its multi-source cloud-config stacking is a broader decision than vendor-data, and is owned by RFC 0032.
