@@ -11,7 +11,7 @@ full cloud-init compatibility.
 | Locale, keyboard, timezone, NTP, licensing | First-class cloud-config keys (`locale`, `keyboard`, `timezone`, `ntp`, `license`). On cbi you script these or drive them from cbi's own config file. |
 | SSH | `SshModule` configures the OS OpenSSH daemon — merges `authorized_keys`, manages host keys, writes an `sshd_config` drop-in. |
 | Stages | cloud-init's `Local` / `Network` / `Config` / `Final`, not cbi's plugin phases. |
-| network-config | v1 and v2 both accepted. cbi takes only the older OpenStack shape. |
+| network-config | v1 and v2 schemas both accepted; egs applies the per-interface IP subset and warns on the rest (see the [coverage matrix](../howto/configure-networking.md#coverage-matrix)). cbi takes only the older OpenStack shape. |
 | Frequencies | per-instance, per-boot, and per-once, with semaphores. cbi has per-instance only. |
 | Script dispatch | By filename extension, with a shebang fallback when there's no extension. cbi goes by filename only. |
 | Parts without a filename | Logged and run as PowerShell. cbi drops them. |
