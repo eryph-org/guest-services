@@ -14,7 +14,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 
 | # | Title | Status |
 |---|---|---|
-| [0001](0001-vendor-data-merge-policy.md) | Vendor-data merge policy | Draft |
+| [0001](0001-vendor-data-merge-policy.md) | Vendor-data merge policy | Implemented |
 | [0002](0002-network-config-v1-v2-application.md) | Network-config v1/v2 application on Windows | Implemented |
 | [0003](0003-module-frequencies.md) | Module frequencies (per-instance / per-boot / per-once) | Implemented |
 | [0004](0004-datasource-readiness-timeout.md) | Datasource readiness — probe timeout, retry backoff | Implemented |
