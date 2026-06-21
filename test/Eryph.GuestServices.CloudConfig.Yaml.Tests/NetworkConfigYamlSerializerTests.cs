@@ -925,6 +925,27 @@ public class NetworkConfigYamlSerializerTests
     }
 
     [Fact]
+    public void Deserialize_v2_address_map_with_non_scalar_key_does_not_throw()
+    {
+        // YAML permits a non-scalar mapping key. The converter must drain it
+        // rather than throw (its "never throw on valid YAML" goal); such a key
+        // carries no address, and a normal entry alongside it still parses.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                addresses:
+                                  - {[a, b]: 0}
+                                  - 10.0.0.5/24
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Addresses.Should().BeEquivalentTo(["10.0.0.5/24"]);
+    }
+
+    [Fact]
     public void Deserialize_v2_with_comments_and_crlf_line_endings()
     {
         // Windows-authored configs use CRLF and operators add comments.

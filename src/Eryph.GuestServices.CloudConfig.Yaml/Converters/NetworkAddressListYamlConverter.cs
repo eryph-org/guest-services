@@ -61,9 +61,18 @@ internal sealed class NetworkAddressListYamlConverter : IYamlTypeConverter
                 var first = true;
                 while (!parser.TryConsume<MappingEnd>(out _))
                 {
-                    var key = parser.Consume<Scalar>();
-                    if (first && !IsNullOrEmptyAddress(key.Value))
-                        result.Add(key.Value);
+                    // Keys are normally scalar IP strings, but YAML permits
+                    // complex (non-scalar) keys; drain those instead of
+                    // throwing, keeping the "never throw on valid YAML" goal.
+                    if (parser.TryConsume<Scalar>(out var key))
+                    {
+                        if (first && !IsNullOrEmptyAddress(key.Value))
+                            result.Add(key.Value);
+                    }
+                    else
+                    {
+                        _ = rootDeserializer(typeof(object));
+                    }
                     first = false;
                     _ = rootDeserializer(typeof(object));
                 }
