@@ -2,9 +2,9 @@
 
 Network configuration travels in a separate cloud-init document, network-config,
 not in `#cloud-config`. The datasource supplies it and the `ApplyNetworkConfig`
-module applies it during the Network stage. On eryph it's written into the
-`config-2` ConfigDrive; on a NoCloud setup, put a `network-config` file next to
-`meta-data` and `user-data`.
+module applies it during the Network stage. eryph supplies it as a **v1**
+network-config on the NoCloud seed disk — a `cidata` volume holding `meta-data`,
+`user-data`, and `network-config`.
 
 Both the v1 and v2 schemas are accepted, and adapters are matched to the config
 by MAC address.

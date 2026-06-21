@@ -60,8 +60,9 @@ resumes afterward.
 ## ApplyNetworkConfig
 
 Applies a network-config document (v1 or v2) to the guest. The document comes
-from the datasource — for example inside a `config-2` ConfigDrive — not from
-cloud-config. See [Configure networking](../howto/configure-networking.md).
+from the datasource — for eryph, a v1 network-config on the NoCloud seed disk
+(a `cidata` volume) — not from cloud-config. See
+[Configure networking](../howto/configure-networking.md).
 
 Adapters are matched by MAC address. For each match the module applies the
 addresses, gateways, routes, DNS servers and search suffixes, and MTU — IPv4 and
