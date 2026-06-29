@@ -495,15 +495,25 @@ internal sealed class WindowsOs : IWindowsOs
 
     // internal for unit testing — the -Command string is a composition root we
     // want exercised directly (a wrong cmdlet/parameter name or a quoting slip
-    // would otherwise only surface on a real guest). An empty list resets the
-    // interface back to DHCP-provided servers; otherwise the whole (possibly
-    // mixed IPv4+IPv6) list is handed to the cmdlet, which assigns each address
-    // to the correct family.
-    internal static string BuildSetDnsServersCommand(int interfaceIndex, IReadOnlyList<string> dnsServers) =>
-        dnsServers.Count == 0
+    // would otherwise only surface on a real guest). Null/blank entries are
+    // dropped first: the YAML 1.1 resolver turns a `~`/`null`/empty nameserver
+    // into a null/blank string, which would NRE in FormatPsStringList or emit an
+    // invalid -ServerAddresses. A list that is empty (or empties out after that)
+    // resets the interface back to DHCP-provided servers; otherwise the whole
+    // (possibly mixed IPv4+IPv6) list is handed to the cmdlet, which assigns each
+    // address to the correct family.
+    internal static string BuildSetDnsServersCommand(int interfaceIndex, IReadOnlyList<string> dnsServers)
+    {
+        var servers = dnsServers
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .ToList();
+
+        return servers.Count == 0
             ? $"Set-DnsClientServerAddress -InterfaceIndex {interfaceIndex} -ResetServerAddresses -ErrorAction Stop"
             : $"Set-DnsClientServerAddress -InterfaceIndex {interfaceIndex} "
-              + $"-ServerAddresses {FormatPsStringList(dnsServers)} -ErrorAction Stop";
+              + $"-ServerAddresses {FormatPsStringList(servers)} -ErrorAction Stop";
+    }
 
     // Render a PowerShell single-quoted, comma-separated string array literal
     // (e.g. 'a','b') for use inside a -Command script. Each value is escaped so
