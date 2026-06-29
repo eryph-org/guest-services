@@ -119,15 +119,15 @@ public sealed class CloudConfigGeneratorTests
             "Merge is the public entry-point for the root type");
         mergeText.Should().Contain("Hostname = right.Hostname ?? left.Hostname",
             "RightWins is the default for nullable scalars");
-        mergeText.Should().Contain("Keys = Concat(left.Keys, right.Keys)",
-            "list-typed properties default to Concat");
-        mergeText.Should().Contain("Sub = MergeSubConfig(left.Sub, right.Sub)",
-            "nested [CloudInitRecord] properties default to DeepMerge");
+        mergeText.Should().Contain("Keys = Concat(left.Keys, right.Keys, options)",
+            "list-typed properties default to Concat, threading the merge options");
+        mergeText.Should().Contain("Sub = MergeSubConfig(left.Sub, right.Sub, options)",
+            "nested [CloudInitRecord] properties default to DeepMerge, threading the merge options");
         mergeText.Should().Contain("MergeSubConfig(",
             "the generator must emit a per-record helper");
-        mergeText.Should().Contain("StringDict = MergeDict(left.StringDict, right.StringDict)",
+        mergeText.Should().Contain("StringDict = MergeDict(left.StringDict, right.StringDict, options)",
             "IReadOnlyDictionary with a scalar value type defaults to plain DictMerge");
-        mergeText.Should().Contain("RecordDict = MergeDict(left.RecordDict, right.RecordDict, MergeSubConfig)",
+        mergeText.Should().Contain("RecordDict = MergeDict(left.RecordDict, right.RecordDict, MergeSubConfig, options)",
             "IReadOnlyDictionary with a [CloudInitRecord] value type passes the per-record merger");
         mergeText.Should().Contain("Union = (right.Union.IsEmpty ? left.Union : right.Union)",
             "structured primitives (value-type structs with a public IsEmpty bool) merge via IsEmpty, not ??");

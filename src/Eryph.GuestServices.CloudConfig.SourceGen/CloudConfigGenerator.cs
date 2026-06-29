@@ -192,13 +192,21 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         // CloudConfigMerge (e.g. records under Eryph.GuestServices.CloudConfig.Linux).
         sb.AppendLine($"    /// <summary>Source-generated deep merge for <see cref=\"{fq.Replace('<', '{').Replace('>', '}')}\"/>.</summary>");
 
+        // Every merge method carries the per-fragment cloud-init merge_how
+        // directive (RFC 0032) so list/dict overrides reach the hand-written
+        // helpers. The root overload is the strategy-aware entry point; a
+        // convenience Merge(left, right) using the default lives in the
+        // hand-written partial.
+        const string optionsParam =
+            "global::Eryph.GuestServices.CloudConfig.CloudInitMergeOptions options";
+
         if (isRootEntryPoint)
         {
-            sb.AppendLine($"    public static {fq} {methodName}({fq} left, {fq} right)");
+            sb.AppendLine($"    public static {fq} {methodName}({fq} left, {fq} right, {optionsParam})");
         }
         else
         {
-            sb.AppendLine($"    private static {fq}? {methodName}({fq}? left, {fq}? right)");
+            sb.AppendLine($"    private static {fq}? {methodName}({fq}? left, {fq}? right, {optionsParam})");
             sb.AppendLine("    {");
             sb.AppendLine("        if (left is null) return right;");
             sb.AppendLine("        if (right is null) return left;");
@@ -208,6 +216,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         if (isRootEntryPoint)
         {
             sb.AppendLine("    {");
+            sb.AppendLine("        if (options is null) throw new global::System.ArgumentNullException(nameof(options));");
             sb.Append("        return new ").Append(fq).Append("()");
         }
 
@@ -235,7 +244,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         return kind switch
         {
             MergeKindEnum.RightWins => BuildRightWinsExpression(p),
-            MergeKindEnum.Concat => $"Concat(left.{p.Name}, right.{p.Name})",
+            MergeKindEnum.Concat => $"Concat(left.{p.Name}, right.{p.Name}, options)",
             MergeKindEnum.DeepMerge => BuildDeepMergeCall(p, recordNames),
             MergeKindEnum.KeyedByName => BuildKeyedByNameCall(p),
             MergeKindEnum.DictMerge => BuildDictMergeCall(p, recordNames),
@@ -373,7 +382,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
             return $"right.{p.Name} ?? left.{p.Name}";
 
         var helper = $"Merge{named.Name}";
-        return $"{helper}(left.{p.Name}, right.{p.Name})";
+        return $"{helper}(left.{p.Name}, right.{p.Name}, options)";
     }
 
     private static string BuildKeyedByNameCall(PropertyInfo p)
@@ -381,7 +390,7 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         if (string.IsNullOrEmpty(p.KeyedMergeMethod))
             return $"right.{p.Name} ?? left.{p.Name}";
 
-        return $"MergeByName(left.{p.Name}, right.{p.Name}, e => e.Name, {p.KeyedMergeMethod})";
+        return $"MergeByName(left.{p.Name}, right.{p.Name}, e => e.Name, {p.KeyedMergeMethod}, options)";
     }
 
     private static string BuildDictMergeCall(PropertyInfo p, HashSet<string> recordNames)
@@ -400,10 +409,10 @@ public sealed class CloudConfigGenerator : IIncrementalGenerator
         {
             var valueName = ((INamedTypeSymbol)valueType).Name;
             var helper = $"Merge{valueName}";
-            return $"MergeDict(left.{p.Name}, right.{p.Name}, {helper})";
+            return $"MergeDict(left.{p.Name}, right.{p.Name}, {helper}, options)";
         }
 
-        return $"MergeDict(left.{p.Name}, right.{p.Name})";
+        return $"MergeDict(left.{p.Name}, right.{p.Name}, options)";
     }
 
     private static void EmitInventory(SourceProductionContext spc, RecordTypeInfo root)

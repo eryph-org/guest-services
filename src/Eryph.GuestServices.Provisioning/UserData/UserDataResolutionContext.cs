@@ -28,10 +28,14 @@ internal sealed class UserDataResolutionContext(
 
     public IReadOnlyList<BoothookPayload> Boothooks => _boothooks;
 
-    public void MergeCloudConfig(CloudConfigModel fragment)
+    public void MergeCloudConfig(CloudConfigModel fragment) =>
+        MergeCloudConfig(fragment, CloudInitMergeOptions.CloudInitDefault);
+
+    public void MergeCloudConfig(CloudConfigModel fragment, CloudInitMergeOptions options)
     {
         ArgumentNullException.ThrowIfNull(fragment);
-        CloudConfig = CloudConfigMerge.Merge(CloudConfig, fragment);
+        ArgumentNullException.ThrowIfNull(options);
+        CloudConfig = CloudConfigMerge.Merge(CloudConfig, fragment, options);
     }
 
     public void AddScript(ScriptPayload script)

@@ -1,3 +1,4 @@
+using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Serialization;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +23,10 @@ internal sealed class CloudConfigPartHandler(
         try
         {
             var fragment = serializer.Deserialize(yaml);
-            ctx.MergeCloudConfig(fragment);
+            // cloud-init merge_how / merge_type (RFC 0032): this fragment's
+            // directive controls how it merges onto the accumulated config.
+            var options = serializer.ReadMergeOptions(yaml) ?? CloudInitMergeOptions.CloudInitDefault;
+            ctx.MergeCloudConfig(fragment, options);
             logger.LogDebug("Merged cloud-config fragment from {Filename}", part.Filename ?? "<root>");
         }
         catch (Exception ex)

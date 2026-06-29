@@ -12,40 +12,16 @@ namespace Eryph.GuestServices.CloudConfig.Yaml;
 
 public static class CloudConfigYamlSerializer
 {
-    private static readonly Lazy<IDeserializer> Deserializer = new(() =>
-    {
-        var builder = new DeserializerBuilder()
-            .WithCaseInsensitivePropertyMatching()
-            // Cloud-init's runtime behaviour for unknown cloud-config keys
-            // (see cloudinit/config/schema.py `validate_cloudconfig_schema`)
-            // is "warn and continue", NOT "fail" and NOT "silent". We mirror
-            // that: deserialization is tolerant (this flag), and a separate
-            // top-level walker calls the caller-supplied `onUnknownKey`
-            // callback so the DI'd `CloudConfigSerializer` can log at
-            // Warning. Cross-cloud cloud-config with Linux-only keys
-            // (apt, snap, ntp_client, …) parses cleanly; typos like
-            // `hsotname:` surface visibly in the cloud-init.log analogue.
-            .IgnoreUnmatchedProperties()
+    // Naming conventions and key aliases that BOTH the read and write paths
+    // must agree on, factored out so the round-trip cannot drift: the keys a
+    // CloudConfig deserialises from are exactly the keys it serialises back to.
+    // BuilderSkeleton<T> is the common base of DeserializerBuilder and
+    // SerializerBuilder, so the same fluent calls configure either one.
+    private static TBuilder ConfigureNamingAndAliases<TBuilder>(TBuilder builder)
+        where TBuilder : BuilderSkeleton<TBuilder>
+        => builder
             .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .WithAttributeOverride<CloudConfig>(
-                c => c.SshAuthorizedKeys!,
-                new YamlConverterAttribute(typeof(StringListYamlConverter)))
-            .WithAttributeOverride<CloudConfig>(
-                c => c.Runcmd!,
-                new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
-            .WithAttributeOverride<CloudConfig>(
-                c => c.Bootcmd!,
-                new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
-            .WithAttributeOverride<CloudConfig>(
-                c => c.SshImportId!,
-                new YamlConverterAttribute(typeof(StringListYamlConverter)))
-            .WithAttributeOverride<PhoneHomeConfig>(
-                p => p.Post!,
-                new YamlConverterAttribute(typeof(StringListYamlConverter)))
-            .WithAttributeOverride<WriteFileConfig>(
-                w => w.Permissions!,
-                new YamlConverterAttribute(typeof(WriteFilePermissionsYamlConverter)))
             // Rename properties whose snake-cased default name conflicts
             // with a C# rule (e.g. AnsibleConfig.AnsibleConfigPath maps to
             // ansible_config — clashing with the type name) or whose
@@ -73,6 +49,44 @@ public static class CloudConfigYamlSerializer
             .WithAttributeOverride<CloudConfig>(
                 c => c.LocaleConfigFile!,
                 new YamlMemberAttribute { Alias = "locale_configfile", ApplyNamingConventions = false });
+
+    private static readonly Lazy<IDeserializer> Deserializer = new(() =>
+    {
+        var builder = ConfigureNamingAndAliases(
+            new DeserializerBuilder()
+                .WithCaseInsensitivePropertyMatching()
+                // Cloud-init's runtime behaviour for unknown cloud-config keys
+                // (see cloudinit/config/schema.py `validate_cloudconfig_schema`)
+                // is "warn and continue", NOT "fail" and NOT "silent". We mirror
+                // that: deserialization is tolerant (this flag), and a separate
+                // top-level walker calls the caller-supplied `onUnknownKey`
+                // callback so the DI'd `CloudConfigSerializer` can log at
+                // Warning. Cross-cloud cloud-config with Linux-only keys
+                // (apt, snap, ntp_client, …) parses cleanly; typos like
+                // `hsotname:` surface visibly in the cloud-init.log analogue.
+                .IgnoreUnmatchedProperties())
+            // The shorthand converters below are attached via per-property
+            // YamlConverterAttribute so a scalar can stand in for a list on
+            // read. They are read-only concerns: the serialiser emits the
+            // canonical list/sequence form and needs none of them.
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshAuthorizedKeys!,
+                new YamlConverterAttribute(typeof(StringListYamlConverter)))
+            .WithAttributeOverride<CloudConfig>(
+                c => c.Runcmd!,
+                new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
+            .WithAttributeOverride<CloudConfig>(
+                c => c.Bootcmd!,
+                new YamlConverterAttribute(typeof(RuncmdListYamlConverter)))
+            .WithAttributeOverride<CloudConfig>(
+                c => c.SshImportId!,
+                new YamlConverterAttribute(typeof(StringListYamlConverter)))
+            .WithAttributeOverride<PhoneHomeConfig>(
+                p => p.Post!,
+                new YamlConverterAttribute(typeof(StringListYamlConverter)))
+            .WithAttributeOverride<WriteFileConfig>(
+                w => w.Permissions!,
+                new YamlConverterAttribute(typeof(WriteFilePermissionsYamlConverter)));
 
         // Build the type inspector first as some of our type converters require it.
         var typeInspector = builder.BuildTypeInspector();
@@ -109,6 +123,35 @@ public static class CloudConfigYamlSerializer
                 s => s.Before<DictionaryNodeDeserializer>())
             .Build();
     });
+
+    private static readonly Lazy<ISerializer> Serializer = new(() =>
+        ConfigureNamingAndAliases(new SerializerBuilder())
+            // RuncmdEntry and BoolOrString do not map to a plain mapping/scalar
+            // by default — they need the two-shape (string|sequence) and
+            // bool|string emitters. Records (users, write_files, …), lists, and
+            // dictionaries all serialise correctly via the defaults, so the
+            // read-only shorthand converters are intentionally NOT registered.
+            .WithTypeConverter(new RuncmdEntryYamlTypeConverter())
+            .WithTypeConverter(new BoolOrStringYamlConverter())
+            // Omit unset members so the emitted document carries only the keys
+            // the cloud-config actually set. OmitDefaults (not OmitNull) also
+            // drops non-nullable value-type defaults such as an Empty
+            // BoolOrString (manage_etc_hosts / resize_rootfs / power_state).
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults)
+            .Build());
+
+    /// <summary>
+    /// Serialize a <see cref="CloudConfig"/> back to a <c>#cloud-config</c>
+    /// YAML document. Uses the same naming conventions and key aliases as
+    /// <see cref="Deserialize(string)"/>, so the result round-trips: parsing
+    /// the output yields an equivalent model. Unset members are omitted.
+    /// </summary>
+    public static string Serialize(CloudConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        var body = Serializer.Value.Serialize(config);
+        return "#cloud-config\n" + body;
+    }
 
     public static CloudConfig Deserialize(string yaml) => Deserialize(yaml, onUnknownKey: null);
 
@@ -158,6 +201,11 @@ public static class CloudConfigYamlSerializer
             .Select(f => f.YamlName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase));
 
+    // cloud-init merge directives — recognised top-level keys that are not
+    // part of the cloud-config schema (handled by MergeDirectiveReader).
+    private static readonly HashSet<string> MergeDirectiveKeys =
+        new(["merge_how", "merge_type"], StringComparer.OrdinalIgnoreCase);
+
     private static void WalkForUnknownTopLevelKeys(string yaml, Action<string> onUnknownKey)
     {
         // Parse to YamlDocument so we can inspect the keys without going
@@ -183,6 +231,10 @@ public static class CloudConfigYamlSerializer
             if (entry.Key is not YamlScalarNode keyNode) continue;
             var keyName = keyNode.Value;
             if (string.IsNullOrEmpty(keyName)) continue;
+            // merge_how / merge_type are cloud-init merge directives (RFC 0032),
+            // not config keys — recognised, but intentionally absent from the
+            // typed model, so they must not surface as "unknown key" warnings.
+            if (MergeDirectiveKeys.Contains(keyName)) continue;
             if (!known.Contains(keyName))
                 onUnknownKey(keyName);
         }

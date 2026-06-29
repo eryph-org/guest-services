@@ -25,6 +25,10 @@ public interface IUserDataResolutionContext
 {
     void MergeCloudConfig(CloudConfig.CloudConfig fragment);
 
+    // Merge a fragment using its cloud-init merge_how / merge_type directive
+    // (RFC 0032). The parameterless overload uses the cloud-init default.
+    void MergeCloudConfig(CloudConfig.CloudConfig fragment, CloudInitMergeOptions options);
+
     void AddScript(ScriptPayload script);
 
     void AddBoothook(BoothookPayload boothook);

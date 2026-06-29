@@ -28,6 +28,29 @@ internal class RuncmdEntryYamlTypeConverter : IYamlTypeConverter
         };
     }
 
-    public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer) =>
-        serializer(value, type);
+    public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
+    {
+        // A RuncmdEntry serialises back to one of cloud-init's two runcmd
+        // shapes — a shell-command string or an argv sequence — NOT to a
+        // mapping of its internal fields. Default serialisation would emit
+        // the record's properties, which is invalid runcmd.
+        // Fail fast rather than emit a broken runcmd entry: a null or
+        // non-RuncmdEntry value here is a programming error, not valid input.
+        ArgumentNullException.ThrowIfNull(value);
+        if (value is not RuncmdEntry entry)
+            throw new InvalidOperationException(
+                $"Expected a {nameof(RuncmdEntry)} to serialise, got {value.GetType().Name}.");
+
+        if (entry.IsShellCommand)
+        {
+            emitter.Emit(new Scalar(entry.Command ?? string.Empty));
+            return;
+        }
+
+        emitter.Emit(new SequenceStart(
+            AnchorName.Empty, TagName.Empty, isImplicit: true, SequenceStyle.Flow));
+        foreach (var arg in entry.Argv ?? [])
+            emitter.Emit(new Scalar(arg));
+        emitter.Emit(new SequenceEnd());
+    }
 }

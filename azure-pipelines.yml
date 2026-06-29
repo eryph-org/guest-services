@@ -95,10 +95,10 @@ jobs:
       targetPath: '$(Build.ArtifactStagingDirectory)/$(toolArtifactName)'
       artifactName: tool
 
-  # Library packages consumed by eryph (hvsocket + KVP). Only the four
-  # IsPackable=true libraries emit a .nupkg; everything else in src/ is
-  # IsPackable=false (set in src/Directory.Build.props), so the glob is
-  # safe. Version comes from GitVersion.MsBuild in the projects.
+  # Library packages consumed by eryph. Only the IsPackable=true libraries
+  # emit a .nupkg; everything else in src/ is IsPackable=false (set in
+  # src/Directory.Build.props), so the glob is safe. Version comes from
+  # GitVersion.MsBuild in the projects.
   - task: DotNetCoreCLI@2
     displayName: dotnet pack (libraries)
     inputs:

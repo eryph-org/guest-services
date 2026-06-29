@@ -41,13 +41,32 @@ internal sealed class BoolOrStringYamlConverter : IYamlTypeConverter
 
     public void WriteYaml(IEmitter emitter, object? value, Type type, ObjectSerializer serializer)
     {
-        // The agent reads cloud-config but does not currently emit it. If
-        // a future serialise path needs to round-trip BoolOrString it must
-        // decide how to express the empty case (skip the key entirely?
-        // emit `~`?) — leaving as NotImplementedException so the gap is
-        // obvious if someone wires up a serialise path before the design
-        // question is answered.
-        throw new NotImplementedException(
-            "Serialising BoolOrString is not implemented — the agent only reads cloud-config.");
+        var bos = value is BoolOrString b ? b : BoolOrString.Empty;
+
+        if (bos.IsBool)
+        {
+            // Plain scalar so it resolves back to a YAML 1.1 bool token on read.
+            emitter.Emit(new Scalar(bos.Bool!.Value ? "true" : "false"));
+            return;
+        }
+
+        if (bos.IsString)
+        {
+            var text = bos.String!;
+            // A string variant whose text is a bool token (e.g. "yes") MUST be
+            // quoted, otherwise the deserialiser would read it back as a Bool.
+            // Empty strings are quoted too so they are not parsed as Empty.
+            var style = text.Length == 0 || Yaml11BoolTokens.IsBoolToken(text)
+                ? ScalarStyle.SingleQuoted
+                : ScalarStyle.Any;
+            emitter.Emit(new Scalar(
+                AnchorName.Empty, TagName.Empty, text, style,
+                isPlainImplicit: true, isQuotedImplicit: true));
+            return;
+        }
+
+        // Empty: OmitDefaults normally drops the property before we reach here,
+        // so this is a defensive fallback emitting an explicit empty scalar.
+        emitter.Emit(new Scalar(string.Empty));
     }
 }
