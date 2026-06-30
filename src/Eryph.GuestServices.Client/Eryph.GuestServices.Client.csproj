@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Consumed by eryph: programmatic, in-process access to a catlet guest's
+         egs SSH server over either transport (the local Hyper-V socket or the
+         off-host eryph remote channel). Establishes an authenticated session and
+         pushes access keys; the file/directory operations come from
+         Eryph.GuestServices.DevTunnels.Ssh.Client. Cross-platform — the Windows
+         key-store helpers stay in egs-tool; callers inject the IKeyPair. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.Client</PackageId>
+    <Description>Client library for eryph guest services: connect to a catlet guest over the Hyper-V socket or the eryph remote channel, establish an authenticated SSH session, and authorize access keys.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Eryph.ClientRuntime.Configuration" Version="0.10.0" />
+    <PackageReference Include="Eryph.ComputeClient" Version="0.15.0-beta.21" />
+    <PackageReference Include="Eryph.IdentityModel.Clients" Version="0.7.0" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.29" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Client\Eryph.GuestServices.DevTunnels.Ssh.Client.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Protocol\Eryph.GuestServices.DevTunnels.Ssh.Protocol.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.Sockets\Eryph.GuestServices.Sockets.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.Client.Tests" />
+  </ItemGroup>
+
+</Project>

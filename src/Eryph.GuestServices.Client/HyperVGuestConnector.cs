@@ -1,20 +1,19 @@
 using System.Net.Sockets;
 using Eryph.GuestServices.Core;
 using Eryph.GuestServices.Sockets;
+using Microsoft.DevTunnels.Ssh.Algorithms;
 
-namespace Eryph.GuestServices.Tool.Transport;
+namespace Eryph.GuestServices.Client;
 
-// Reaches the guest over the local Hyper-V socket using the machine-wide service
-// client key created by 'initialize'. This is egs-tool's original transport; it
-// requires host access and the elevated key, and trusts the server because the
-// socket is only reachable by local administrators.
-internal sealed class HyperVGuestConnector(Guid vmId) : IGuestConnector
+// Reaches the guest over the local Hyper-V socket. This is egs-tool's original
+// transport; it requires host access and trusts the server because the socket is
+// only reachable by local administrators. The caller supplies the key pair to
+// authenticate with (the machine-wide service key for egs-tool, or any key the
+// guest authorizes for an embedding host).
+public sealed class HyperVGuestConnector(Guid vmId, IKeyPair keyPair) : IGuestConnector
 {
     public async Task<GuestSshConnection> ConnectAsync(CancellationToken cancellation)
     {
-        var keyPair = await ClientKeyHelper.GetKeyPairAsync()
-            ?? throw new GuestConnectionException("No SSH key found. Have you run the initialize command?");
-
         var socket = await SocketFactory.CreateClientSocket(vmId, Constants.ServiceId);
         var stream = new NetworkStream(socket, ownsSocket: true);
         try

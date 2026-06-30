@@ -4,7 +4,7 @@ using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Events;
 
-namespace Eryph.GuestServices.Tool.Transport;
+namespace Eryph.GuestServices.Client;
 
 // The transport-neutral half of establishing a guest session: given an open
 // bidirectional stream and the client key, run the SSH connect + public-key

@@ -1,3 +1,4 @@
+using Eryph.GuestServices.Client;
 using Eryph.GuestServices.Tool.Commands;
 using Eryph.GuestServices.Tool.Transport;
 using Microsoft.DevTunnels.Ssh;
@@ -25,8 +26,8 @@ public sealed class CatletDownloadFileCommand : GuestTransferCommand<CatletDownl
         [CommandOption("--identity <PATH>")] public string? Identity { get; set; }
     }
 
-    protected override IGuestConnector CreateConnector(Settings settings) =>
-        new EryphGuestConnector(
+    protected override Task<IGuestConnector> CreateConnectorAsync(Settings settings) =>
+        ToolGuestConnectors.CreateEryphAsync(
             settings.CatletId, settings.ClientId, settings.Configuration, settings.Identity,
             writeWarning: msg => AnsiConsole.MarkupLineInterpolated($"[orange3]{msg}[/]"));
 

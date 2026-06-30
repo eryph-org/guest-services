@@ -1,9 +1,8 @@
 using System.Net.WebSockets;
 using Eryph.ComputeClient;
 using Eryph.ComputeClient.Models;
-using Eryph.GuestServices.Tool.Transport;
 
-namespace Eryph.GuestServices.Tool.Eryph;
+namespace Eryph.GuestServices.Client;
 
 // Opens the eryph remote SSH *data plane*: starts the OpenSshChannel operation,
 // polls for the one-time channel token, then connects the authenticated
@@ -13,7 +12,7 @@ namespace Eryph.GuestServices.Tool.Eryph;
 // ProxyCommand alias) and the in-process catlet file/directory commands (which
 // run an SshClientSession over it via WebSocketStream), so the channel-open
 // contract lives in exactly one place.
-internal static class EryphChannel
+public static class EryphChannel
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(30);
@@ -39,7 +38,7 @@ internal static class EryphChannel
         {
             operationId = (await catlets.OpenSshChannelAsync(catletId)).Value.Id;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GuestConnectionException($"Failed to start the SSH channel: {ex.Message}");
         }
@@ -55,7 +54,7 @@ internal static class EryphChannel
         {
             accessToken = await connection.GetAccessTokenAsync([EryphConnection.RemoteAccessScope]);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GuestConnectionException($"Failed to acquire an access token: {ex.Message}");
         }
@@ -83,6 +82,10 @@ internal static class EryphChannel
         catch (Exception ex)
         {
             webSocket.Dispose();
+            // Honour a real cancellation as cancellation; do not mask it as a
+            // connection failure.
+            if (ex is OperationCanceledException)
+                throw;
             // DNS/TLS/401/upgrade failure: surface one concise message.
             throw new GuestConnectionException($"Failed to open the SSH channel connection: {ex.Message}");
         }

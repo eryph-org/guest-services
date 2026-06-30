@@ -1,6 +1,6 @@
 using Microsoft.DevTunnels.Ssh;
 
-namespace Eryph.GuestServices.Tool.Transport;
+namespace Eryph.GuestServices.Client;
 
 // An authenticated guest SSH session bundled with the transport stream it runs
 // on, so a command can 'await using' a single object and dispose both in the

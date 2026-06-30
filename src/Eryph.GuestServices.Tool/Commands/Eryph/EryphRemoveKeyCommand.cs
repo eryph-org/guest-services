@@ -1,4 +1,4 @@
-using Eryph.GuestServices.Tool.Eryph;
+using Eryph.GuestServices.Client;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
