@@ -38,7 +38,7 @@ public static class EryphChannel
         {
             operationId = (await catlets.OpenSshChannelAsync(catletId)).Value.Id;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GuestConnectionException($"Failed to start the SSH channel: {ex.Message}");
         }
@@ -54,7 +54,7 @@ public static class EryphChannel
         {
             accessToken = await connection.GetAccessTokenAsync([EryphConnection.RemoteAccessScope]);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GuestConnectionException($"Failed to acquire an access token: {ex.Message}");
         }
@@ -82,6 +82,10 @@ public static class EryphChannel
         catch (Exception ex)
         {
             webSocket.Dispose();
+            // Honour a real cancellation as cancellation; do not mask it as a
+            // connection failure.
+            if (ex is OperationCanceledException)
+                throw;
             // DNS/TLS/401/upgrade failure: surface one concise message.
             throw new GuestConnectionException($"Failed to open the SSH channel connection: {ex.Message}");
         }

@@ -36,7 +36,7 @@ public static class GuestAccessKey
             await connection.CreateCatletsClient(EryphConnection.RemoteAccessScope)
                 .AddAccessKeyAsync(catletId, body, cancellation);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             throw new GuestConnectionException($"Failed to add the key: {ex.Message}");
         }

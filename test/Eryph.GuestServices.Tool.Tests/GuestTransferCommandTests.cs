@@ -34,10 +34,44 @@ public class GuestTransferCommandTests
         command.TransferInvoked.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ExecuteAsync_ConnectorFactoryThrowsGuestConnectionException_ReturnsMinusOneAndSkipsTransfer()
+    {
+        // Key resolution now runs in CreateConnectorAsync (before ConnectAsync), so
+        // a failure there — e.g. "No SSH key found" from ToolGuestConnectors — must
+        // be caught by the same try/catch and never reach the transfer.
+        var command = new FactoryThrowingCommand(
+            new GuestConnectionException("No SSH key found. Have you run the initialize command?"));
+
+        var result = await command.ExecuteAsync(null!, new FactoryThrowingCommand.Settings());
+
+        result.Should().Be(-1);
+        command.TransferInvoked.Should().BeFalse();
+    }
+
     private sealed class ThrowingConnector(Exception exception) : IGuestConnector
     {
         public Task<GuestSshConnection> ConnectAsync(CancellationToken cancellation) =>
             throw exception;
+    }
+
+    // Mirrors the real (async) ToolGuestConnectors factory failing during key /
+    // connection resolution: a faulted task from CreateConnectorAsync.
+    private sealed class FactoryThrowingCommand(Exception exception)
+        : GuestTransferCommand<FactoryThrowingCommand.Settings>
+    {
+        public bool TransferInvoked { get; private set; }
+
+        public sealed class Settings : CommandSettings;
+
+        protected override Task<IGuestConnector> CreateConnectorAsync(Settings settings) =>
+            Task.FromException<IGuestConnector>(exception);
+
+        protected override Task<int> TransferAsync(SshSession session, Settings settings)
+        {
+            TransferInvoked = true;
+            return Task.FromResult(0);
+        }
     }
 
     private sealed class TestCommand(IGuestConnector connector)

@@ -13,7 +13,7 @@ namespace Eryph.GuestServices.Tool.Transport;
 internal static class ToolGuestConnectors
 {
     // Hyper-V socket: the machine-wide service client key created by 'initialize'.
-    public static async Task<IGuestConnector> CreateHyperVAsync(Guid vmId)
+    internal static async Task<IGuestConnector> CreateHyperVAsync(Guid vmId)
     {
         var keyPair = await ClientKeyHelper.GetKeyPairAsync()
             ?? throw new GuestConnectionException(
@@ -24,7 +24,7 @@ internal static class ToolGuestConnectors
 
     // eryph channel: resolve the connection the same way the eryph CLI does, then
     // the operator's managed key (created on demand) or the BYOK identity key.
-    public static async Task<IGuestConnector> CreateEryphAsync(
+    internal static async Task<IGuestConnector> CreateEryphAsync(
         string catletId,
         string? clientId,
         string? configurationName,

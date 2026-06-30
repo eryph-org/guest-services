@@ -33,7 +33,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Eryph.GuestServices.Tool.Tests" />
     <InternalsVisibleTo Include="Eryph.GuestServices.Client.Tests" />
   </ItemGroup>
 
