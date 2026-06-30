@@ -41,17 +41,18 @@ public class OpenSshKeyBytesTests
         result.Should().Equal(0x80, 0x0A, 0xFF, 0x0D, 0x80, 0x0A);
     }
 
-    [Fact]
+    [SkippableFact]
     public void DevTunnels_ExportsOpenSshKeyWithCrlf_OnWindows_WhichIsWhyWeNormalize()
     {
         // Canary for the upstream quirk this whole helper exists for: on Windows,
         // DevTunnels' KeyData.EncodePem builds the PEM with Environment.NewLine, so
-        // the exported key carries CRLF, which MSYS/MINGW libcrypto rejects. This
-        // test deliberately documents that precondition: if it ever starts failing
-        // (DevTunnels switched to LF, or this runs on a non-CRLF platform), the LF
-        // normalization may have become a no-op worth revisiting — it is NOT a
-        // failure of NormalizeLineEndingsToLf, which the test below verifies on its
-        // own without depending on the producer's line endings.
+        // the exported key carries CRLF, which MSYS/MINGW libcrypto rejects. The
+        // quirk is Windows-only (Environment.NewLine is LF elsewhere), so the canary
+        // is gated to Windows; the regression below verifies NormalizeLineEndingsToLf
+        // itself on every platform without depending on the producer's line endings.
+        Skip.IfNot(OperatingSystem.IsWindows(),
+            "DevTunnels emits CRLF only on Windows (Environment.NewLine).");
+
         var keyPair = SshAlgorithms.PublicKey.ECDsaSha2Nistp256.GenerateKeyPair();
         var exported = KeyPair.ExportPrivateKeyBytes(keyPair, keyFormat: KeyFormat.OpenSsh);
 
