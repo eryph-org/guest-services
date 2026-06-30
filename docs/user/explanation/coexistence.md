@@ -43,8 +43,8 @@ datasource reads the `config-2` ISO that OpenStack produces.
 
 ## Hyper-V (eryph)
 
-No native agent — the agent is it. eryph-zero attaches a `config-2` drive and
-the agent reports back over Hyper-V KVP.
+No native agent — the agent is it. eryph-zero attaches a NoCloud `cidata` seed
+disk and the agent reports back over Hyper-V KVP.
 
 ## An existing cloudbase-init
 

@@ -60,13 +60,18 @@ resumes afterward.
 ## ApplyNetworkConfig
 
 Applies a network-config document (v1 or v2) to the guest. The document comes
-from the datasource — for example inside a `config-2` ConfigDrive — not from
-cloud-config. See [Configure networking](../howto/configure-networking.md).
+from the datasource — for eryph, a v1 network-config on the NoCloud seed disk
+(a `cidata` volume) — not from cloud-config. See
+[Configure networking](../howto/configure-networking.md).
 
 Adapters are matched by MAC address. For each match the module applies the
-addresses (IPv4 and IPv6, static or DHCP), gateways, routes, DNS servers and
-search suffixes, and MTU. An entry whose MAC matches no adapter is skipped with
-a warning; an absent network-config is a no-op.
+addresses, gateways, routes, DNS servers and search suffixes, and MTU — IPv4 and
+IPv6 for v2, IPv4 only for v1. An entry whose MAC matches no adapter is skipped
+with a warning; an absent network-config is a no-op. Constructs outside that
+subset (bonds, bridges, VLANs, and per-interface options the agent doesn't
+honour) are logged with a warning rather than applied. See
+[Configure networking](../howto/configure-networking.md) for the full coverage
+matrix.
 
 ## NtpClient
 

@@ -20,8 +20,8 @@ module names, frequencies, and semaphore layout — adapted to Windows.
   plain Hyper-V VM. Provisioning is in the same binary but optional: no
   datasource means the agent logs *No data source available* once and
   exits. Remote access keeps working.
-- **eryph.** Every catlet boots with `egs-service`. It finds the
-  `config-2` ConfigDrive eryph-zero attaches and applies the cloud-config
+- **eryph.** Every catlet boots with `egs-service`. It finds the NoCloud
+  `cidata` seed disk eryph-zero attaches and applies the cloud-config
   fodder. State and reporting flow through Hyper-V KVP.
 - **Other clouds (work in progress).** A cloudbase-init replacement for
   Hyper-V / OpenStack / Azure guests outside eryph. The Azure datasource

@@ -20,6 +20,7 @@ expect. The differences that matter:
 | Linux-only keys (`apt`, `snap`, `chef`, …) | Accepted and logged at Info; they do nothing on Windows. `egs-service validate --target windows` flags them. |
 | Reporting | Log and Hyper-V KVP only. No webhook or cloud-native backend. |
 | Vendor-data | Read and discarded; not merged into cloud-config. |
+| network-config coverage | Only the per-interface IP subset is applied — addresses, gateways, routes, DNS servers and search, MTU (IPv4 + IPv6 for v2, IPv4 only for v1). Bonds, bridges, VLANs, and per-interface options (`dhcp4`/`dhcp6-overrides`, `routing-policy`, `set-name`, `wakeonlan`, `accept-ra`) are parsed but **not applied** — logged as warnings. cloud-init applies the full schema via netplan. See the [coverage matrix](../howto/configure-networking.md#coverage-matrix). |
 
 Random passwords are rejected rather than generated because cloud-init returns
 the generated value over the system console (`/dev/console`), and Windows guests
@@ -47,7 +48,9 @@ and `version: 1.10` into `"1.1"`. The agent keeps what you wrote.
   per-boot / per-once frequencies.
 - `reset` matches `cloud-init clean`; `collect-logs` matches
   `cloud-init collect-logs`.
-- network-config v1 and v2, including IPv6, routes, DNS search domains, and MTU.
+- Reading network-config v1 and v2 and matching adapters by MAC (the *applied*
+  subset is narrower than cloud-init — see the network-config row above and the
+  [coverage matrix](../howto/configure-networking.md#coverage-matrix)).
 - `chpasswd.expire`, `write_files.defer`, `prefer_fqdn_over_hostname`, and
   `users[].gecos` (mapped to the Windows full name).
 - Per-stage module selection (`enabledModules` / `disabledModules`) and

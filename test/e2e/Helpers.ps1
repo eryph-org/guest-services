@@ -896,33 +896,68 @@ function Save-GuestDiagnostics {
   try { New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null } catch { }
   Write-Host "Collecting guest diagnostics to $OutputDir ..."
 
+  # Files pulled byte-for-byte over the egs VMBus channel. egs-tool download-file
+  # takes the VmId and needs no SSH alias or shell, so (a) there is no
+  # $-variable double-evaluation to corrupt them, (b) it works on a FAILED run
+  # before add-ssh-config has even succeeded, and (c) it sidesteps scp — egs
+  # exposes no SFTP subsystem, so scp against the egs server always fails.
+  # agent.log is THE key diagnostic (the agent's own operational log); it was
+  # previously never captured.
+  $pulls = [ordered]@{
+    'agent.log'       = 'C:\ProgramData\eryph\guest-services\logs\agent.log'
+    'state.json'      = 'C:\ProgramData\eryph\provisioning\state.json'
+    'datasource.json' = 'C:\ProgramData\eryph\provisioning\datasource.json'
+  }
+
+  # Dynamic queries that have to run in the guest. egs already runs every SSH
+  # exec command through `powershell -Command "<command>"`, so we send the BARE
+  # script — re-wrapping it in another `powershell -NoProfile -Command "..."`
+  # makes the guest evaluate it TWICE, expanding $_/$d host-side to nothing
+  # before the inner shell runs (issue #52). All scripts use single quotes only
+  # so they survive intact with no embedded double quotes to break the wrap.
+  #
+  # The config drive is eryph's NoCloud cidata ISO: volume label 'cidata' with
+  # meta-data / user-data / network-config at the root (NOT an OpenStack
+  # 'config-2' volume with an \openstack\ tree).
+  $cidata = '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''cidata'').DriveLetter; if ($d)'
   $probes = [ordered]@{
-    'state.json' =
-      'Get-Content -Raw -LiteralPath C:\ProgramData\eryph\provisioning\state.json'
     'provisioning-tree.txt' =
       'Get-ChildItem -Recurse -Path C:\ProgramData\eryph\provisioning -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName'
-    'script-logs.txt' =
-      'Get-ChildItem -Path C:\ProgramData\eryph\provisioning\logs -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName }'
     'eventlog.txt' =
       'Get-WinEvent -LogName Application -MaxEvents 300 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match ''eryph|egs'' -or $_.Message -match ''provisioning|egs-service'' } | Sort-Object TimeCreated | Format-List TimeCreated, LevelDisplayName, ProviderName, Message | Out-String'
     'configdrive-tree.txt' =
-      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } else { ''config-2 volume not found'' }'
-    'configdrive-user-data.txt' =
-      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter user_data -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+      "$cidata { Get-ChildItem -Recurse -LiteralPath (`$d + ':\') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName } else { 'cidata volume not found' }"
     'configdrive-meta-data.txt' =
-      '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''config-2'').DriveLetter; if ($d) { Get-ChildItem -Recurse -Path ($d + '':\openstack'') -Filter meta_data.json -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName; ''-----''; Get-Content -Raw -LiteralPath $_.FullName } }'
+      "$cidata { Get-Content -Raw -LiteralPath (`$d + ':\meta-data') -ErrorAction SilentlyContinue } else { 'cidata volume not found' }"
+    'configdrive-network-config.txt' =
+      "$cidata { Get-Content -Raw -LiteralPath (`$d + ':\network-config') -ErrorAction SilentlyContinue } else { 'cidata volume not found' }"
+    'configdrive-user-data.txt' =
+      "$cidata { Get-Content -Raw -LiteralPath (`$d + ':\user-data') -ErrorAction SilentlyContinue } else { 'cidata volume not found' }"
   }
 
   # ssh.exe non-zero exits must not abort the loop.
   $savedPref = $PSNativeCommandUseErrorActionPreference
   $PSNativeCommandUseErrorActionPreference = $false
   try {
+    foreach ($name in $pulls.Keys) {
+      $dest = Join-Path $OutputDir $name
+      try {
+        egs-tool download-file $vmId $pulls[$name] $dest 2>&1 | Out-Null
+        if (-not (Test-Path -LiteralPath $dest)) {
+          Set-Content -LiteralPath $dest -Value "(not present in guest: $($pulls[$name]))"
+        }
+      }
+      catch {
+        Set-Content -LiteralPath $dest -Value "download failed: $_"
+      }
+    }
+
     foreach ($name in $probes.Keys) {
       $dest = Join-Path $OutputDir $name
       try {
-        $script = $probes[$name]
+        # Bare script — egs wraps it in powershell -Command itself (issue #52).
         $out = ssh.exe -o StrictHostKeyChecking=no -o ConnectTimeout=10 $hostName `
-          "powershell -NoProfile -Command `"$script`"" 2>&1
+          $probes[$name] 2>&1
         Set-Content -LiteralPath $dest -Value ($out | Out-String)
       }
       catch {
@@ -931,12 +966,11 @@ function Save-GuestDiagnostics {
     }
 
     # Also pull the egs-service collect-logs bundle (state + per-script logs).
+    # Build it via a bare exec command, then fetch with download-file (no scp).
     try {
       $bundleCmd = "& 'C:\Program Files\eryph\guest-services\bin\egs-service.exe' collect-logs C:\Windows\Temp\egs-bundle.zip"
-      ssh.exe -o StrictHostKeyChecking=no $hostName `
-        "powershell -NoProfile -Command `"$bundleCmd`"" 2>&1 | Out-Null
-      scp.exe -o StrictHostKeyChecking=no `
-        "${hostName}:C:/Windows/Temp/egs-bundle.zip" (Join-Path $OutputDir 'egs-bundle.zip') 2>&1 | Out-Null
+      ssh.exe -o StrictHostKeyChecking=no $hostName $bundleCmd 2>&1 | Out-Null
+      egs-tool download-file $vmId 'C:\Windows\Temp\egs-bundle.zip' (Join-Path $OutputDir 'egs-bundle.zip') 2>&1 | Out-Null
     }
     catch {
       Write-Host "collect-logs bundle pull failed (non-fatal): $_"

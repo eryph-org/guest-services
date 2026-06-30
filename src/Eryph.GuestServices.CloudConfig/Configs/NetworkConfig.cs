@@ -21,9 +21,11 @@ public sealed record NetworkConfig
 
 public sealed record NetworkEthernetConfig
 {
-    // The cloud-init v2 'match' clause is a sub-object (name / macaddress / driver).
-    // For v1 we keep it as a free-form string. A richer model can land later if needed.
-    public string? Match { get; init; }
+    // The cloud-init v2 'match' clause is a sub-object (name / macaddress / driver)
+    // used to bind this entry to a physical NIC. On Windows we match by MAC, so
+    // Match.MacAddress is the selector the applier honours. v1 does not use it
+    // (v1 carries the MAC on the entry as mac_address -> MacAddress).
+    public NetworkMatch? Match { get; init; }
 
     public bool? Dhcp4 { get; init; }
 
@@ -42,6 +44,12 @@ public sealed record NetworkEthernetConfig
     public string? MacAddress { get; init; }
 
     public IReadOnlyList<NetworkRoute>? Routes { get; init; }
+
+    // v2 keys that are present in the document but NOT applied on Windows
+    // (e.g. dhcp4-overrides, routing-policy, set-name). Captured at parse time
+    // purely so the applier can warn instead of silently dropping them — the
+    // names are the cloud-init/netplan spellings, for the log message.
+    public IReadOnlyList<string>? UnsupportedOptions { get; init; }
 }
 
 public sealed record NetworkBondConfig
@@ -61,6 +69,18 @@ public sealed record NetworkVlanConfig
     public string? Link { get; init; }
 
     public int? Id { get; init; }
+}
+
+// cloud-init v2 'match' selector. Any combination of name (glob), macaddress
+// and driver may be present; cloud-init applies the entry to NICs matching all
+// the given criteria. The Windows applier only resolves adapters by MAC today.
+public sealed record NetworkMatch
+{
+    public string? Name { get; init; }
+
+    public string? MacAddress { get; init; }
+
+    public string? Driver { get; init; }
 }
 
 public sealed record NetworkNameservers

@@ -473,11 +473,53 @@ internal sealed class WindowsOs : IWindowsOs
         CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetIpv4DefaultGateway(interfaceIndex, gateway), cancellationToken);
 
-    public Task SetDnsServersAsync(
+    public async Task SetDnsServersAsync(
         int interfaceIndex,
         IReadOnlyList<string> dnsServers,
-        CancellationToken cancellationToken) =>
-        Task.Run(() => CimNetworking.SetDnsServers(interfaceIndex, dnsServers), cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        // DNS servers are set via the Set-DnsClientServerAddress cmdlet, not CIM.
+        // MSFT_DNSClientServerAddress exposes no settable property (ServerAddresses
+        // is ReadOnly) and no static set method (only RequestStateChange); the
+        // cmdlet sets DNS through a parameterized ModifyInstance envelope that a
+        // raw MI ModifyInstance cannot reproduce — the DCOM provider rejects the
+        // custom options with "Invalid parameter". The cmdlet takes the interface
+        // index directly and assigns a mixed IPv4+IPv6 list to the correct family,
+        // so the whole list goes in one call. An empty list resets the interface
+        // back to DHCP-provided servers.
+        await RunOrThrowAsync(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-Command", BuildSetDnsServersCommand(interfaceIndex, dnsServers)],
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    // internal for unit testing — the -Command string is a composition root we
+    // want exercised directly (a wrong cmdlet/parameter name or a quoting slip
+    // would otherwise only surface on a real guest). Null/blank entries are
+    // dropped first: the YAML 1.1 resolver turns a `~`/`null`/empty nameserver
+    // into a null/blank string, which would NRE in FormatPsStringList or emit an
+    // invalid -ServerAddresses. A list that is empty (or empties out after that)
+    // resets the interface back to DHCP-provided servers; otherwise the whole
+    // (possibly mixed IPv4+IPv6) list is handed to the cmdlet, which assigns each
+    // address to the correct family.
+    internal static string BuildSetDnsServersCommand(int interfaceIndex, IReadOnlyList<string> dnsServers)
+    {
+        var servers = dnsServers
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s.Trim())
+            .ToList();
+
+        return servers.Count == 0
+            ? $"Set-DnsClientServerAddress -InterfaceIndex {interfaceIndex} -ResetServerAddresses -ErrorAction Stop"
+            : $"Set-DnsClientServerAddress -InterfaceIndex {interfaceIndex} "
+              + $"-ServerAddresses {FormatPsStringList(servers)} -ErrorAction Stop";
+    }
+
+    // Render a PowerShell single-quoted, comma-separated string array literal
+    // (e.g. 'a','b') for use inside a -Command script. Each value is escaped so
+    // a stray single quote can't break out of the literal.
+    private static string FormatPsStringList(IReadOnlyList<string> values) =>
+        string.Join(",", values.Select(v => $"'{EscapePsSingleQuoted(v)}'"));
 
     public Task EnableDhcp6Async(int interfaceIndex, CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetDhcp6(interfaceIndex, enabled: true), cancellationToken);

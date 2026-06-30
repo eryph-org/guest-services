@@ -346,42 +346,12 @@ internal static class CimNetworking
         }
     }
 
-    public static void SetDnsServers(int interfaceIndex, IReadOnlyList<string> dnsServers)
-    {
-        using var session = CimSession.Create(null);
-
-        // Group addresses by family so we can call SetDnsClientServerAddress
-        // once per family — passing a mixed list confuses the provider.
-        // Empty arrays reset that family back to DHCP-driven discovery.
-        var byFamily = dnsServers
-            .Select(s => (s, family: GetAddressFamily(s)))
-            .Where(t => t.family is 2 or 23)
-            .GroupBy(t => t.family);
-
-        var familiesWritten = new HashSet<ushort>();
-        foreach (var group in byFamily)
-        {
-            var family = (ushort)group.Key;
-            familiesWritten.Add(family);
-            InvokeSetDns(session, interfaceIndex, family, group.Select(t => t.s).ToArray());
-        }
-
-        // When the caller passes an empty desired list, we still need to
-        // reset both families explicitly so previously-applied DNS doesn't
-        // linger.
-        if (dnsServers.Count == 0)
-        {
-            InvokeSetDns(session, interfaceIndex, 2, Array.Empty<string>());
-            InvokeSetDns(session, interfaceIndex, 23, Array.Empty<string>());
-        }
-        else
-        {
-            // If the caller listed only IPv4 addresses, leave IPv6 alone
-            // (and vice versa). We do NOT clear families the caller didn't
-            // mention — that would surprise dual-stack guests.
-            _ = familiesWritten;
-        }
-    }
+    // NOTE: DNS server configuration intentionally does NOT live here. The
+    // MSFT_DNSClientServerAddress provider exposes no settable property
+    // (ServerAddresses is ReadOnly) and no static set method, and a raw MI
+    // ModifyInstance with the cmdlet's operation options is rejected with
+    // "Invalid parameter". DNS is therefore applied via the
+    // Set-DnsClientServerAddress cmdlet in WindowsOs.SetDnsServersAsync.
 
     public static void SetInterfaceMtu(int interfaceIndex, int mtu)
     {
@@ -406,31 +376,6 @@ internal static class CimNetworking
     }
 
     // ---- helpers ----
-
-    private static void InvokeSetDns(CimSession session, int interfaceIndex, ushort family, string[] servers)
-    {
-        using var parameters = new CimMethodParametersCollection
-        {
-            CimMethodParameter.Create("InterfaceIndex", (uint)interfaceIndex, CimType.UInt32, CimFlags.None),
-            CimMethodParameter.Create("AddressFamily", family, CimType.UInt16, CimFlags.None),
-            CimMethodParameter.Create(
-                "ServerAddresses",
-                servers,
-                CimType.StringArray,
-                servers.Length == 0 ? CimFlags.NullValue : CimFlags.None),
-            CimMethodParameter.Create("ResetServerAddresses", servers.Length == 0, CimType.Boolean, CimFlags.None),
-        };
-
-        // MSFT_DNSClientServerAddress lives at the class level; the static
-        // method SetServerAddress is the standard write path used by
-        // Set-DnsClientServerAddress under the hood.
-        using var result = session.InvokeMethod(
-            StandardCimNamespace,
-            "MSFT_DNSClientServerAddress",
-            "SetServerAddress",
-            parameters);
-        CheckReturn(result, $"MSFT_DNSClientServerAddress.SetServerAddress(family={family})");
-    }
 
     private static CimInstance? FindIpInterface(CimSession session, int interfaceIndex, ushort addressFamily)
     {
@@ -533,17 +478,5 @@ internal static class CimNetworking
         // Round-trip via IPAddress so "10.0.0.05" -> "10.0.0.5" etc.
         var ip = IPAddress.Parse(address);
         return $"{ip}/{prefix}";
-    }
-
-    private static ushort GetAddressFamily(string address)
-    {
-        if (!IPAddress.TryParse(address, out var ip))
-            return 0;
-        return ip.AddressFamily switch
-        {
-            System.Net.Sockets.AddressFamily.InterNetwork => 2,
-            System.Net.Sockets.AddressFamily.InterNetworkV6 => 23,
-            _ => 0,
-        };
     }
 }

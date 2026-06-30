@@ -44,7 +44,7 @@ fodder:
 gc demo-catlet.yaml | New-Catlet
 ```
 
-eryph-zero attaches a `config-2` ConfigDrive to the VM with the fodder
+eryph-zero attaches a NoCloud `cidata` seed disk to the VM with the fodder
 serialised as cloud-init user-data. On first boot the agent picks it up.
 
 ## Step 3 — watch the provisioning state

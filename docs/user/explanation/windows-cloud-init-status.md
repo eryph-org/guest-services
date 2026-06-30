@@ -10,7 +10,7 @@ Don't treat the non-eryph path as production-ready yet.
 
 Implemented and exercised by the eryph e2e suite:
 
-- Network-config v1/v2: MAC-matched IPv4 + IPv6, static and DHCP, per-interface routes, DNS servers and search suffixes, MTU.
+- Network-config v1/v2: MAC-matched static and DHCP addressing, per-interface routes, DNS servers and search suffixes, MTU (IPv4 + IPv6 for v2, IPv4 only for v1). Constructs outside that subset — bonds/bridges/VLANs, per-interface options — are warned, not applied. See the [coverage matrix](../howto/configure-networking.md#coverage-matrix).
 - Module frequencies: per-instance, per-boot, per-once with semaphores.
 - Datasource readiness: probe loop with exponential backoff and a shared budget.
 - Cleanup hook: fires once on full success.

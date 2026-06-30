@@ -21,6 +21,12 @@ public static class NetworkConfigYamlSerializer
             .WithEnumNamingConvention(UnderscoredNamingConvention.Instance)
             .WithNamingConvention(UnderscoredNamingConvention.Instance)
             .IgnoreUnmatchedProperties()
+            // The v2 `addresses:` list accepts both plain scalars and the
+            // advanced single-key map form; this converter keeps the address
+            // and never throws on the map shape (issue #59 failure class).
+            .WithAttributeOverride<RawEthernetConfig>(
+                e => e.Addresses!,
+                new YamlConverterAttribute(typeof(NetworkAddressListYamlConverter)))
             // PyYAML SafeLoader-equivalent YAML 1.1 scalar resolution. The
             // network-config schema has int? fields (mtu, vlan id, route
             // metric) where leading-zero octal / underscore forms must parse
@@ -28,6 +34,9 @@ public static class NetworkConfigYamlSerializer
             .WithNodeDeserializer(
                 new Yaml11ScalarResolver(),
                 s => s.Before<ScalarNodeDeserializer>())
+            // Registered so YamlDotNet can resolve the converter attached via
+            // WithAttributeOverride above (it reports Accepts(_) => false).
+            .WithTypeConverter(new NetworkAddressListYamlConverter())
             .Build());
 
     public static NetworkConfig Deserialize(string yaml)
@@ -35,11 +44,26 @@ public static class NetworkConfigYamlSerializer
         if (string.IsNullOrWhiteSpace(yaml))
             return new NetworkConfig();
 
+        // Strip a leading UTF-8 BOM if a producer (often a Windows editor, and
+        // this is Windows-side tooling) emitted one. The StringReader path below
+        // does not skip it and the parser would choke on U+FEFF before the
+        // document. Mirrors NoCloudDataSource.DecodeUtf8.
+        if (yaml[0] == '\uFEFF')
+            yaml = yaml[1..];
+
         // Wrap in a MergingParser so YAML 1.1 merge keys (`<<: *anchor`) are
         // expanded — netplan/network-config uses anchors to share common
         // interface settings, matching PyYAML SafeLoader.
         var parser = new MergingParser(new Parser(new StringReader(yaml)));
-        var raw = Deserializer.Value.Deserialize<RawNetworkConfig?>(parser) ?? new RawNetworkConfig();
+        var root = Deserializer.Value.Deserialize<RawNetworkRoot?>(parser) ?? new RawNetworkRoot();
+
+        // netplan and many cloud-init samples wrap the whole document under a
+        // top-level `network:` key (the form every /etc/netplan file uses);
+        // the bare form (version/ethernets at the root) is equally valid. When
+        // the wrapper is present it carries the real config — unwrap it so both
+        // forms parse identically instead of the wrapped one yielding an empty
+        // result (the issue #59 silent-failure class).
+        var raw = root.Network ?? root;
 
         // v1 carries a 'config' list rather than top-level ethernets/bonds/.. —
         // project the physical entries to the v2-shape Ethernets dictionary so
@@ -188,7 +212,7 @@ public static class NetworkConfigYamlSerializer
 
         return new NetworkEthernetConfig
         {
-            Match = raw.Match,
+            Match = ConvertMatch(raw.Match),
             Dhcp4 = raw.Dhcp4,
             Dhcp6 = raw.Dhcp6,
             Addresses = raw.Addresses,
@@ -198,7 +222,23 @@ public static class NetworkConfigYamlSerializer
             Mtu = raw.Mtu,
             MacAddress = raw.MacAddress,
             Routes = raw.Routes?.Select(ConvertRoute).ToList(),
+            UnsupportedOptions = CollectUnsupportedOptions(raw),
         };
+    }
+
+    // Surface v2 keys that are present but not honoured on Windows so the
+    // applier can warn. Order matches the document's logical grouping; only
+    // non-null (present) keys are listed.
+    private static IReadOnlyList<string>? CollectUnsupportedOptions(RawEthernetConfig raw)
+    {
+        var options = new List<string>();
+        if (raw.Dhcp4Overrides is not null) options.Add("dhcp4-overrides");
+        if (raw.Dhcp6Overrides is not null) options.Add("dhcp6-overrides");
+        if (raw.RoutingPolicy is not null) options.Add("routing-policy");
+        if (raw.SetName is not null) options.Add("set-name");
+        if (raw.WakeOnLan is not null) options.Add("wakeonlan");
+        if (raw.AcceptRa is not null) options.Add("accept-ra");
+        return options.Count == 0 ? null : options;
     }
 
     private static NetworkBondConfig ConvertBond(RawBondConfig? raw)
@@ -236,6 +276,21 @@ public static class NetworkConfigYamlSerializer
         };
     }
 
+    private static NetworkMatch? ConvertMatch(RawMatch? raw)
+    {
+        // Drop an empty/all-null match block so downstream "has a selector?"
+        // checks stay a simple null test.
+        if (raw is null || (raw.Name is null && raw.MacAddress is null && raw.Driver is null))
+            return null;
+
+        return new NetworkMatch
+        {
+            Name = raw.Name,
+            MacAddress = raw.MacAddress,
+            Driver = raw.Driver,
+        };
+    }
+
     private static NetworkNameservers? ConvertNameservers(RawNameservers? raw)
     {
         if (raw is null)
@@ -263,9 +318,19 @@ public static class NetworkConfigYamlSerializer
         _ => NetworkDhcpRenderer.Other,
     };
 
+    // Root shape that also accepts the `network:`-wrapped form. When the wrapper
+    // is present, YamlDotNet populates Network and leaves the inherited
+    // top-level fields at their defaults; the bare form populates the inherited
+    // fields and leaves Network null. Deserialize() picks whichever carries the
+    // config.
+    private sealed class RawNetworkRoot : RawNetworkConfig
+    {
+        public RawNetworkConfig? Network { get; set; }
+    }
+
     // Mutable raw shape so YamlDotNet can populate it; converted into the
     // immutable model above.
-    private sealed class RawNetworkConfig
+    private class RawNetworkConfig
     {
         public int Version { get; set; }
         public string? Renderer { get; set; }
@@ -313,7 +378,7 @@ public static class NetworkConfigYamlSerializer
 
     private sealed class RawEthernetConfig
     {
-        public string? Match { get; set; }
+        public RawMatch? Match { get; set; }
         public bool? Dhcp4 { get; set; }
         public bool? Dhcp6 { get; set; }
         public List<string>? Addresses { get; set; }
@@ -328,6 +393,38 @@ public static class NetworkConfigYamlSerializer
         [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
         public string? MacAddress { get; set; }
         public List<RawRoute>? Routes { get; set; }
+
+        // v2 keys we parse only to detect their PRESENCE so the applier can
+        // warn that they are not applied on Windows (rather than dropping them
+        // silently via IgnoreUnmatchedProperties). Typed loosely (object) so an
+        // arbitrary sub-shape can never throw. See CollectUnsupportedOptions.
+        [YamlMember(Alias = "dhcp4-overrides", ApplyNamingConventions = false)]
+        public object? Dhcp4Overrides { get; set; }
+        [YamlMember(Alias = "dhcp6-overrides", ApplyNamingConventions = false)]
+        public object? Dhcp6Overrides { get; set; }
+        [YamlMember(Alias = "routing-policy", ApplyNamingConventions = false)]
+        public object? RoutingPolicy { get; set; }
+        [YamlMember(Alias = "set-name", ApplyNamingConventions = false)]
+        public string? SetName { get; set; }
+        [YamlMember(Alias = "wakeonlan", ApplyNamingConventions = false)]
+        public bool? WakeOnLan { get; set; }
+        [YamlMember(Alias = "accept-ra", ApplyNamingConventions = false)]
+        public bool? AcceptRa { get; set; }
+    }
+
+    // cloud-init v2 'match' sub-map. Modelled as an object (not a string) so a
+    // `match: {macaddress: ..}` block parses instead of throwing — the bug
+    // behind issue #59, where the swallowed parse failure nulled the whole
+    // network-config.
+    private sealed class RawMatch
+    {
+        public string? Name { get; set; }
+        // netplan spells it 'macaddress' (no underscore), same as the
+        // top-level ethernet field; pin the alias so the underscored naming
+        // convention can't rewrite it to 'mac_address'.
+        [YamlMember(Alias = "macaddress", ApplyNamingConventions = false)]
+        public string? MacAddress { get; set; }
+        public string? Driver { get; set; }
     }
 
     private sealed class RawBondConfig

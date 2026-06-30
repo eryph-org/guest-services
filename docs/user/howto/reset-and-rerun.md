@@ -72,8 +72,9 @@ egs-service run --state-dir C:\Temp\state --user-data sample.yaml
 
 - It does not roll back OS state. If a user account was created, the
   account stays. If `write_files` wrote a file, the file stays.
-- It does not delete the cloud-init datasource. The cidata / config-2
-  ISO is owned by the host; the agent never ejects it on its own.
+- It does not delete the cloud-init datasource. The seed disk — a `cidata`
+  volume for eryph, or a `config-2` ISO for ConfigDrive datasources — is owned
+  by the host; the agent never ejects it on its own.
 
 ## When `state.json` is corrupted
 
