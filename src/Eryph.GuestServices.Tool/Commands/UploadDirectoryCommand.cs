@@ -1,3 +1,4 @@
+using Eryph.GuestServices.Client;
 using Eryph.GuestServices.Tool.Transport;
 using Microsoft.DevTunnels.Ssh;
 using Spectre.Console.Cli;
@@ -19,8 +20,8 @@ public sealed class UploadDirectoryCommand : GuestTransferCommand<UploadDirector
         [CommandOption("--recursive")] public bool Recursive { get; set; }
     }
 
-    protected override IGuestConnector CreateConnector(Settings settings) =>
-        new HyperVGuestConnector(settings.VmId);
+    protected override Task<IGuestConnector> CreateConnectorAsync(Settings settings) =>
+        ToolGuestConnectors.CreateHyperVAsync(settings.VmId);
 
     protected override Task<int> TransferAsync(SshSession session, Settings settings) =>
         GuestFileTransfer.UploadDirectoryAsync(

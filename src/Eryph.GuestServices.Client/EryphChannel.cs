@@ -1,9 +1,8 @@
 using System.Net.WebSockets;
 using Eryph.ComputeClient;
 using Eryph.ComputeClient.Models;
-using Eryph.GuestServices.Tool.Transport;
 
-namespace Eryph.GuestServices.Tool.Eryph;
+namespace Eryph.GuestServices.Client;
 
 // Opens the eryph remote SSH *data plane*: starts the OpenSshChannel operation,
 // polls for the one-time channel token, then connects the authenticated
@@ -13,7 +12,7 @@ namespace Eryph.GuestServices.Tool.Eryph;
 // ProxyCommand alias) and the in-process catlet file/directory commands (which
 // run an SshClientSession over it via WebSocketStream), so the channel-open
 // contract lives in exactly one place.
-internal static class EryphChannel
+public static class EryphChannel
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(30);

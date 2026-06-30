@@ -4,4 +4,4 @@ namespace Eryph.GuestServices.DevTunnels.Ssh.Extensions;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(List<RemoteFileInfo>))]
-internal partial class FileTransferJsonContext : JsonSerializerContext;
+public partial class FileTransferJsonContext : JsonSerializerContext;

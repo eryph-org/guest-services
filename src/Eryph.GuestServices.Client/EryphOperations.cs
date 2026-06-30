@@ -1,11 +1,11 @@
 using Eryph.ComputeClient;
 using Eryph.ComputeClient.Models;
 
-namespace Eryph.GuestServices.Tool.Eryph;
+namespace Eryph.GuestServices.Client;
 
 // Shared operation polling for the eryph commands. eryph's API never blocks on
 // an operation, so the client starts it and polls until it terminates.
-internal static class EryphOperations
+public static class EryphOperations
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);

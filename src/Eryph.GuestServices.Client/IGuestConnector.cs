@@ -1,4 +1,4 @@
-namespace Eryph.GuestServices.Tool.Transport;
+namespace Eryph.GuestServices.Client;
 
 // Establishes an authenticated guest SSH session over one specific transport
 // (the Hyper-V socket or the eryph channel). The transfer commands depend only

@@ -1,6 +1,6 @@
-namespace Eryph.GuestServices.Tool;
+namespace Eryph.GuestServices.Client;
 
-internal static class OpenSshKeyBytes
+public static class OpenSshKeyBytes
 {
     // Microsoft.DevTunnels.Ssh writes its PEM/SSH key text with
     // StringBuilder.AppendLine (KeyData.EncodePem), whose terminator is

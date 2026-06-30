@@ -1,4 +1,4 @@
-namespace Eryph.GuestServices.Tool.Transport;
+namespace Eryph.GuestServices.Client;
 
 // A connection or authentication failure whose message is already shaped for the
 // operator. Both transports (the Hyper-V socket and the eryph channel) throw it,

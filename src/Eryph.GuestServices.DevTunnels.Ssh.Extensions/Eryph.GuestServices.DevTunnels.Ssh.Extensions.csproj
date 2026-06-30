@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Eryph.GuestServices.Core\Eryph.GuestServices.Core.csproj" />
+    <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Protocol\Eryph.GuestServices.DevTunnels.Ssh.Protocol.csproj" />
     <ProjectReference Include="..\Eryph.GuestServices.Pty\Eryph.GuestServices.Pty.csproj" />
   </ItemGroup>
 

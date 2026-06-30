@@ -2,7 +2,7 @@ using Eryph.ClientRuntime.Configuration;
 using Eryph.ComputeClient;
 using Eryph.IdentityModel.Clients;
 
-namespace Eryph.GuestServices.Tool.Eryph;
+namespace Eryph.GuestServices.Client;
 
 // Resolves the eryph connection the same way the eryph CLI / PowerShell module
 // does: the configured user connection first (the default client of the
@@ -33,6 +33,12 @@ public sealed class EryphConnection
         Credentials = credentials;
         ComputeEndpoint = computeEndpoint;
     }
+
+    // Builds a connection from credentials and a compute endpoint the caller
+    // already has (e.g. an eryph app that is itself an authenticated client),
+    // bypassing the on-disk configuration lookup that Resolve performs.
+    public static EryphConnection For(ClientCredentials credentials, Uri computeEndpoint) =>
+        new(credentials, computeEndpoint);
 
     public ClientCredentials Credentials { get; }
 

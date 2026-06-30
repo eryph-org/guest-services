@@ -1,4 +1,4 @@
-using Eryph.ComputeClient.Models;
+using Eryph.GuestServices.Client;
 using Eryph.GuestServices.Tool.Eryph;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -57,8 +57,7 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
             return -1;
         }
 
-        string? ttlIso = null;
-        DateTimeOffset? expiresAt = null;
+        TimeSpan? parsedTtl = null;
         if (!string.IsNullOrEmpty(ttl))
         {
             if (!DurationParser.TryParse(ttl, out var parsed))
@@ -68,25 +67,17 @@ public class EryphAddKeyCommand : AsyncCommand<EryphAddKeyCommand.Settings>
                 return -1;
             }
 
-            // ISO 8601 duration (informational) plus the absolute expiry the server applies.
-            ttlIso = System.Xml.XmlConvert.ToString(parsed);
-            expiresAt = DateTimeOffset.UtcNow.Add(parsed);
+            parsedTtl = parsed;
         }
 
-        var body = new AddAccessKeyRequestBody(publicKey)
-        {
-            Ttl = ttlIso,
-            ExpiresAt = expiresAt,
-        };
-
+        DateTimeOffset? expiresAt;
         try
         {
-            await connection.CreateCatletsClient(EryphConnection.RemoteAccessScope)
-                .AddAccessKeyAsync(catletId, body);
+            expiresAt = await GuestAccessKey.AddAsync(connection, catletId, publicKey, parsedTtl);
         }
-        catch (Exception ex)
+        catch (GuestConnectionException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Failed to add the key: {ex.Message.EscapeMarkup()}[/]");
+            AnsiConsole.MarkupLine($"[red]{ex.Message.EscapeMarkup()}[/]");
             return -1;
         }
 

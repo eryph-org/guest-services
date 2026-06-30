@@ -1,11 +1,10 @@
 using System.Text;
 using AwesomeAssertions;
-using Eryph.GuestServices.Tool;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Keys;
 
-namespace Eryph.GuestServices.Tool.Tests;
+namespace Eryph.GuestServices.Client.Tests;
 
 public class OpenSshKeyBytesTests
 {

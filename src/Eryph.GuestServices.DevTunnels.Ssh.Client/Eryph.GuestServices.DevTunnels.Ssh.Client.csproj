@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Eryph.GuestServices.DevTunnels.Ssh.Extensions</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Consumed by eryph: the client half of the egs SSH extensions
+         (SshSessionClientExtensions, recursive directory transfer) that issue
+         file/list requests over an established session. The server half stays in
+         …Ssh.Extensions with its PTY hosting and TCP listener. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.DevTunnels.Ssh.Client</PackageId>
+    <Description>Client-side SSH extensions for eryph guest services: upload/download files and list directories over an established egs SSH session.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.29" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Eryph.GuestServices.DevTunnels.Ssh.Protocol\Eryph.GuestServices.DevTunnels.Ssh.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests" />
+  </ItemGroup>
+
+</Project>

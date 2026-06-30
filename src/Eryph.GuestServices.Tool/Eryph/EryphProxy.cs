@@ -1,5 +1,5 @@
 using System.Net.WebSockets;
-using Eryph.GuestServices.Tool.Transport;
+using Eryph.GuestServices.Client;
 
 namespace Eryph.GuestServices.Tool.Eryph;
 

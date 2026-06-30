@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Eryph.GuestServices.DevTunnels.Ssh.Extensions</RootNamespace>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Consumed by eryph: the wire contract (channel request types, transfer
+         messages, error codes, RemoteFileInfo) shared by the egs SSH client and
+         server. Split out of …Ssh.Extensions so the client can reference the
+         protocol without dragging in the server (SocketSshServer, PTY hosting). -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Eryph.GuestServices.DevTunnels.Ssh.Protocol</PackageId>
+    <Description>Shared wire contract (channel request types, file-transfer messages, error codes, RemoteFileInfo) for the eryph guest services SSH client and server.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.DevTunnels.Ssh" Version="3.12.29" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Eryph.GuestServices.DevTunnels.Ssh.Extensions.Tests" />
+  </ItemGroup>
+
+</Project>

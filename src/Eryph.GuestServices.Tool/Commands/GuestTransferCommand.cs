@@ -1,4 +1,4 @@
-using Eryph.GuestServices.Tool.Transport;
+using Eryph.GuestServices.Client;
 using Microsoft.DevTunnels.Ssh;
 using Spectre.Console;
 using Spectre.Console.Cli;
@@ -14,7 +14,7 @@ namespace Eryph.GuestServices.Tool.Commands;
 public abstract class GuestTransferCommand<TSettings> : AsyncCommand<TSettings>
     where TSettings : CommandSettings
 {
-    protected abstract IGuestConnector CreateConnector(TSettings settings);
+    protected abstract Task<IGuestConnector> CreateConnectorAsync(TSettings settings);
 
     protected abstract Task<int> TransferAsync(SshSession session, TSettings settings);
 
@@ -22,7 +22,8 @@ public abstract class GuestTransferCommand<TSettings> : AsyncCommand<TSettings>
     {
         try
         {
-            await using var connection = await CreateConnector(settings).ConnectAsync(CancellationToken.None);
+            var connector = await CreateConnectorAsync(settings);
+            await using var connection = await connector.ConnectAsync(CancellationToken.None);
             return await TransferAsync(connection.Session, settings);
         }
         catch (GuestConnectionException ex)

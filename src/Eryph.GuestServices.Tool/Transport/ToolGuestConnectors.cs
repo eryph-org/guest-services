@@ -1,67 +1,50 @@
-using System.Net.WebSockets;
-using Eryph.GuestServices.Tool.Eryph;
+using Eryph.GuestServices.Client;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Keys;
 
 namespace Eryph.GuestServices.Tool.Transport;
 
-// Reaches the guest over the eryph remote channel: opens the data-plane WebSocket
-// (EryphChannel) and runs the SSH session over it in-process via WebSocketStream.
-//
-// Authenticates with the operator's managed client key, or a BYOK key when an
-// identity path is given — the same keys the generated 'catlet add-ssh-config'
-// alias would present. The guest must already authorize that public key, either
-// pre-injected at build time or pushed with 'catlet add-key'.
-internal sealed class EryphGuestConnector(
-    string catletId,
-    string? clientId,
-    string? configurationName,
-    string? identityPath,
-    Action<string>? writeWarning) : IGuestConnector
+// Builds the library's guest connectors for egs-tool, resolving the SSH key from
+// the Windows key stores that stay in the tool: the machine-wide service key for
+// the Hyper-V transport, and the per-user managed key (or a BYOK identity file)
+// for the eryph channel. The library connectors themselves take an already
+// resolved IKeyPair, so this key-acquisition policy lives here, not in the lib.
+internal static class ToolGuestConnectors
 {
-    public async Task<GuestSshConnection> ConnectAsync(CancellationToken cancellation)
+    // Hyper-V socket: the machine-wide service client key created by 'initialize'.
+    public static async Task<IGuestConnector> CreateHyperVAsync(Guid vmId)
+    {
+        var keyPair = await ClientKeyHelper.GetKeyPairAsync()
+            ?? throw new GuestConnectionException(
+                "No SSH key found. Have you run the initialize command?");
+
+        return new HyperVGuestConnector(vmId, keyPair);
+    }
+
+    // eryph channel: resolve the connection the same way the eryph CLI does, then
+    // the operator's managed key (created on demand) or the BYOK identity key.
+    public static async Task<IGuestConnector> CreateEryphAsync(
+        string catletId,
+        string? clientId,
+        string? configurationName,
+        string? identityPath,
+        Action<string>? writeWarning)
     {
         var connection = EryphConnection.Resolve(clientId, configurationName)
             ?? throw new GuestConnectionException(
                 "Could not find an eryph connection. Is eryph configured or eryph-zero running?");
 
-        var keyPair = await ResolveKeyAsync();
+        var keyPair = await ResolveEryphKeyAsync(identityPath);
 
-        var webSocket = await EryphChannel.OpenAsync(connection, catletId, writeWarning, cancellation);
-
-        // Run SSH directly over the channel in-process. The .NET 10 WebSocketStream
-        // wraps the socket as a byte stream (binary frames, 0-byte read on close)
-        // and owns it, so disposing the stream closes the socket. Until the stream
-        // exists the socket is disposed directly on failure so it never leaks.
-        Stream stream;
-        try
-        {
-            stream = WebSocketStream.Create(webSocket, WebSocketMessageType.Binary, ownsWebSocket: true);
-        }
-        catch
-        {
-            webSocket.Dispose();
-            throw;
-        }
-
-        try
-        {
-            var session = await GuestSsh.EstablishSessionAsync(stream, keyPair);
-            return new GuestSshConnection(session, stream);
-        }
-        catch
-        {
-            await stream.DisposeAsync();
-            throw;
-        }
+        return new EryphGuestConnector(connection, catletId, keyPair, writeWarning);
     }
 
     // The managed key (created on demand under the operator's profile) by default,
     // or the BYOK private key the operator selected with --identity. The BYOK key
     // is loaded here because the in-process session has to sign with it, unlike
     // 'catlet add-ssh-config' which only writes its path into the ssh_config.
-    private async Task<IKeyPair> ResolveKeyAsync()
+    private static async Task<IKeyPair> ResolveEryphKeyAsync(string? identityPath)
     {
         if (string.IsNullOrEmpty(identityPath))
         {

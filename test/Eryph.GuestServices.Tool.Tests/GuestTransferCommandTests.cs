@@ -1,6 +1,6 @@
 using AwesomeAssertions;
+using Eryph.GuestServices.Client;
 using Eryph.GuestServices.Tool.Commands;
-using Eryph.GuestServices.Tool.Transport;
 using Microsoft.DevTunnels.Ssh;
 using Spectre.Console.Cli;
 
@@ -47,7 +47,8 @@ public class GuestTransferCommandTests
 
         public sealed class Settings : CommandSettings;
 
-        protected override IGuestConnector CreateConnector(Settings settings) => connector;
+        protected override Task<IGuestConnector> CreateConnectorAsync(Settings settings) =>
+            Task.FromResult(connector);
 
         protected override Task<int> TransferAsync(SshSession session, Settings settings)
         {
