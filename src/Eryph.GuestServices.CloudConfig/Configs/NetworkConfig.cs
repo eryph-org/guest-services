@@ -45,10 +45,18 @@ public sealed record NetworkEthernetConfig
 
     public IReadOnlyList<NetworkRoute>? Routes { get; init; }
 
+    // The device name the adapter should be renamed to. Resolved by the
+    // deserializer from the cloud-init "rename this interface" signal: v1's
+    // physical-entry `name`, or v2's `set-name` (and, per netplan, the ethernet
+    // key when the entry carries no `match` block — the key IS the device name
+    // in that case). Null when the config expresses no rename intent. The
+    // applier renames the MAC-matched adapter to this value.
+    public string? Name { get; init; }
+
     // v2 keys that are present in the document but NOT applied on Windows
-    // (e.g. dhcp4-overrides, routing-policy, set-name). Captured at parse time
-    // purely so the applier can warn instead of silently dropping them — the
-    // names are the cloud-init/netplan spellings, for the log message.
+    // (e.g. dhcp4-overrides, routing-policy). Captured at parse time purely so
+    // the applier can warn instead of silently dropping them — the names are
+    // the cloud-init/netplan spellings, for the log message.
     public IReadOnlyList<string>? UnsupportedOptions { get; init; }
 }
 

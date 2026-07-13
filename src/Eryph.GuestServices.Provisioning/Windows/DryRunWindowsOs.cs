@@ -40,6 +40,13 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
 
     // ---- Writes are intercepted ----
 
+    public Task RenameNetworkAdapterAsync(int interfaceIndex, string newName, CancellationToken cancellationToken)
+    {
+        logger.LogInformation(
+            "DRY-RUN would rename interface index {Index} to {NewName}", interfaceIndex, newName);
+        return Task.CompletedTask;
+    }
+
     public Task<SetComputerNameResult> SetComputerNameAsync(string newName, CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would set computer name to {NewName}", newName);

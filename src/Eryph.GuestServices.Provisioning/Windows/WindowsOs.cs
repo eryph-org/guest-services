@@ -455,6 +455,31 @@ internal sealed class WindowsOs : IWindowsOs
     public Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken) =>
         Task.Run(() => NetworkAdapterInventory.Enumerate(), cancellationToken);
 
+    public async Task RenameNetworkAdapterAsync(
+        int interfaceIndex,
+        string newName,
+        CancellationToken cancellationToken)
+    {
+        // Renaming is done via the NetAdapter cmdlet rather than raw CIM: the
+        // MSFT_NetAdapter "Name" is the NetConnectionID, and the cmdlet keys the
+        // adapter by interface index (stable across the rename) and applies the
+        // change through the same parameterised envelope PowerShell uses. This
+        // mirrors the DNS path, which is cmdlet-driven for the same reason.
+        await RunOrThrowAsync(
+            "powershell.exe",
+            ["-NoProfile", "-NonInteractive", "-Command", BuildRenameNetAdapterCommand(interfaceIndex, newName)],
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    // internal for unit testing — the -Command string is a composition root we
+    // want exercised directly (a wrong cmdlet/parameter name or a quoting slip
+    // would only surface on a real guest). Pipe Get-NetAdapter (keyed by the
+    // stable interface index) into Rename-NetAdapter so the current connection
+    // name never has to be quoted into the command.
+    internal static string BuildRenameNetAdapterCommand(int interfaceIndex, string newName) =>
+        $"Get-NetAdapter -InterfaceIndex {interfaceIndex} | "
+        + $"Rename-NetAdapter -NewName '{EscapePsSingleQuoted(newName)}' -ErrorAction Stop";
+
     public Task EnableDhcpAsync(int interfaceIndex, CancellationToken cancellationToken) =>
         Task.Run(() => CimNetworking.SetDhcp(interfaceIndex, enabled: true), cancellationToken);
 

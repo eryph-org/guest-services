@@ -5,7 +5,12 @@ Status: Implemented
 Shipped as `ApplyNetworkConfigModule` in the Network stage (Order=2): the
 NetworkConfig YAML deserializer now projects v1 physical entries into the
 v2-shape `Ethernets` dictionary, and the module applies static IP / DNS / MTU
-/ default route per MAC-matched adapter via the CIM NetTCPIP providers.
+/ default route per MAC-matched adapter via the CIM NetTCPIP providers. A
+matched adapter is also renamed to the config's device name — v1's physical
+`name`, or v2's `set-name` (or the ethernet key when the entry has no `match`
+block) — via `Rename-NetAdapter`, keyed by the rename-stable interface index.
+Renaming is cosmetic: a failure is logged and the rest of the entry is still
+applied.
 
 ## Problem
 

@@ -9,7 +9,9 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// <summary>
 /// Applies cloud-init network-config (v1 or v2) to the Windows guest. Matches
 /// adapters by MAC address; falls back to no-op for any adapter we cannot
-/// resolve. See <c>docs/rfcs/0002</c> for the schema mapping.
+/// resolve. A matched adapter is also renamed to the config's device name
+/// (v1 <c>name</c> / v2 <c>set-name</c>) when one is present. See
+/// <c>docs/rfcs/0002</c> for the schema mapping.
 /// </summary>
 /// <remarks>
 /// The module is idempotent: a re-run with the same input produces the same
@@ -157,6 +159,11 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
         // and we honour that.
         var (v4Addresses, v6Addresses) = SplitAddressesByFamily(ethernet.Addresses);
 
+        // Rename first so the alias in the follow-up log lines reflects the new
+        // name. The returned adapter carries the post-rename alias (or the
+        // original when no rename happened); the interface index is unchanged.
+        adapter = await RenameAdapterIfRequested(context, adapter, ethernet, cancellationToken).ConfigureAwait(false);
+
         await ApplyIpv4Async(context, adapter, ethernet, v4Addresses, cancellationToken).ConfigureAwait(false);
         await ApplyIpv6Async(context, adapter, ethernet, v6Addresses, cancellationToken).ConfigureAwait(false);
 
@@ -194,6 +201,50 @@ internal sealed class ApplyNetworkConfigModule(ILogger<ApplyNetworkConfigModule>
                 adapter.InterfaceAlias, adapter.MacAddress, mtu);
             await context.Os.SetInterfaceMtuAsync(
                 adapter.InterfaceIndex, mtu, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    // cloud-init renames the matched interface to the config's device name (v1
+    // `name` / v2 `set-name`). On Windows that maps to the adapter's connection
+    // name. Renaming is cosmetic — it must never abort the network apply — so a
+    // failure (e.g. the target name already belongs to another adapter) is
+    // logged and swallowed rather than propagated.
+    // Returns the adapter with its alias updated to the new name on a successful
+    // rename, or the original adapter when no rename happened / it failed.
+    private async Task<NetworkAdapterInfo> RenameAdapterIfRequested(
+        IModuleContext context,
+        NetworkAdapterInfo adapter,
+        NetworkEthernetConfig ethernet,
+        CancellationToken cancellationToken)
+    {
+        var desiredName = ethernet.Name?.Trim();
+        if (string.IsNullOrEmpty(desiredName))
+            return adapter;
+
+        // Already named correctly — skip so a re-run is a genuine no-op and we
+        // don't ask Rename-NetAdapter to rename an adapter to its current name.
+        // Case-insensitive because Windows connection names (NetConnectionID)
+        // are unique case-insensitively; an Ordinal check would re-rename every
+        // run when only the casing differs (same reasoning as SetHostnameModule).
+        if (string.Equals(adapter.InterfaceAlias, desiredName, StringComparison.OrdinalIgnoreCase))
+            return adapter;
+
+        try
+        {
+            logger.LogInformation(
+                "Adapter '{Alias}' ({Mac}): renaming to '{NewName}'.",
+                adapter.InterfaceAlias, adapter.MacAddress, desiredName);
+            await context.Os.RenameNetworkAdapterAsync(
+                adapter.InterfaceIndex, desiredName, cancellationToken).ConfigureAwait(false);
+            return adapter with { InterfaceAlias = desiredName };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                ex,
+                "Adapter '{Alias}' ({Mac}): failed to rename to '{NewName}'; leaving the name unchanged and continuing.",
+                adapter.InterfaceAlias, adapter.MacAddress, desiredName);
+            return adapter;
         }
     }
 

@@ -71,6 +71,11 @@ Adapters are bound by MAC. An entry with no MAC is skipped with a warning —
 Windows needs a MAC to bind to an adapter — as is an entry whose MAC matches no
 adapter.
 
+A matched adapter is also renamed to the config's device name — v1's physical
+`name`, or v2's `set-name` (or the ethernet key when the entry has no `match`
+block). Renaming is cosmetic: a failure (for example, another adapter already
+holds the target name) is logged and the rest of the entry is still applied.
+
 ## Coverage matrix
 
 The Windows applier implements the per-interface IP subset of each schema.
@@ -94,10 +99,11 @@ nor warned.
 | `routes` (`to`, `via`, `metric`) | Applied | includes `to: default`; `table`/`scope`/`type`/`on-link` are ignored |
 | `nameservers.addresses`, `nameservers.search` | Applied | |
 | `mtu` | Applied | |
+| `set-name` | Applied | the matched adapter's connection name is renamed to this; with no `match` block the ethernet key is used instead |
 | `macaddress` (set/spoof adapter MAC) | Warned | the adapter MAC is never changed |
 | `dhcp4-overrides`, `dhcp6-overrides` | Warned | |
 | `routing-policy` | Warned | |
-| `set-name`, `wakeonlan`, `accept-ra` | Warned | |
+| `wakeonlan`, `accept-ra` | Warned | |
 | `optional` | Not applied | benign; no effect on Windows |
 | `bonds`, `bridges`, `vlans` | Warned | the link is not created |
 | `wifis`, `tunnels`, `vrfs`, … | Not applied | not modelled |
@@ -112,6 +118,7 @@ projected.
 | --- | --- | --- |
 | `type: physical` + `mac_address` | Applied | the key used to bind the entry to an adapter |
 | `type: physical` without `mac_address` | Warned | skipped — needs a MAC to bind |
+| `name` | Applied | the matched adapter's connection name is renamed to this |
 | `mtu` | Applied | |
 | subnet `type: dhcp` / `dhcp4` | Applied | DHCPv4 (a physical entry with no subnets defaults to DHCP) |
 | subnet `type: static` / `static4` (`address`, `gateway`) | Applied | IPv4 |

@@ -257,14 +257,16 @@ public class NetworkConfigYamlSerializerTests
     [Fact]
     public void Deserialize_v2_unmodelled_scalar_keys_are_tolerated()
     {
-        // set-name / wakeonlan / optional / accept-ra are valid netplan keys
-        // the Windows applier does not act on. They must not break parsing, and
-        // the noteworthy ones are surfaced via UnsupportedOptions so the applier
-        // can warn (optional is benign and intentionally not surfaced).
+        // wakeonlan / optional / accept-ra are valid netplan keys the Windows
+        // applier does not act on. They must not break parsing, and the
+        // noteworthy ones are surfaced via UnsupportedOptions so the applier can
+        // warn (optional is benign and intentionally not surfaced). set-name IS
+        // applied — it becomes the adapter's rename target (Name), not an
+        // unsupported option.
         const string yaml = """
                             version: 2
                             ethernets:
-                              eth0:
+                              logical0:
                                 match:
                                   macaddress: "00:11:22:33:44:55"
                                 set-name: eth0
@@ -276,10 +278,90 @@ public class NetworkConfigYamlSerializerTests
 
         var result = NetworkConfigYamlSerializer.Deserialize(yaml);
 
-        var eth0 = result.Ethernets!["eth0"];
+        var eth0 = result.Ethernets!["logical0"];
         eth0.Match!.MacAddress.Should().Be("00:11:22:33:44:55");
         eth0.Dhcp4.Should().BeTrue();
-        eth0.UnsupportedOptions.Should().BeEquivalentTo(["set-name", "wakeonlan", "accept-ra"]);
+        // set-name wins over the (logical) key as the rename target.
+        eth0.Name.Should().Be("eth0");
+        eth0.UnsupportedOptions.Should().BeEquivalentTo(["wakeonlan", "accept-ra"]);
+    }
+
+    [Fact]
+    public void Deserialize_v2_set_name_is_the_rename_target()
+    {
+        // With a match block present, the ethernet key is a logical id; the
+        // explicit set-name is what the interface should be renamed to.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              nic-a:
+                                match:
+                                  macaddress: "00:11:22:33:44:55"
+                                set-name: mgmt0
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["nic-a"].Name.Should().Be("mgmt0");
+    }
+
+    [Fact]
+    public void Deserialize_v2_keyless_match_uses_the_ethernet_key_as_rename_target()
+    {
+        // No match block and no set-name: per netplan the ethernet key IS the
+        // device name, so it becomes the rename target.
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              eth0:
+                                macaddress: "00:11:22:33:44:55"
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth0"].Name.Should().Be("eth0");
+    }
+
+    [Fact]
+    public void Deserialize_v2_match_without_set_name_has_no_rename_target()
+    {
+        // A match block makes the key a logical id. Without set-name there is no
+        // device name to rename to, so Name stays null (we do not rename an
+        // adapter to an arbitrary logical id).
+        const string yaml = """
+                            version: 2
+                            ethernets:
+                              nic-a:
+                                match:
+                                  macaddress: "00:11:22:33:44:55"
+                                dhcp4: true
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["nic-a"].Name.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_v1_physical_name_is_the_rename_target()
+    {
+        // cloud-init v1 carries the desired device name on the physical entry's
+        // `name`; the applier renames the MAC-matched adapter to it.
+        const string yaml = """
+                            version: 1
+                            config:
+                              - type: physical
+                                name: eth3
+                                mac_address: "00:11:22:33:44:55"
+                                subnets:
+                                  - type: dhcp4
+                            """;
+
+        var result = NetworkConfigYamlSerializer.Deserialize(yaml);
+
+        result.Ethernets!["eth3"].Name.Should().Be("eth3");
     }
 
     [Fact]
@@ -598,10 +680,10 @@ public class NetworkConfigYamlSerializerTests
     {
         // A single document exercising the full v2 surface at once: every
         // device type, the renderer, match selectors, both IP families, DNS,
-        // routes, MTU, and a pile of keys we tolerate but don't apply
-        // (set-name, wakeonlan, optional, accept-ra, dhcp overrides,
-        // routing-policy). The whole thing must parse without throwing and
-        // populate every field the applier consumes.
+        // routes, MTU, set-name (the rename target), and a pile of keys we
+        // tolerate but don't apply (wakeonlan, optional, accept-ra, dhcp
+        // overrides, routing-policy). The whole thing must parse without
+        // throwing and populate every field the applier consumes.
         const string yaml = """
                             network:
                               version: 2
@@ -684,6 +766,7 @@ public class NetworkConfigYamlSerializerTests
         primary.Routes![1].To.Should().Be("default");
         primary.Mtu.Should().Be(9000);
         primary.MacAddress.Should().Be("00:11:22:33:44:55");
+        primary.Name.Should().Be("primary"); // from set-name
 
         result.Ethernets!["fallback"].Dhcp4.Should().BeTrue();
         result.Bonds.Should().ContainKey("bond0");

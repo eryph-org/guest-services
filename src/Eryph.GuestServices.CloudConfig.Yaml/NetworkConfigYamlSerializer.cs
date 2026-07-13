@@ -77,7 +77,7 @@ public static class NetworkConfigYamlSerializer
         return new NetworkConfig
         {
             Version = raw.Version,
-            Ethernets = raw.Ethernets?.ToDictionary(kvp => kvp.Key, kvp => Convert(kvp.Value)),
+            Ethernets = raw.Ethernets?.ToDictionary(kvp => kvp.Key, kvp => Convert(kvp.Key, kvp.Value)),
             Bonds = raw.Bonds?.ToDictionary(kvp => kvp.Key, kvp => ConvertBond(kvp.Value)),
             Bridges = raw.Bridges?.ToDictionary(kvp => kvp.Key, kvp => ConvertBridge(kvp.Value)),
             Vlans = raw.Vlans?.ToDictionary(kvp => kvp.Key, kvp => ConvertVlan(kvp.Value)),
@@ -195,6 +195,9 @@ public static class NetworkConfigYamlSerializer
 
         return new NetworkEthernetConfig
         {
+            // v1's physical-entry `name` is the device name cloud-init would
+            // rename the matched NIC to; carry it so the applier can rename.
+            Name = entry.Name,
             Dhcp4 = dhcp4,
             Addresses = addresses.Count == 0 ? null : addresses,
             Gateway4 = gateway4,
@@ -205,14 +208,20 @@ public static class NetworkConfigYamlSerializer
         };
     }
 
-    private static NetworkEthernetConfig Convert(RawEthernetConfig? raw)
+    private static NetworkEthernetConfig Convert(string key, RawEthernetConfig? raw)
     {
         if (raw is null)
-            return new NetworkEthernetConfig();
+            return new NetworkEthernetConfig { Name = key };
 
+        var match = ConvertMatch(raw.Match);
         return new NetworkEthernetConfig
         {
-            Match = ConvertMatch(raw.Match),
+            Match = match,
+            // Rename target, following netplan precedence: an explicit
+            // `set-name` wins; otherwise the ethernet key IS the device name,
+            // but only when the entry has no `match` block (with a match block
+            // the key is an arbitrary logical id, not a device name).
+            Name = raw.SetName ?? (match is null ? key : null),
             Dhcp4 = raw.Dhcp4,
             Dhcp6 = raw.Dhcp6,
             Addresses = raw.Addresses,
@@ -235,7 +244,6 @@ public static class NetworkConfigYamlSerializer
         if (raw.Dhcp4Overrides is not null) options.Add("dhcp4-overrides");
         if (raw.Dhcp6Overrides is not null) options.Add("dhcp6-overrides");
         if (raw.RoutingPolicy is not null) options.Add("routing-policy");
-        if (raw.SetName is not null) options.Add("set-name");
         if (raw.WakeOnLan is not null) options.Add("wakeonlan");
         if (raw.AcceptRa is not null) options.Add("accept-ra");
         return options.Count == 0 ? null : options;
