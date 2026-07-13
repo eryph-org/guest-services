@@ -228,6 +228,15 @@ public interface IWindowsOs
     Task<IReadOnlyList<NetworkAdapterInfo>> GetNetworkAdaptersAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Renames the network adapter (its Windows connection name / NetConnectionID)
+    /// identified by <paramref name="interfaceIndex"/> to <paramref name="newName"/>.
+    /// This is the Windows analogue of cloud-init's interface rename (v1 physical
+    /// <c>name</c> / v2 <c>set-name</c>). The interface index is stable across the
+    /// rename, so subsequent IP/DNS/route calls keyed by it are unaffected.
+    /// </summary>
+    Task RenameNetworkAdapterAsync(int interfaceIndex, string newName, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Puts the IPv4 client on the given adapter back into DHCP mode and
     /// removes any explicit static addresses / gateways carried over from a
     /// previous static configuration. Idempotent.

@@ -501,6 +501,58 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compressi
       $matched | Should -BeTrue
       $skipped | Should -BeFalse
     }
+
+    It 'renamed the NIC to the network-config device name' {
+      # The applier renames the MAC-matched adapter to the config's device name
+      # (v1 `name` / v2 `set-name`). Self-validating: read the network-config
+      # eryph actually delivered on the cidata volume, derive the expected name
+      # + MAC, then assert the guest adapter with that MAC carries that name.
+      $hostName = "$($catlet.VmId).hyper-v.alt"
+
+      # 1. The delivered network-config, read from the NoCloud cidata volume.
+      $nc = Invoke-GuestPS -HostName $hostName -Script `
+        '$d=(Get-Volume | Where-Object FileSystemLabel -eq ''cidata'').DriveLetter; if ($d) { Get-Content -Raw -LiteralPath ($d + '':\network-config'') }'
+      $nc.ExitCode | Should -Be 0
+      $ncText = $nc.Output
+      $ncText | Should -Not -BeNullOrEmpty -Because 'eryph delivers a network-config on the cidata volume'
+
+      # 2. Expected device name: v2 `set-name` wins, else the v1 physical `name`.
+      #    (Within network-config, `name:` only appears on physical entries —
+      #    `nameservers:` does not match because the key is exactly `name`.)
+      $expectedName = $null
+      if ($ncText -match '(?im)^\s*set-name:\s*[''"]?([^''"\r\n]+)') { $expectedName = $Matches[1].Trim() }
+      elseif ($ncText -match '(?im)^\s*-?\s*name:\s*[''"]?([^''"\r\n]+)') { $expectedName = $Matches[1].Trim() }
+      $expectedName | Should -Not -BeNullOrEmpty -Because 'the network-config carries a device name to rename to'
+
+      # 3. Expected MAC (v1 mac_address / v2 macaddress), normalised to hex only.
+      $expectedMac = $null
+      if ($ncText -match '(?im)mac_?address:\s*[''"]?([0-9a-fA-F:\.\-]+)') { $expectedMac = $Matches[1] }
+      $expectedMac | Should -Not -BeNullOrEmpty
+      $normMac = ($expectedMac -replace '[^0-9a-fA-F]', '').ToLower()
+
+      # 4. Enumerate the guest adapters and find the one matching that MAC — its
+      #    connection name must equal the expected device name.
+      $adaptersJson = Invoke-GuestPS -HostName $hostName -Script `
+        'Get-NetAdapter | Select-Object Name, MacAddress, InterfaceIndex | ConvertTo-Json -Compress'
+      $adaptersJson.ExitCode | Should -Be 0
+      $adapters = @($adaptersJson.Output | ConvertFrom-Json)
+      $match = $adapters | Where-Object { ($_.MacAddress -replace '[^0-9a-fA-F]', '').ToLower() -eq $normMac }
+      $match | Should -Not -BeNullOrEmpty -Because "an adapter with MAC $expectedMac must exist"
+      $match.Name | Should -Be $expectedName `
+        -Because 'the MAC-matched adapter must carry the network-config device name after provisioning'
+
+      # 5. The agent log must show the rename ran and must NOT show a failure.
+      $renameLog = Join-Path ([System.IO.Path]::GetTempPath()) "egs-rename-$($catlet.VmId).log"
+      Remove-Item $renameLog -ErrorAction SilentlyContinue
+      egs-tool download-file $catlet.VmId 'C:\ProgramData\eryph\guest-services\logs\agent.log' $renameLog
+      Test-Path $renameLog | Should -BeTrue
+      $renamed = [bool](Select-String -LiteralPath $renameLog -Pattern "renaming to '$([regex]::Escape($expectedName))'" -Quiet)
+      $failed = [bool](Select-String -LiteralPath $renameLog -Pattern 'failed to rename' -Quiet)
+      $failed | Should -BeFalse
+      # $renamed is informational: it is only logged when the pre-existing name
+      # differed. The authoritative check is the end-state name above.
+      Write-Host "rename log line present: $renamed (expected name '$expectedName', mac $expectedMac)"
+    }
   }
 
   Context 'self-update download' {

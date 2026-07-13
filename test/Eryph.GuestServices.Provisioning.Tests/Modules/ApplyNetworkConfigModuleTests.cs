@@ -859,6 +859,204 @@ public sealed class ApplyNetworkConfigModuleTests
     }
 
     [Fact]
+    public async Task Adapter_is_renamed_to_the_config_device_name()
+    {
+        // The MAC-matched adapter is currently named "Ethernet" but the config
+        // asks for "eth0" (v1 `name` / v2 `set-name`). The applier must rename
+        // the adapter, keyed by its (rename-stable) interface index.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["logical"] = new()
+                {
+                    Match = new NetworkMatch { MacAddress = "00:11:22:33:44:55" },
+                    Name = "eth0",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 8, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).RenameNetworkAdapterAsync(8, "eth0", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Adapter_already_named_correctly_is_not_renamed()
+    {
+        // Idempotency: when the adapter's connection name already equals the
+        // requested device name, the applier must not issue a rename (so a
+        // re-run is a genuine no-op).
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Name = "eth0",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("eth0", 8, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceiveWithAnyArgs().RenameNetworkAdapterAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task Adapter_named_correctly_except_for_case_is_not_renamed()
+    {
+        // Windows connection names are unique case-insensitively, so an adapter
+        // already named "eth0" must not be re-renamed just because the config
+        // spells it "Eth0" — otherwise every re-run issues a needless rename
+        // (and may draw a spurious "name in use" failure).
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["logical"] = new()
+                {
+                    Match = new NetworkMatch { MacAddress = "00:11:22:33:44:55" },
+                    Name = "Eth0",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("eth0", 8, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceiveWithAnyArgs().RenameNetworkAdapterAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task Whitespace_only_device_name_is_treated_as_no_rename()
+    {
+        // A `set-name`/`name` that is only whitespace expresses no rename intent
+        // — it must not drive Rename-NetAdapter (which would reject an empty
+        // name) and must not disturb the rest of the apply.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["eth0"] = new()
+                {
+                    MacAddress = "00:11:22:33:44:55",
+                    Name = "   ",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 8, "00:11:22:33:44:55")],
+            }[0]);
+
+        var module = new ApplyNetworkConfigModule(NullLogger<ApplyNetworkConfigModule>.Instance);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceiveWithAnyArgs().RenameNetworkAdapterAsync(default, default!, default);
+        await os.Received(1).EnableDhcpAsync(8, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Rename_failure_is_warned_and_does_not_abort_ip_apply()
+    {
+        // Renaming is cosmetic — a failure (e.g. the target name already belongs
+        // to another adapter) must be logged and swallowed, and the rest of the
+        // network config for that adapter must still be applied.
+        var network = new NetworkConfig
+        {
+            Version = 2,
+            Ethernets = new Dictionary<string, NetworkEthernetConfig>
+            {
+                ["logical"] = new()
+                {
+                    Match = new NetworkMatch { MacAddress = "00:11:22:33:44:55" },
+                    Name = "eth0",
+                    Dhcp4 = true,
+                },
+            },
+        };
+
+        var os = Substitute.For<IWindowsOs>();
+        os.GetNetworkAdaptersAsync(Arg.Any<CancellationToken>())
+            .Returns(new IReadOnlyList<NetworkAdapterInfo>[]
+            {
+                [Adapter("Ethernet", 8, "00:11:22:33:44:55")],
+            }[0]);
+        os.RenameNetworkAdapterAsync(8, "eth0", Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("name in use")));
+
+        var logger = new CapturingLogger<ApplyNetworkConfigModule>();
+        var module = new ApplyNetworkConfigModule(logger);
+
+        var result = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()),
+            BuildContext(os, network),
+            CancellationToken.None);
+
+        result.Should().BeOfType<ModuleOutcome.Completed>();
+        // The DHCP config still ran despite the rename failure.
+        await os.Received(1).EnableDhcpAsync(8, Arg.Any<CancellationToken>());
+        logger.Entries.Should().Contain(e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("rename"));
+    }
+
+    [Fact]
     public async Task Setting_a_new_adapter_mac_is_warned()
     {
         // A top-level macaddress that differs from the match selector is a
