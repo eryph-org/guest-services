@@ -186,7 +186,7 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
     public Task<bool> WriteSshdManagedConfigAsync(string directives, CancellationToken cancellationToken)
     {
         logger.LogInformation(
-            "DRY-RUN would write eryph-managed sshd_config directives ({Bytes} bytes)",
+            "DRY-RUN would write eryph-managed sshd_config directives ({Chars} chars)",
             directives.Length);
         return Task.FromResult(false);
     }

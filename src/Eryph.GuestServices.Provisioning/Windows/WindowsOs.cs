@@ -1146,7 +1146,7 @@ internal sealed class WindowsOs : IWindowsOs
     // settings win over shipped directives (and the trailing
     // `Match Group administrators` block). We inline the directives directly
     // instead of an `Include` drop-in because `Include` is unsupported by
-    // OpenSSH &lt; 8.2 (the inbox Windows sshd), which then fails to start.
+    // OpenSSH < 8.2 (the inbox Windows sshd), which then fails to start.
     // Returns the new content, or null when the file already matches (idempotent).
     internal static string? BuildSshdManagedConfig(string existing, string directives)
     {
