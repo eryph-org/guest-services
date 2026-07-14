@@ -879,6 +879,19 @@ internal sealed class WindowsOs : IWindowsOs
         // of run state. CimService.GetState returns null when not installed.
         Task.Run(() => CimService.GetState("sshd") is not null, cancellationToken);
 
+    // OS build 17763 = Windows 10 1809 / Windows Server 2019 — the first release
+    // where the OpenSSH.Server Feature-on-Demand is a supported inbox capability.
+    private const int OpenSshServerMinBuild = 17763;
+
+    public Task<bool> IsOpenSshServerCapabilityAvailableAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(IsOpenSshServerCapabilityAvailable(Environment.OSVersion.Version));
+
+    // internal + pure for unit testing. .NET 5+ reports the real OS build (no
+    // manifest clamping — see OsVersionDetector), so a build check is reliable.
+    internal static bool IsOpenSshServerCapabilityAvailable(Version osVersion) =>
+        osVersion.Major > 10
+        || (osVersion.Major == 10 && osVersion.Build >= OpenSshServerMinBuild);
+
     public async Task InstallOpenSshServerAsync(CancellationToken cancellationToken)
     {
         if (await IsSshdInstalledAsync(cancellationToken).ConfigureAwait(false))
@@ -913,6 +926,26 @@ internal sealed class WindowsOs : IWindowsOs
             cancellationToken).ConfigureAwait(false);
         logger.LogInformation("Installed OpenSSH server capability and set sshd to start Automatically.");
     }
+
+    public Task EnsureSshdAutostartAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            // Defensive: the caller gates on "installed", but a service that
+            // vanished between the check and here must not throw a "not found".
+            if (CimService.GetState("sshd") is null)
+            {
+                logger.LogWarning("sshd is not installed; cannot enable autostart.");
+                return;
+            }
+
+            // Both are idempotent (ChangeStartMode: same-as-requested is success;
+            // StartService: no-op when already running). Setting Automatic is the
+            // fix for a found-but-Manual/Disabled daemon that would otherwise not
+            // come back after a reboot.
+            CimService.ChangeStartMode("sshd", CimService.StartMode.Automatic, logger);
+            CimService.StartService("sshd", logger);
+            logger.LogInformation("Ensured sshd is set to start Automatically and is running.");
+        }, cancellationToken);
 
     public async Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
         IReadOnlyList<string> keyTypes,
@@ -992,40 +1025,40 @@ internal sealed class WindowsOs : IWindowsOs
                 File.WriteAllBytes(keyPath + ".pub", utf8.GetBytes(NormalizeLf(publicLine!.TrimEnd()) + "\n"));
         }, cancellationToken);
 
-    public Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken) =>
+    public Task<bool> WriteSshdManagedConfigAsync(string directives, CancellationToken cancellationToken) =>
         Task.Run(() =>
         {
             var sshDir = SshDir();
             Directory.CreateDirectory(sshDir);
-            Directory.CreateDirectory(Path.Combine(sshDir, "sshd_config.d"));
-
             var configPath = Path.Combine(sshDir, "sshd_config");
 
             var existing = File.Exists(configPath)
                 ? File.ReadAllText(configPath, new UTF8Encoding(false))
                 : "";
 
-            var updated = EnsureSshdConfigInclude(existing);
+            var updated = BuildSshdManagedConfig(existing, directives);
             if (updated is null)
-                return; // Include already present — idempotent no-op.
+            {
+                logger.LogDebug("sshd_config managed block already current; no change.");
+                return false;
+            }
 
             File.WriteAllBytes(configPath, new UTF8Encoding(false).GetBytes(updated));
-            logger.LogInformation("Prepended Include for sshd_config.d to sshd_config.");
+            logger.LogInformation("Wrote eryph-managed directives into sshd_config.");
+            return true;
         }, cancellationToken);
 
-    public Task WriteSshdDropInAsync(
-        string dropInFileName,
-        string contents,
-        CancellationToken cancellationToken) =>
+    public Task StopSshdAsync(CancellationToken cancellationToken) =>
         Task.Run(() =>
         {
-            var dropInDir = Path.Combine(SshDir(), "sshd_config.d");
-            Directory.CreateDirectory(dropInDir);
-            var path = Path.Combine(dropInDir, dropInFileName);
-            var content = NormalizeLf(contents);
-            if (content.Length > 0 && !content.EndsWith('\n'))
-                content += "\n";
-            File.WriteAllBytes(path, new UTF8Encoding(false).GetBytes(content));
+            if (CimService.GetState("sshd") is null)
+                return; // not installed — nothing to stop.
+
+            // Idempotent (no-op when already stopped). Used before host-key
+            // regeneration: a running sshd holds the ssh_host_*_key files open,
+            // so the regen delete fails and ssh-keygen then hangs on an
+            // "overwrite?" prompt. Stopping first keeps the files unlocked.
+            CimService.StopService("sshd", logger);
         }, cancellationToken);
 
     public Task RestartSshdAsync(CancellationToken cancellationToken) =>
@@ -1113,27 +1146,79 @@ internal sealed class WindowsOs : IWindowsOs
     private static string NormalizeLf(string value) =>
         value.Replace("\r\n", "\n").Replace("\r", "\n");
 
-    // internal for unit testing — pure form of the EnsureSshdConfigInclude
-    // logic. Returns the new file content, or null when the Include is already
-    // present (idempotent no-op). The Include is prepended so its
-    // first-obtained-value settings win over shipped directives and the
-    // trailing `Match Group administrators` block.
-    internal static string? EnsureSshdConfigInclude(string existing)
+    internal const string SshdManagedBeginMarker = "# BEGIN eryph guest-services (managed)";
+    internal const string SshdManagedEndMarker = "# END eryph guest-services (managed)";
+    // The directive our earlier releases prepended. sshd_config `Include`
+    // requires OpenSSH 8.2+, but the Windows-inbox sshd (8.1p1 on Server 2022)
+    // rejects it and refuses to start — so we no longer use it and strip any
+    // copy we previously wrote when re-provisioning such a guest.
+    private const string LegacySshdIncludeDirective = "Include sshd_config.d/*.conf";
+
+    // internal for unit testing — pure form of the sshd_config write. Prepends
+    // our directives in a marked, managed block so their first-obtained-value
+    // settings win over shipped directives (and the trailing
+    // `Match Group administrators` block). We inline the directives directly
+    // instead of an `Include` drop-in because `Include` is unsupported by
+    // OpenSSH < 8.2 (the inbox Windows sshd), which then fails to start.
+    // Returns the new content, or null when the file already matches (idempotent).
+    internal static string? BuildSshdManagedConfig(string existing, string directives)
     {
-        const string includeDirective = "Include sshd_config.d/*.conf";
+        var body = StripSshdManagedArtifacts(NormalizeLf(existing)).TrimEnd('\n');
+        var block = SshdManagedBeginMarker + "\n"
+            + NormalizeLf(directives).Trim('\n') + "\n"
+            + SshdManagedEndMarker + "\n";
+        var result = body.Length == 0 ? block : block + body + "\n";
 
-        var hasInclude = existing
-            .Split('\n')
-            .Select(l => l.Trim())
-            .Any(l => !l.StartsWith('#')
-                      && l.StartsWith("Include", StringComparison.OrdinalIgnoreCase)
-                      && l.Contains("sshd_config.d", StringComparison.OrdinalIgnoreCase));
-        if (hasInclude)
-            return null;
+        return string.Equals(result, NormalizeLf(existing), StringComparison.Ordinal) ? null : result;
+    }
 
-        var normalized = NormalizeLf(existing);
-        return includeDirective + "\n"
-            + (normalized.Length == 0 ? "" : normalized + (normalized.EndsWith('\n') ? "" : "\n"));
+    // Removes any prior eryph managed block and the legacy Include line, so the
+    // rebuild replaces (never duplicates) our directives and cleans up guests
+    // provisioned by the old Include/drop-in approach. Only a properly
+    // terminated BEGIN..END block is stripped: a lone BEGIN (hand-edited or
+    // truncated file) is kept as-is rather than silently eating the rest of the
+    // file (which includes the vendor `Match Group administrators` block).
+    private static string StripSshdManagedArtifacts(string normalized)
+    {
+        var kept = new List<string>();
+        var block = new List<string>();
+        var inBlock = false;
+        foreach (var line in normalized.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (!inBlock && trimmed == SshdManagedBeginMarker)
+            {
+                inBlock = true;
+                block.Clear();
+                block.Add(line);
+                continue;
+            }
+            if (inBlock)
+            {
+                block.Add(line);
+                if (trimmed == SshdManagedEndMarker)
+                {
+                    // Properly closed block — drop it entirely.
+                    inBlock = false;
+                    block.Clear();
+                }
+                continue;
+            }
+            if (string.Equals(trimmed, LegacySshdIncludeDirective, StringComparison.OrdinalIgnoreCase))
+                continue;
+            kept.Add(line);
+        }
+
+        // An unterminated block (corrupt/hand-edited file): keep its content so
+        // the rest of the file survives, but drop the orphaned BEGIN marker
+        // line itself (block[0]) so we don't leave a stray marker behind.
+        if (inBlock)
+        {
+            for (var i = 1; i < block.Count; i++)
+                kept.Add(block[i]);
+        }
+
+        return string.Join('\n', kept);
     }
 
     // Host-key ACL: owner SYSTEM, SYSTEM + Administrators FullControl, nothing

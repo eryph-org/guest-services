@@ -63,6 +63,9 @@ public sealed class EndToEndProvisioningTests : IDisposable
             });
 
         var windowsOs = Substitute.For<IWindowsOs>();
+        // Modern OS: the OpenSSH Server capability is available, so the SshModule
+        // runs (writes authorized_keys) rather than skipping itself.
+        windowsOs.IsOpenSshServerCapabilityAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
         windowsOs.GetComputerNameAsync(Arg.Any<CancellationToken>()).Returns("OLDNAME");
         windowsOs.SetComputerNameAsync("testhost", Arg.Any<CancellationToken>())
             .Returns(SetComputerNameResult.SetWithRebootPending);

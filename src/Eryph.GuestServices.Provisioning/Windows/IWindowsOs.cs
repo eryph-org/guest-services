@@ -99,12 +99,34 @@ public interface IWindowsOs
     Task<bool> IsSshdInstalledAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// True when the inbox OpenSSH Server capability
+    /// (<c>OpenSSH.Server</c> Feature-on-Demand) is available on this Windows
+    /// version. It first shipped as a supported feature in Windows 10 1809 /
+    /// Windows Server 2019 (OS build 17763); Server 2016 and older do not have
+    /// it (only the standalone GitHub MSI). The SshModule uses this to skip
+    /// itself on unsupported versions instead of failing an install that the OS
+    /// cannot satisfy.
+    /// </summary>
+    Task<bool> IsOpenSshServerCapabilityAvailableAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Installs the OpenSSH server capability
     /// (<c>Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0</c>)
     /// and sets the <c>sshd</c> service start mode to Automatic. No-op when
     /// sshd is already installed.
     /// </summary>
     Task InstallOpenSshServerAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Ensures the <c>sshd</c> service starts on boot and is running now: sets
+    /// its start mode to Automatic and starts it. Idempotent — both operations
+    /// are no-ops when the service is already Automatic / already running. This
+    /// is applied whenever the SSH module owns an installed daemon (whether it
+    /// just installed it or found it pre-installed), because a daemon left at
+    /// Manual/Disabled would not survive a reboot. Logs and returns when sshd is
+    /// not installed rather than throwing.
+    /// </summary>
+    Task EnsureSshdAutostartAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Generates ssh host keys for each requested type (validated against
@@ -133,22 +155,27 @@ public interface IWindowsOs
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Idempotently ensures <c>C:\ProgramData\ssh\sshd_config</c> contains an
-    /// uncommented <c>Include sshd_config.d/*.conf</c> directive at the top
-    /// (so our drop-in's first-obtained-value settings win over shipped
-    /// directives). Creates the <c>sshd_config.d</c> directory.
+    /// Writes the eryph-managed directives into <c>C:\ProgramData\ssh\sshd_config</c>,
+    /// prepended in a marked block so their first-obtained-value settings win
+    /// over the shipped directives (and the trailing
+    /// <c>Match Group administrators</c> block). The directives are inlined into
+    /// the main file rather than an <c>Include</c> drop-in, because
+    /// <c>Include</c> in <c>sshd_config</c> requires OpenSSH 8.2+ and the inbox
+    /// Windows sshd (8.1p1 on Server 2022) rejects it and fails to start. UTF-8
+    /// (no BOM), LF line endings. Idempotent: re-running with the same directives
+    /// is a no-op. Returns <c>true</c> when the file was changed.
     /// </summary>
-    Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken);
+    Task<bool> WriteSshdManagedConfigAsync(string directives, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Writes a drop-in config file under
-    /// <c>C:\ProgramData\ssh\sshd_config.d\&lt;dropInFileName&gt;</c> (UTF-8,
-    /// LF line endings).
+    /// Stops the <c>sshd</c> service. Idempotent (no-op when already stopped or
+    /// not installed). Used before host-key regeneration so a running daemon
+    /// does not hold the <c>ssh_host_*_key</c> files open — that lock makes the
+    /// regeneration delete fail and <c>ssh-keygen</c> then hang on an
+    /// "overwrite?" prompt. The service is brought back up by the subsequent
+    /// restart / autostart step.
     /// </summary>
-    Task WriteSshdDropInAsync(
-        string dropInFileName,
-        string contents,
-        CancellationToken cancellationToken);
+    Task StopSshdAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Restarts the <c>sshd</c> service (stop + start) so it re-reads its

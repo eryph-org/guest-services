@@ -12,9 +12,10 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// <summary>
 /// Cloud-init <c>cc_ssh</c> equivalent for the OS-level Win32-OpenSSH daemon
 /// at <c>C:\ProgramData\ssh\</c> (NOT the egs-service Hyper-V-socket transport).
-/// Covers host keys, the <c>sshd_config.d</c> drop-in (<c>ssh_pwauth</c>,
-/// <c>disable_root</c>), per-user/top-level <c>authorized_keys</c> and host-key
-/// fingerprint reporting. See RFC 0018.
+/// Covers host keys, the eryph-managed <c>sshd_config</c> directives
+/// (<c>ssh_pwauth</c>, <c>disable_root</c>), enabling the service for autostart,
+/// per-user/top-level <c>authorized_keys</c> and host-key fingerprint reporting.
+/// See RFC 0018.
 /// </summary>
 [Stage(Stage.Config, Order = 2, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class SshModule(
@@ -22,9 +23,6 @@ internal sealed class SshModule(
     IReportingDispatcher reporter,
     IDefaultUserResolver defaultUser) : IModule
 {
-    /// <summary>Drop-in file name under <c>sshd_config.d</c>.</summary>
-    private const string DropInFileName = "50-eryph.conf";
-
     /// <summary>
     /// Default host-key set when <c>ssh_genkeytypes</c> is not supplied.
     /// ed25519-first, DSA dropped (removed in OpenSSH 9.8). RFC 0018.
@@ -40,6 +38,21 @@ internal sealed class SshModule(
 
         // 1. Detect sshd; optionally install.
         var installed = await context.Os.IsSshdInstalledAsync(cancellationToken).ConfigureAwait(false);
+
+        // Guard: if sshd isn't installed AND this Windows version has no OpenSSH
+        // Server capability (Server 2016 / Win10 < 1809), there is no daemon and
+        // none can be installed via Add-WindowsCapability. Disable the module
+        // rather than failing an install the OS can't satisfy. (A found daemon —
+        // e.g. a manual MSI install — is still configured below.)
+        if (!installed
+            && !await context.Os.IsOpenSshServerCapabilityAvailableAsync(cancellationToken).ConfigureAwait(false))
+        {
+            logger.LogInformation(
+                "OpenSSH Server is not available on this Windows version "
+                + "(requires Windows 10 1809 / Windows Server 2019+); skipping the SSH module.");
+            return ModuleOutcome.Ok();
+        }
+
         if (!installed && config.Ssh?.InstallOpenssh == true)
         {
             try
@@ -72,30 +85,41 @@ internal sealed class SshModule(
 
         try
         {
-            // 2. Host keys.
+            // 2. Stop sshd before touching host keys. A daemon that is ALREADY
+            // running (a found image with sshd enabled at boot) holds the
+            // ssh_host_*_key files open; RegenerateSshHostKeys' pre-delete then
+            // fails and ssh-keygen hangs on an "overwrite?" prompt. Stopping is
+            // idempotent; the restart/autostart below brings it back up. If we
+            // cannot stop it, do NOT proceed into a possible host-key-gen hang.
+            await context.Os.StopSshdAsync(cancellationToken).ConfigureAwait(false);
+
+            // 3. Host keys.
             (hostKeysChanged, reportableFingerprints) =
                 await ProcessHostKeysAsync(config, context, cancellationToken).ConfigureAwait(false);
 
-            // 3. Drop-in sshd_config.
-            configChanged = await ProcessDropInAsync(config, context, cancellationToken).ConfigureAwait(false);
+            // 4. sshd_config directives.
+            configChanged = await ProcessSshdConfigAsync(config, context, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to apply ssh host-key / config on an installed sshd.");
-            return ModuleOutcome.Fail("ssh host-key / config write failed.", ex);
+            logger.LogError(ex, "Failed to prepare ssh (stop / host-key / config) on an installed sshd.");
+            return ModuleOutcome.Fail("ssh host-key / config setup failed.", ex);
         }
 
-        // 4. authorized_keys (does not need a restart — sshd reads them per-connection).
+        // 5. authorized_keys (does not need a restart — sshd reads them per-connection).
         await ProcessAuthorizedKeysAsync(config, context, cancellationToken).ConfigureAwait(false);
 
-        // 5. Restart only when host keys or sshd_config actually changed.
+        // 6. Restart when host keys or sshd_config changed (also brings sshd back
+        // up after the stop above when it had been running).
         if (hostKeysChanged || configChanged)
         {
             logger.LogInformation("Restarting sshd to pick up host-key / config changes.");
             await context.Os.RestartSshdAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        // 6. Report fingerprints (gated by ssh.emit_keys_to_console, default true).
+        // 7. Report fingerprints (gated by ssh.emit_keys_to_console, default true).
+        // Done BEFORE the autostart step so a rotated host key is always surfaced
+        // to the operator, even if enabling autostart then fails.
         if (reportableFingerprints.Count > 0 && config.Ssh?.EmitKeysToConsole != false)
         {
             await reporter.EmitAsync(
@@ -104,6 +128,22 @@ internal sealed class SshModule(
                     Origin = $"module:{nameof(SshModule)}",
                 },
                 cancellationToken).ConfigureAwait(false);
+        }
+
+        // 8. Ensure the daemon starts on boot and is running — whether we just
+        // installed it or merely found it. The install path only sets Automatic
+        // for a freshly-installed daemon, so a pre-existing sshd left at
+        // Manual/Disabled would be configured here but never come back after a
+        // reboot; enabling autostart is what makes ssh actually persist. It runs
+        // last so it never precedes host-key generation (see the stop above).
+        try
+        {
+            await context.Os.EnsureSshdAutostartAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to enable sshd autostart.");
+            return ModuleOutcome.Fail("enabling the sshd service (autostart) failed.", ex);
         }
 
         return ModuleOutcome.Ok();
@@ -213,17 +253,16 @@ internal sealed class SshModule(
     }
 
     /// <summary>
-    /// Builds and writes the <c>50-eryph.conf</c> drop-in. Returns true if a
-    /// drop-in with at least one directive was written.
+    /// Builds the eryph directive block and writes it into the main
+    /// <c>sshd_config</c> (see <see cref="IWindowsOs.WriteSshdManagedConfigAsync"/>
+    /// for why it is inlined rather than an <c>Include</c> drop-in). Returns true
+    /// if the config file changed (so the caller restarts sshd).
     /// </summary>
-    private async Task<bool> ProcessDropInAsync(
+    private async Task<bool> ProcessSshdConfigAsync(
         CloudConfigModel config,
         IModuleContext context,
         CancellationToken cancellationToken)
     {
-        // Always ensure the Include is present so the drop-in is actually read.
-        await context.Os.EnsureSshdConfigIncludeAsync(cancellationToken).ConfigureAwait(false);
-
         var sb = new StringBuilder();
 
         // ssh_pwauth three-state: bool? null == "unchanged" (omit directive).
@@ -245,18 +284,9 @@ internal sealed class SshModule(
             sb.Append("DenyUsers ").Append(admin).Append('\n');
         }
 
-        // PubkeyAuthentication is always emitted, so the drop-in always carries
-        // at least one directive; keep the guard for clarity / future tuning.
-        if (sb.Length == 0)
-        {
-            logger.LogDebug("No sshd_config directives to write; skipping drop-in.");
-            return false;
-        }
-
-        logger.LogInformation("Writing sshd_config drop-in '{File}'.", DropInFileName);
-        await context.Os.WriteSshdDropInAsync(DropInFileName, sb.ToString(), cancellationToken)
+        logger.LogInformation("Writing eryph-managed directives into sshd_config.");
+        return await context.Os.WriteSshdManagedConfigAsync(sb.ToString(), cancellationToken)
             .ConfigureAwait(false);
-        return true;
     }
 
     private async Task ProcessAuthorizedKeysAsync(

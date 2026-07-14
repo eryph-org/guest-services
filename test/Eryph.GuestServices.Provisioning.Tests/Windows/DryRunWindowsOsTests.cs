@@ -310,19 +310,28 @@ public sealed class DryRunWindowsOsTests
     }
 
     [Fact]
-    public async Task EnsureSshdConfigIncludeAsync_skips_inner()
+    public async Task WriteSshdManagedConfigAsync_skips_inner()
     {
         var (sut, inner) = Build();
-        await sut.EnsureSshdConfigIncludeAsync(CancellationToken.None);
-        await inner.DidNotReceiveWithAnyArgs().EnsureSshdConfigIncludeAsync(default);
+        var changed = await sut.WriteSshdManagedConfigAsync("PasswordAuthentication no", CancellationToken.None);
+        changed.Should().BeFalse();
+        await inner.DidNotReceiveWithAnyArgs().WriteSshdManagedConfigAsync(default!, default);
     }
 
     [Fact]
-    public async Task WriteSshdDropInAsync_skips_inner()
+    public async Task EnsureSshdAutostartAsync_skips_inner()
     {
         var (sut, inner) = Build();
-        await sut.WriteSshdDropInAsync("50-eryph.conf", "PasswordAuthentication no", CancellationToken.None);
-        await inner.DidNotReceiveWithAnyArgs().WriteSshdDropInAsync(default!, default!, default);
+        await sut.EnsureSshdAutostartAsync(CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().EnsureSshdAutostartAsync(default);
+    }
+
+    [Fact]
+    public async Task StopSshdAsync_skips_inner()
+    {
+        var (sut, inner) = Build();
+        await sut.StopSshdAsync(CancellationToken.None);
+        await inner.DidNotReceiveWithAnyArgs().StopSshdAsync(default);
     }
 
     [Fact]

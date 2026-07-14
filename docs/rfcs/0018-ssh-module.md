@@ -1,6 +1,6 @@
 # RFC 0018 — Windows OpenSSH daemon configuration (`SshModule`)
 
-Status: Implemented (`SshModule` — host keys, sshd_config.d drop-in, disable_root→RID-500, install opt-in, fingerprint reporting; merging authorized_keys; `DefaultUserResolver`)
+Status: Implemented (`SshModule` — host keys, inline managed sshd_config block, disable_root→RID-500, install opt-in + autostart, fingerprint reporting; merging authorized_keys; `DefaultUserResolver`)
 
 ## Problem
 
@@ -50,18 +50,31 @@ absorb that work.
 
 ## Decision
 
-### 1. Drop-in config, not main-file mutation
+### 1. Inline managed block in the main sshd_config
 
-We do **not** rewrite `C:\ProgramData\ssh\sshd_config`. Instead:
+We write our directives into `C:\ProgramData\ssh\sshd_config` directly, in a
+marked block prepended **at the top**:
 
-- Idempotently ensure `Include sshd_config.d/*.conf` is present **at the top**
-  of `sshd_config`. sshd uses *first-obtained-value*, so the Include must
-  precede both the shipped directives and the trailing
-  `Match Group administrators` block for our settings to win.
-- Write all our settings to `C:\ProgramData\ssh\sshd_config.d\50-eryph.conf`.
+```
+# BEGIN eryph guest-services (managed)
+PasswordAuthentication yes|no   # only when ssh_pwauth is set
+PubkeyAuthentication yes
+DenyUsers <RID-500 admin>       # only when disable_root
+# END eryph guest-services (managed)
+<shipped sshd_config…>
+```
 
-`IWindowsOs.EnsureSshdConfigIncludeAsync` is idempotent (a commented-out
-Include does not count); `WriteSshdDropInAsync` writes the drop-in UTF-8/LF.
+sshd uses *first-obtained-value*, so the block must precede both the shipped
+directives and the trailing `Match Group administrators` block for our settings
+to win. `IWindowsOs.WriteSshdManagedConfigAsync` (pure core `BuildSshdManagedConfig`)
+is idempotent — it strips any prior managed block and rewrites it, and reports
+whether the file changed (to gate the restart).
+
+We do **not** use an `Include sshd_config.d/*.conf` drop-in: `Include` in
+`sshd_config` requires OpenSSH **8.2+**, but the Windows-inbox sshd is 8.1p1 on
+Server 2022 and rejects it (`Bad configuration option: Include`) and then fails
+to start. The builder also strips the legacy `Include` line so a guest
+provisioned by an earlier release is repaired on re-provision.
 
 ### 2. authorized_keys MERGE + dedup (Finding 6)
 
@@ -82,10 +95,21 @@ skipped by `RegenerateSshHostKeysAsync`.
 
 The module configures an already-installed sshd. Installation is opt-in via
 `ssh.install_openssh: true`, which runs
-`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0` and sets the
-`sshd` service start mode to Automatic (`InstallOpenSshServerAsync`, no-op
-when already installed). `install_openssh` is an **eryph extension**, not part
-of cloud-init's `cc_ssh` schema.
+`Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0`
+(`InstallOpenSshServerAsync`, no-op when already installed). `install_openssh`
+is an **eryph extension**, not part of cloud-init's `cc_ssh` schema.
+
+Whenever the module owns an installed daemon — freshly installed *or* merely
+found — it enables autostart via `EnsureSshdAutostartAsync` (start mode
+Automatic + start, idempotent), so ssh survives a reboot. This is separate from
+install, because a *found* daemon left at Manual/Disabled would otherwise be
+configured but never come back after a reboot.
+
+**Ordering (host-key lock):** the daemon is **stopped** (`StopSshdAsync`)
+*before* host-key generation and only (re)started afterwards. A running sshd
+holds the `ssh_host_*_key` files open, so `RegenerateSshHostKeys`' pre-delete
+fails and `ssh-keygen` hangs on an "overwrite?" prompt. Autostart is the last
+step so it never precedes key generation.
 
 ### 5. Host-key ACL hardening in code
 
@@ -103,7 +127,7 @@ resolved by **well-known SID (RID 500)** so the lookup survives a rename
 (`ResolveBuiltinAdministratorNameAsync` enumerates Administrators members and
 returns the one whose SID ends `-500`; falls back to the literal
 `"Administrator"` with a Warning if resolution fails). The result is written
-as `DenyUsers <name>` in the drop-in.
+as `DenyUsers <name>` in the managed block.
 
 This is the **OS-level privileged account** and is intentionally **separate**
 from the configurable provisioning default user (below).
@@ -167,8 +191,9 @@ Task InstallOpenSshServerAsync(CancellationToken ct);
 Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
     IReadOnlyList<string> keyTypes, bool deleteExisting, CancellationToken ct);
 Task WriteSshHostKeyAsync(string keyType, string privatePem, string? publicLine, CancellationToken ct);
-Task EnsureSshdConfigIncludeAsync(CancellationToken ct);
-Task WriteSshdDropInAsync(string dropInFileName, string contents, CancellationToken ct);
+Task<bool> WriteSshdManagedConfigAsync(string directives, CancellationToken ct);
+Task EnsureSshdAutostartAsync(CancellationToken ct);
+Task StopSshdAsync(CancellationToken ct);
 Task RestartSshdAsync(CancellationToken ct);
 Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken ct);
 // reworked to merge+dedup:
@@ -182,18 +207,19 @@ Task SetUserSshAuthorizedKeysAsync(string userName, IReadOnlyList<string> keys, 
 `SshAuthorizedKeysModule` is renamed/broadened to `SshModule` (Stage = Config,
 Frequency = PerInstance) covering the surface above:
 
-1. If `ssh.install_openssh`, install + set Automatic.
-2. Ensure the `Include` + write `50-eryph.conf` (`ssh_pwauth`, `disable_root`
-   → `DenyUsers`).
+1. If sshd absent and `ssh.install_openssh`, install it (else write
+   authorized_keys only and return).
+2. Stop sshd (so host-key files aren't locked during regeneration).
 3. Host keys: write `ssh_keys` verbatim (ACL-hardened) else regenerate
-   `ssh_genkeytypes` (default `[ed25519, ecdsa, rsa]`); honour
-   `ssh_deletekeys`.
-4. authorized_keys (top-level → DefaultUser, per-user → each user) via the
+   `ssh_genkeytypes` (default `[ed25519, ecdsa, rsa]`); honour `ssh_deletekeys`.
+4. Write the managed `sshd_config` block (`ssh_pwauth`, `disable_root` →
+   `DenyUsers`).
+5. authorized_keys (top-level → DefaultUser, per-user → each user) via the
    merging writer.
-5. Restart sshd if anything changed; if sshd isn't installed, log Warning and
-   continue.
-6. Report fingerprints via `SshHostKeysReported` (gated by
-   `emit_keys_to_console`).
+6. Restart sshd if host keys / config changed.
+7. Report fingerprints via `SshHostKeysReported` (gated by `emit_keys_to_console`).
+8. Enable autostart (`EnsureSshdAutostartAsync`: Automatic + start) — last, so it
+   never precedes host-key generation.
 
 ## Don't break the egs-service transport
 

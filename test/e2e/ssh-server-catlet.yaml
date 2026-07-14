@@ -1,0 +1,18 @@
+name: ssh-server-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# Asks the SshModule to install the built-in Win32-OpenSSH server. The suite
+# then asserts the sshd service ends up Running AND set to start Automatically,
+# so ssh survives a reboot. It also flips sshd back to Manual/Stopped and
+# re-provisions to prove a *found* (not freshly-installed) daemon is re-enabled.
+fodder:
+  - name: enable-openssh
+    type: cloud-config
+    content: |
+      #cloud-config
+      ssh:
+        install_openssh: true
