@@ -58,8 +58,9 @@ public sealed class SshModuleTests
         await os.DidNotReceive().InstallOpenSshServerAsync(Arg.Any<CancellationToken>());
         await os.DidNotReceive().RegenerateSshHostKeysAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        await os.DidNotReceive().WriteSshdDropInAsync(
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().WriteSshdManagedConfigAsync(
+            Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceive().StopSshdAsync(Arg.Any<CancellationToken>());
         await os.DidNotReceive().RestartSshdAsync(Arg.Any<CancellationToken>());
     }
 
@@ -80,6 +81,94 @@ public sealed class SshModuleTests
         // Proceeded into host-key generation (no ssh_keys supplied).
         await os.Received().RegenerateSshHostKeysAsync(
             Arg.Any<IReadOnlyList<string>>(), false, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Pre_existing_sshd_is_set_to_autostart()
+    {
+        // The reported bug: a sshd we merely FIND (not install) must still be
+        // enabled for autostart, or it won't survive a reboot.
+        var os = SshdInstalled();
+        var module = CreateModule();
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).EnsureSshdAutostartAsync(Arg.Any<CancellationToken>());
+        // We did NOT install — the found daemon is what gets enabled.
+        await os.DidNotReceive().InstallOpenSshServerAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Freshly_installed_sshd_is_also_set_to_autostart()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var module = CreateModule();
+
+        var config = new CloudConfigModel { Ssh = new SshConfig { InstallOpenssh = true } };
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().InstallOpenSshServerAsync(Arg.Any<CancellationToken>());
+        await os.Received(1).EnsureSshdAutostartAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Sshd_absent_and_not_installed_does_not_touch_autostart()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var module = CreateModule();
+
+        var config = new CloudConfigModel { SshAuthorizedKeys = ["ssh-rsa AAA"] };
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
+
+        // No daemon exists — do not try to enable a non-existent service.
+        await os.DidNotReceive().EnsureSshdAutostartAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Autostart_failure_returns_Fail()
+    {
+        var os = SshdInstalled();
+        os.EnsureSshdAutostartAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("boom")));
+        var module = CreateModule();
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+    }
+
+    [Fact]
+    public async Task Stops_sshd_before_regenerating_host_keys_then_enables_autostart_last()
+    {
+        // Full ordering guard for the host-key-lock hazard: a found daemon (which
+        // may be RUNNING) must be STOPPED before RegenerateSshHostKeys touches
+        // the ssh_host_*_key files — otherwise the locked files make ssh-keygen
+        // hang on an overwrite prompt. And the daemon must only be (re)started
+        // AFTER the keys exist. So: StopSshd -> RegenerateSshHostKeys ->
+        // EnsureSshdAutostart.
+        var os = SshdInstalled();
+        var module = CreateModule();
+
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()), new TestModuleContext(os), CancellationToken.None);
+
+        Received.InOrder(() =>
+        {
+            os.StopSshdAsync(Arg.Any<CancellationToken>());
+            os.RegenerateSshHostKeysAsync(
+                Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            os.EnsureSshdAutostartAsync(Arg.Any<CancellationToken>());
+        });
     }
 
     [Fact]
@@ -236,8 +325,7 @@ public sealed class SshModuleTests
         await module.ApplyAsync(
             ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
 
-        await os.Received().WriteSshdDropInAsync(
-            "50-eryph.conf",
+        await os.Received().WriteSshdManagedConfigAsync(
             Arg.Is<string>(c => c.Contains("PasswordAuthentication yes")),
             Arg.Any<CancellationToken>());
     }
@@ -253,8 +341,7 @@ public sealed class SshModuleTests
         await module.ApplyAsync(
             ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
 
-        await os.Received().WriteSshdDropInAsync(
-            "50-eryph.conf",
+        await os.Received().WriteSshdManagedConfigAsync(
             Arg.Is<string>(c => c.Contains("PasswordAuthentication no")),
             Arg.Any<CancellationToken>());
     }
@@ -270,8 +357,7 @@ public sealed class SshModuleTests
         await module.ApplyAsync(
             ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
 
-        await os.Received().WriteSshdDropInAsync(
-            "50-eryph.conf",
+        await os.Received().WriteSshdManagedConfigAsync(
             Arg.Is<string>(c => !c.Contains("PasswordAuthentication")),
             Arg.Any<CancellationToken>());
     }
@@ -290,8 +376,7 @@ public sealed class SshModuleTests
             ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
 
         await os.Received().ResolveBuiltinAdministratorNameAsync(Arg.Any<CancellationToken>());
-        await os.Received().WriteSshdDropInAsync(
-            "50-eryph.conf",
+        await os.Received().WriteSshdManagedConfigAsync(
             Arg.Is<string>(c => c.Contains("DenyUsers RenamedAdmin")),
             Arg.Any<CancellationToken>());
     }

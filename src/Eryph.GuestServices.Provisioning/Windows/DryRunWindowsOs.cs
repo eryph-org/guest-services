@@ -155,6 +155,12 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.CompletedTask;
     }
 
+    public Task EnsureSshdAutostartAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would set sshd to start Automatically and start it");
+        return Task.CompletedTask;
+    }
+
     public Task<IReadOnlyList<SshHostKeyFingerprint>> RegenerateSshHostKeysAsync(
         IReadOnlyList<string> keyTypes,
         bool deleteExisting,
@@ -177,18 +183,17 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.CompletedTask;
     }
 
-    public Task EnsureSshdConfigIncludeAsync(CancellationToken cancellationToken)
-    {
-        logger.LogInformation("DRY-RUN would ensure sshd_config Include directive for sshd_config.d");
-        return Task.CompletedTask;
-    }
-
-    public Task WriteSshdDropInAsync(string dropInFileName, string contents, CancellationToken cancellationToken)
+    public Task<bool> WriteSshdManagedConfigAsync(string directives, CancellationToken cancellationToken)
     {
         logger.LogInformation(
-            "DRY-RUN would write sshd drop-in {File} ({Bytes} bytes)",
-            dropInFileName,
-            contents.Length);
+            "DRY-RUN would write eryph-managed sshd_config directives ({Bytes} bytes)",
+            directives.Length);
+        return Task.FromResult(false);
+    }
+
+    public Task StopSshdAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would stop sshd");
         return Task.CompletedTask;
     }
 
