@@ -879,6 +879,19 @@ internal sealed class WindowsOs : IWindowsOs
         // of run state. CimService.GetState returns null when not installed.
         Task.Run(() => CimService.GetState("sshd") is not null, cancellationToken);
 
+    // OS build 17763 = Windows 10 1809 / Windows Server 2019 — the first release
+    // where the OpenSSH.Server Feature-on-Demand is a supported inbox capability.
+    private const int OpenSshServerMinBuild = 17763;
+
+    public Task<bool> IsOpenSshServerCapabilityAvailableAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(IsOpenSshServerCapabilityAvailable(Environment.OSVersion.Version));
+
+    // internal + pure for unit testing. .NET 5+ reports the real OS build (no
+    // manifest clamping — see OsVersionDetector), so a build check is reliable.
+    internal static bool IsOpenSshServerCapabilityAvailable(Version osVersion) =>
+        osVersion.Major > 10
+        || (osVersion.Major == 10 && osVersion.Build >= OpenSshServerMinBuild);
+
     public async Task InstallOpenSshServerAsync(CancellationToken cancellationToken)
     {
         if (await IsSshdInstalledAsync(cancellationToken).ConfigureAwait(false))

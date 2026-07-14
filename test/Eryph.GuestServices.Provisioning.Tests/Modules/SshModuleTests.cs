@@ -38,13 +38,22 @@ public sealed class SshModuleTests
         return os;
     }
 
+    // sshd not installed, but on a Windows version where the OpenSSH Server
+    // capability IS available (the common case: Server 2019+).
+    private static IWindowsOs SshdAbsent()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        os.IsOpenSshServerCapabilityAvailableAsync(Arg.Any<CancellationToken>()).Returns(true);
+        return os;
+    }
+
     // ---- sshd presence / install ----
 
     [Fact]
     public async Task Sshd_absent_no_install_flag_writes_only_authorized_keys()
     {
-        var os = Substitute.For<IWindowsOs>();
-        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var os = SshdAbsent();
         var module = CreateModule();
 
         var config = new CloudConfigModel { SshAuthorizedKeys = ["ssh-rsa AAA"] };
@@ -65,10 +74,51 @@ public sealed class SshModuleTests
     }
 
     [Fact]
-    public async Task Sshd_absent_with_install_flag_installs_then_proceeds()
+    public async Task Skips_module_when_openssh_unavailable_and_sshd_not_installed()
     {
+        // Windows version without the OpenSSH Server capability (Server 2016 /
+        // Win10 < 1809) and no sshd present: disable the module — do not attempt
+        // an install the OS can't satisfy, and don't fail provisioning.
         var os = Substitute.For<IWindowsOs>();
         os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        os.IsOpenSshServerCapabilityAvailableAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var module = CreateModule();
+
+        var config = new CloudConfigModel { Ssh = new SshConfig { InstallOpenssh = true } };
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().InstallOpenSshServerAsync(Arg.Any<CancellationToken>());
+        await os.DidNotReceive().RegenerateSshHostKeysAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.DidNotReceiveWithAnyArgs().SetUserSshAuthorizedKeysAsync(default!, default!, default);
+    }
+
+    [Fact]
+    public async Task Found_sshd_is_configured_even_when_capability_unavailable()
+    {
+        // A manually-installed sshd (e.g. the GitHub MSI on Server 2016) is still
+        // configured — the capability guard only gates the not-installed path.
+        var os = Substitute.For<IWindowsOs>();
+        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(true);
+        os.IsOpenSshServerCapabilityAvailableAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var module = CreateModule();
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().RegenerateSshHostKeysAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        await os.Received(1).EnsureSshdAutostartAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Sshd_absent_with_install_flag_installs_then_proceeds()
+    {
+        var os = SshdAbsent();
         var module = CreateModule();
 
         var config = new CloudConfigModel { Ssh = new SshConfig { InstallOpenssh = true } };
@@ -103,8 +153,7 @@ public sealed class SshModuleTests
     [Fact]
     public async Task Freshly_installed_sshd_is_also_set_to_autostart()
     {
-        var os = Substitute.For<IWindowsOs>();
-        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var os = SshdAbsent();
         var module = CreateModule();
 
         var config = new CloudConfigModel { Ssh = new SshConfig { InstallOpenssh = true } };
@@ -120,8 +169,7 @@ public sealed class SshModuleTests
     [Fact]
     public async Task Sshd_absent_and_not_installed_does_not_touch_autostart()
     {
-        var os = Substitute.For<IWindowsOs>();
-        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var os = SshdAbsent();
         var module = CreateModule();
 
         var config = new CloudConfigModel { SshAuthorizedKeys = ["ssh-rsa AAA"] };
@@ -192,8 +240,7 @@ public sealed class SshModuleTests
     [Fact]
     public async Task Install_failure_returns_Fail()
     {
-        var os = Substitute.For<IWindowsOs>();
-        os.IsSshdInstalledAsync(Arg.Any<CancellationToken>()).Returns(false);
+        var os = SshdAbsent();
         os.InstallOpenSshServerAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromException(new InvalidOperationException("boom")));
         var module = CreateModule();

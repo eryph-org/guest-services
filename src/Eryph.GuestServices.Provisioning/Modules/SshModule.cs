@@ -38,6 +38,21 @@ internal sealed class SshModule(
 
         // 1. Detect sshd; optionally install.
         var installed = await context.Os.IsSshdInstalledAsync(cancellationToken).ConfigureAwait(false);
+
+        // Guard: if sshd isn't installed AND this Windows version has no OpenSSH
+        // Server capability (Server 2016 / Win10 < 1809), there is no daemon and
+        // none can be installed via Add-WindowsCapability. Disable the module
+        // rather than failing an install the OS can't satisfy. (A found daemon —
+        // e.g. a manual MSI install — is still configured below.)
+        if (!installed
+            && !await context.Os.IsOpenSshServerCapabilityAvailableAsync(cancellationToken).ConfigureAwait(false))
+        {
+            logger.LogInformation(
+                "OpenSSH Server is not available on this Windows version "
+                + "(requires Windows 10 1809 / Windows Server 2019+); skipping the SSH module.");
+            return ModuleOutcome.Ok();
+        }
+
         if (!installed && config.Ssh?.InstallOpenssh == true)
         {
             try

@@ -149,6 +149,10 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         // Read-only — pass through so dry-run reflects the real guest state.
         inner.IsSshdInstalledAsync(cancellationToken);
 
+    public Task<bool> IsOpenSshServerCapabilityAvailableAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through (depends only on the OS version).
+        inner.IsOpenSshServerCapabilityAvailableAsync(cancellationToken);
+
     public Task InstallOpenSshServerAsync(CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would install the OpenSSH server capability and set sshd Automatic");

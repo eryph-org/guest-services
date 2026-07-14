@@ -15,6 +15,22 @@ namespace Eryph.GuestServices.Provisioning.Tests.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class WindowsOsSshTests
 {
+    // ---- OpenSSH Server capability availability (by OS build) ----
+
+    [Theory]
+    [InlineData(10, 0, 14393, false)] // Windows Server 2016 — no capability
+    [InlineData(10, 0, 17134, false)] // Windows 10 1803 — server capability not yet supported
+    [InlineData(10, 0, 17763, true)]  // Windows Server 2019 / Win10 1809 — first supported
+    [InlineData(10, 0, 20348, true)]  // Windows Server 2022
+    [InlineData(10, 0, 26100, true)]  // Windows Server 2025
+    [InlineData(6, 3, 9600, false)]   // Windows Server 2012 R2
+    public void OpenSshServerCapability_availability_follows_the_1809_build_floor(
+        int major, int minor, int build, bool expected)
+    {
+        WindowsOs.IsOpenSshServerCapabilityAvailable(new Version(major, minor, build))
+            .Should().Be(expected);
+    }
+
     // ---- MERGE + dedup (Finding 6 regression) ----
 
     [Fact]

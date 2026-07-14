@@ -99,6 +99,17 @@ public interface IWindowsOs
     Task<bool> IsSshdInstalledAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// True when the inbox OpenSSH Server capability
+    /// (<c>OpenSSH.Server</c> Feature-on-Demand) is available on this Windows
+    /// version. It first shipped as a supported feature in Windows 10 1809 /
+    /// Windows Server 2019 (OS build 17763); Server 2016 and older do not have
+    /// it (only the standalone GitHub MSI). The SshModule uses this to skip
+    /// itself on unsupported versions instead of failing an install that the OS
+    /// cannot satisfy.
+    /// </summary>
+    Task<bool> IsOpenSshServerCapabilityAvailableAsync(CancellationToken cancellationToken);
+
+    /// <summary>
     /// Installs the OpenSSH server capability
     /// (<c>Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0</c>)
     /// and sets the <c>sshd</c> service start mode to Automatic. No-op when
