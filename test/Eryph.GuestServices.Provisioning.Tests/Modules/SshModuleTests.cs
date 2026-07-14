@@ -134,6 +134,24 @@ public sealed class SshModuleTests
     }
 
     [Fact]
+    public async Task Stop_failure_returns_Fail_and_skips_host_key_generation()
+    {
+        // If sshd can't be stopped we must NOT proceed into host-key generation
+        // (which could hang on the locked files) — surface a clean failure.
+        var os = SshdInstalled();
+        os.StopSshdAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new InvalidOperationException("boom")));
+        var module = CreateModule();
+
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel()), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+        await os.DidNotReceive().RegenerateSshHostKeysAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Autostart_failure_returns_Fail()
     {
         var os = SshdInstalled();

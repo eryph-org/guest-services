@@ -64,30 +64,31 @@ internal sealed class SshModule(
             return ModuleOutcome.Ok();
         }
 
-        // 2. Stop sshd before touching host keys. A daemon that is ALREADY
-        // running (a found image with sshd enabled at boot) holds the
-        // ssh_host_*_key files open; RegenerateSshHostKeys' pre-delete then
-        // fails and ssh-keygen hangs on an "overwrite?" prompt. Stopping is
-        // idempotent; the restart/autostart below brings it back up.
-        await context.Os.StopSshdAsync(cancellationToken).ConfigureAwait(false);
-
         IReadOnlyList<SshHostKeyFingerprint> reportableFingerprints = [];
         bool hostKeysChanged;
         bool configChanged;
 
         try
         {
+            // 2. Stop sshd before touching host keys. A daemon that is ALREADY
+            // running (a found image with sshd enabled at boot) holds the
+            // ssh_host_*_key files open; RegenerateSshHostKeys' pre-delete then
+            // fails and ssh-keygen hangs on an "overwrite?" prompt. Stopping is
+            // idempotent; the restart/autostart below brings it back up. If we
+            // cannot stop it, do NOT proceed into a possible host-key-gen hang.
+            await context.Os.StopSshdAsync(cancellationToken).ConfigureAwait(false);
+
             // 3. Host keys.
             (hostKeysChanged, reportableFingerprints) =
                 await ProcessHostKeysAsync(config, context, cancellationToken).ConfigureAwait(false);
 
             // 4. sshd_config directives.
-            configChanged = await ProcessDropInAsync(config, context, cancellationToken).ConfigureAwait(false);
+            configChanged = await ProcessSshdConfigAsync(config, context, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to apply ssh host-key / config on an installed sshd.");
-            return ModuleOutcome.Fail("ssh host-key / config write failed.", ex);
+            logger.LogError(ex, "Failed to prepare ssh (stop / host-key / config) on an installed sshd.");
+            return ModuleOutcome.Fail("ssh host-key / config setup failed.", ex);
         }
 
         // 5. authorized_keys (does not need a restart — sshd reads them per-connection).
@@ -242,7 +243,7 @@ internal sealed class SshModule(
     /// for why it is inlined rather than an <c>Include</c> drop-in). Returns true
     /// if the config file changed (so the caller restarts sshd).
     /// </summary>
-    private async Task<bool> ProcessDropInAsync(
+    private async Task<bool> ProcessSshdConfigAsync(
         CloudConfigModel config,
         IModuleContext context,
         CancellationToken cancellationToken)
