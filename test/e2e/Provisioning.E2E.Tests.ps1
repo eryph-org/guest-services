@@ -133,6 +133,26 @@ BeforeAll {
     }
   }
 
+  # Reads a local user's usri4_password_expired ("must change password at next
+  # logon") flag as 0/1. The WinNT ADSI provider that exposes this flag has a
+  # distinct readiness path from Get-LocalUser / AccountManagement (which are
+  # ready earlier), and its first cold bind can transiently throw in the window
+  # right after the final provisioning reboot — surfacing as a non-zero ssh exit.
+  # The probe therefore retries the bind+read on the guest until it succeeds, so
+  # it rides out that window instead of flaking. Single quotes only on the guest
+  # side so egs's `powershell -Command "..."` wrapping survives (issue #52). The
+  # $User is concatenated in host-side (the `+ $User +` is the string operator,
+  # outside the quoted segments), so it is baked into the script the guest runs.
+  function script:Get-GuestPasswordExpired {
+    param([string] $HostName, [string] $User)
+    # ~20s of retries (measured readiness window is ~7s after ssh first responds);
+    # a healthy guest returns on the first attempt, so this only costs time when
+    # the bind is genuinely unreadable. [int] pins the output to 0/1.
+    $probe = 'for($i=0;$i -lt 20;$i++){ try { [int](([ADSI]''WinNT://./' + $User +
+      ',user'').InvokeGet(''PasswordExpired'')); exit 0 } catch { Start-Sleep -Seconds 1 } }; exit 7'
+    return Invoke-GuestPS -HostName $HostName -Script $probe
+  }
+
   # Give SSH a moment to settle after the final boot — egs-service comes up
   # and registers Hyper-V sockets, but the Pester test process can race ahead.
   # The probe NEEDS to tolerate the early "connection refused" — keep the
@@ -284,12 +304,9 @@ Describe 'Embedded provisioning at first boot' {
     }
 
     It 'did NOT force a password change for prov_test_user (users: block)' {
-      # The users: block never forces a change, so usri4_password_expired must be
-      # 0. WinNT's PasswordExpired exposes that flag; read .Value, because the raw
-      # property accessor does not reliably surface the integer.
+      # The users: block never forces a change, so usri4_password_expired must be 0.
       $hostName = "$($catlet.VmId).hyper-v.alt"
-      $r = Invoke-GuestPS -HostName $hostName `
-        -Script "([ADSI]'WinNT://./prov_test_user,user').PasswordExpired.Value"
+      $r = Get-GuestPasswordExpired -HostName $hostName -User 'prov_test_user'
       $r.ExitCode | Should -Be 0
       $r.Output.Trim() | Should -Be '0'
     }
@@ -318,8 +335,7 @@ Describe 'Embedded provisioning at first boot' {
       # the correct field; the old code wrote level 1017 (acct_expires) here and
       # expired the whole account instead.
       $hostName = "$($catlet.VmId).hyper-v.alt"
-      $r = Invoke-GuestPS -HostName $hostName `
-        -Script "([ADSI]'WinNT://./prov_expire_user,user').PasswordExpired.Value"
+      $r = Get-GuestPasswordExpired -HostName $hostName -User 'prov_expire_user'
       $r.ExitCode | Should -Be 0
       $r.Output.Trim() | Should -Be '1'
     }
