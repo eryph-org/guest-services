@@ -82,12 +82,12 @@ internal static class NetUserHelpers
         if (spec.Disabled == true)
             info.usri1_flags |= NetApi32.UF_ACCOUNTDISABLE;
 
-        var status = NetApi32.NetUserAdd(null, NetApi32.USER_INFO_LEVEL_1, ref info, out var parmErr);
+        var status = NetApi32.NetUserAdd(null, NetApi32.USER_INFO_LEVEL_1, ref info, out _);
         if (status == NetApi32.NERR_UserExists)
             throw new InvalidOperationException($"User '{spec.Name}' already exists.");
         if (status != NetApi32.NERR_Success)
             throw new Win32Exception(status,
-                $"NetUserAdd failed for '{spec.Name}' with code {status}, param {parmErr}.");
+                $"Failed to create the user '{spec.Name}': {DescribeUserError(status)} (code {status}).");
 
         if (!string.IsNullOrEmpty(spec.FullName))
             SetFullName(spec.Name, spec.FullName);
@@ -96,11 +96,31 @@ internal static class NetUserHelpers
     public static void SetPassword(string userName, string password)
     {
         var info = new NetApi32.USER_INFO_1003 { usri1003_password = password };
-        var status = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_1003, ref info, out var parmErr);
+        var status = NetApi32.NetUserSetInfo(null, userName, NetApi32.USER_INFO_LEVEL_1003, ref info, out _);
         if (status != NetApi32.NERR_Success)
             throw new Win32Exception(status,
-                $"NetUserSetInfo(1003) failed for '{userName}' with code {status}, param {parmErr}.");
+                $"Failed to set the password for user '{userName}': {DescribeUserError(status)} (code {status}).");
     }
+
+    // Translates the NERR_* / Win32 status codes NetUserAdd and NetUserSetInfo
+    // return into a human-readable reason for the provisioning report and logs.
+    // Unknown codes fall back to the OS-localized system message. internal for
+    // direct unit testing.
+    internal static string DescribeUserError(int code) => code switch
+    {
+        NetApi32.NERR_PasswordTooShort =>
+            "the password does not meet the system's length, complexity, or history policy",
+        NetApi32.NERR_PasswordHistConflict =>
+            "the password was used recently and is blocked by the password-history policy",
+        NetApi32.NERR_PasswordTooRecent =>
+            "the password cannot be changed yet (minimum password age policy)",
+        NetApi32.NERR_BadUsername => "the user name is invalid",
+        NetApi32.NERR_UserExists => "the user account already exists",
+        NetApi32.NERR_UserNotFound => "the user account does not exist",
+        5 /* ERROR_ACCESS_DENIED */ => "access is denied",
+        // Fall back to whatever localized text Windows has for the code.
+        _ => new Win32Exception(code).Message,
+    };
 
     /// <summary>
     /// Sets ("user must change password at next logon") via usri4_password_expired.

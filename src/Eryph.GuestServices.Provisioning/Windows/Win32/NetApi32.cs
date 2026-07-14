@@ -13,11 +13,17 @@ namespace Eryph.GuestServices.Provisioning.Windows.Win32;
 internal static class NetApi32
 {
     public const int NERR_Success = 0;
+    public const int NERR_BadUsername = 2202;
     public const int NERR_UserExists = 2224;
     public const int NERR_UserNotFound = 2221;
     public const int NERR_GroupExists = 2223;
     public const int NERR_GroupNotFound = 2220;
     public const int NERR_UserInGroup = 2236;
+    // Password-policy rejections from NetUserAdd / NetUserSetInfo. NERR_PasswordTooShort
+    // is the umbrella code for ANY length/complexity failure, not just "too short".
+    public const int NERR_PasswordTooShort = 2245;
+    public const int NERR_PasswordHistConflict = 2244;
+    public const int NERR_PasswordTooRecent = 2246;
     // NetLocalGroupAddMembers returns this Win32 error (NOT a NERR_*) when the
     // principal is already a member of the local group. Treated as a success
     // for idempotency — re-running the agent against an already-provisioned

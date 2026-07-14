@@ -16,7 +16,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// is MID-stage; this module fires after every other Final module has
 /// already done its work and recorded its semaphores.
 /// </summary>
-[Stage(Stage.Final, Order = int.MaxValue - 1, Frequency = ModuleFrequency.PerInstance)]
+[Stage(Stage.Final, Order = int.MaxValue - 1, Frequency = ModuleFrequency.PerInstance, Name = "power-state-change")]
 internal sealed class PowerStateModule(ILogger<PowerStateModule> logger) : IModule
 {
     // Minimum buffer between scheduling the shutdown and actual power-down.

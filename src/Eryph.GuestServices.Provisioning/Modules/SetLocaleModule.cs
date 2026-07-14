@@ -12,7 +12,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// the input method tip. Changing the SYSTEM locale (Win32 ANSI codepage)
 /// requires a reboot — surfaced via <see cref="ModuleOutcome.RebootRequested"/>.
 /// </summary>
-[Stage(Stage.Network, Order = 5, Frequency = ModuleFrequency.PerInstance)]
+[Stage(Stage.Network, Order = 5, Frequency = ModuleFrequency.PerInstance, Name = "locale")]
 internal sealed class SetLocaleModule(ILogger<SetLocaleModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(
