@@ -140,15 +140,16 @@ BeforeAll {
   # right after the final provisioning reboot — surfacing as a non-zero ssh exit.
   # The probe therefore retries the bind+read on the guest until it succeeds, so
   # it rides out that window instead of flaking. Single quotes only on the guest
-  # side so egs's `powershell -Command "..."` wrapping survives (issue #52); the
-  # user name is interpolated host-side into the literal script.
+  # side so egs's `powershell -Command "..."` wrapping survives (issue #52). The
+  # $User is concatenated in host-side (the `+ $User +` is the string operator,
+  # outside the quoted segments), so it is baked into the script the guest runs.
   function script:Get-GuestPasswordExpired {
     param([string] $HostName, [string] $User)
     # ~20s of retries (measured readiness window is ~7s after ssh first responds);
     # a healthy guest returns on the first attempt, so this only costs time when
-    # the bind is genuinely unreadable.
-    $probe = 'for($i=0;$i -lt 20;$i++){ try { ([ADSI]''WinNT://./' + $User +
-      ',user'').InvokeGet(''PasswordExpired''); exit 0 } catch { Start-Sleep -Seconds 1 } }; exit 7'
+    # the bind is genuinely unreadable. [int] pins the output to 0/1.
+    $probe = 'for($i=0;$i -lt 20;$i++){ try { [int](([ADSI]''WinNT://./' + $User +
+      ',user'').InvokeGet(''PasswordExpired'')); exit 0 } catch { Start-Sleep -Seconds 1 } }; exit 7'
     return Invoke-GuestPS -HostName $HostName -Script $probe
   }
 
