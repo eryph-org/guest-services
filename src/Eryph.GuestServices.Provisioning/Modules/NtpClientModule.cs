@@ -11,7 +11,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// Windows Time service (<c>w32time</c>) and seeds its manual peer list
 /// from <c>ntp.servers</c> + <c>ntp.pools</c>.
 /// </summary>
-[Stage(Stage.Network, Order = 3, Frequency = ModuleFrequency.PerInstance)]
+[Stage(Stage.Network, Order = 3, Frequency = ModuleFrequency.PerInstance, Name = "ntp")]
 internal sealed class NtpClientModule(ILogger<NtpClientModule> logger) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(

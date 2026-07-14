@@ -155,8 +155,12 @@ public sealed class StageRunner(
             foreach (var entry in stageEntries)
             {
                 var module = entry.Module;
+                // moduleKey is the STABLE internal identity (semaphores, state,
+                // diagnostic logs) — never change it or existing semaphores
+                // orphan. moduleName is the human-readable REPORT name that
+                // surfaces in the KVP / cloud-init event stream.
                 var moduleKey = module.GetType().FullName ?? module.GetType().Name;
-                var moduleName = module.GetType().Name;
+                var moduleName = entry.ReportName;
                 var frequency = entry.Frequency;
 
                 var existingOutcome = await semaphoreStore
@@ -208,7 +212,7 @@ public sealed class StageRunner(
                         },
                         cancellationToken).ConfigureAwait(false);
                     await reporter.EmitAsync(
-                        new ReportingEvent.ProvisioningFailed($"{moduleKey}: {ex.Message}", ex)
+                        new ReportingEvent.ProvisioningFailed($"{moduleName}: {ex.Message}", ex)
                         {
                             Origin = "stage-runner",
                         },
@@ -386,7 +390,7 @@ public sealed class StageRunner(
                             },
                             cancellationToken).ConfigureAwait(false);
                         await reporter.EmitAsync(
-                            new ReportingEvent.ProvisioningFailed($"{moduleKey}: {failed.Reason}", failed.Exception)
+                            new ReportingEvent.ProvisioningFailed($"{moduleName}: {failed.Reason}", failed.Exception)
                             {
                                 Origin = "stage-runner",
                             },
@@ -623,8 +627,34 @@ public sealed class StageRunner(
                     .OrderBy(t => t.Attribute!.Order)
                     .ThenBy(t => t.Module.GetType().FullName, StringComparer.Ordinal)
                     .Where(t => IsModuleEnabled(g.Key, t.Module.GetType(), settings, logger))
-                    .Select(t => new StageEntry(t.Module, t.Attribute!.Frequency))
+                    .Select(t => new StageEntry(
+                        t.Module,
+                        t.Attribute!.Frequency,
+                        t.Attribute!.Name ?? DeriveReportName(t.Module.GetType())))
                     .ToList());
+    }
+
+    // Human-readable report name derived from the type: drop the trailing
+    // "Module" suffix and kebab-case the remaining PascalCase
+    // (UsersGroupsModule -> "users-groups"). A module can override this via
+    // StageAttribute.Name when its canonical (cloud-init) name differs from the
+    // derived one. internal for direct unit testing.
+    internal static string DeriveReportName(Type moduleType)
+    {
+        var name = moduleType.Name;
+        if (name.EndsWith("Module", StringComparison.Ordinal))
+            name = name[..^"Module".Length];
+
+        var sb = new System.Text.StringBuilder(name.Length + 4);
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c) && i > 0)
+                sb.Append('-');
+            sb.Append(char.ToLowerInvariant(c));
+        }
+
+        return sb.Length == 0 ? moduleType.Name.ToLowerInvariant() : sb.ToString();
     }
 
     private static bool IsModuleEnabled(
@@ -729,5 +759,5 @@ public sealed class StageRunner(
         }
     }
 
-    private readonly record struct StageEntry(IModule Module, ModuleFrequency Frequency);
+    private readonly record struct StageEntry(IModule Module, ModuleFrequency Frequency, string ReportName);
 }
