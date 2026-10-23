@@ -95,6 +95,15 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services agent configuration (capability switches + self-update)")]
     public EgsConfig? Egs { get; init; }
 
+    /// <summary>
+    /// eryph <c>winget:</c> block — installs packages with the Windows Package
+    /// Manager, replacing the <c>gene:dbosoft/winget:install</c> fodder.
+    /// Windows-only; no cloud-init equivalent. See <see cref="WingetConfig"/>
+    /// and RFC 0020.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Windows Package Manager (winget) package installation; no Linux equivalent")]
+    public WingetConfig? Winget { get; init; }
+
     // ---------------------------------------------------------------------
     // Known cloud-init top-level keys that the agent ACCEPTS but does not
     // act on. CloudConfigSerializer walks these after parsing and emits one

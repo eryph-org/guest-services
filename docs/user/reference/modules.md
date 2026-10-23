@@ -21,6 +21,7 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | Licensing | Config / 5 | per-instance | `license` |
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
 | ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
+| Winget | Final / 1 | per-instance | `winget` (Windows only) |
 | PowerState | Final / last | per-instance | `power_state` |
 
 To run a different set of modules in a stage, use the `stages` block in
@@ -374,6 +375,37 @@ same way as in [Runcmd](#runcmd): a script can ask for one or more reboots,
 inspect `EGS_REBOOT_COUNT` / `EGS_REBOOT_LIMIT` / `EGS_ENTRY_INDEX` in its
 environment, and raise its own per-script cap (`reboot.maxPerScript`, default
 10) by emitting the directive on stdout.
+
+## Winget
+
+Installs packages with the Windows Package Manager (winget). Windows only —
+there is no Linux equivalent. Replaces the `gene:dbosoft/winget:install` fodder.
+
+```yaml
+winget:
+  install_winget: true     # provision winget for all users if missing (default true)
+  sources:                 # optional: register custom winget sources
+    - name: contoso
+      argument: https://winget.contoso.example/
+      type: Microsoft.Rest
+  packages:
+    - id: Git.Git
+    - id: 7zip.7zip
+      version: '24.07'     # optional; latest when omitted
+```
+
+The agent runs as `LocalSystem`. winget is provisioned for all users (downloaded
+from the `microsoft/winget-cli` GitHub release) and run through a wrapper written
+to `C:\ProgramData\eryph\winget\winget-system.ps1`. Because of that, only the
+`winget` source and machine scope work: a package with `source: msstore` or
+`scope: user` is skipped with a warning. An already-installed package counts as
+success; any other install failure fails the module.
+
+Requires Windows 10 1809+, Windows 11, or Windows Server 2022+ (Server 2019 is
+not supported). Set `install_winget: false` to skip the download and only use a
+winget that is already present.
+
+Packages are not available to `runcmd` (which runs earlier, in the Config stage).
 
 ## PowerState
 

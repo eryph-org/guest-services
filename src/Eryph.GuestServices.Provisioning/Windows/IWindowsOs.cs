@@ -183,6 +183,51 @@ public interface IWindowsOs
     /// </summary>
     Task RestartSshdAsync(CancellationToken cancellationToken);
 
+    // Windows Package Manager (winget) — used by WingetModule. RFC 0020.
+    // The agent runs as LocalSystem; winget is provisioned for all users and
+    // driven through a generated LocalSystem wrapper.
+
+    /// <summary>
+    /// True when the App Installer (<c>Microsoft.DesktopAppInstaller</c>) is
+    /// provisioned on the image (<c>Get-AppxProvisionedPackage -Online</c>).
+    /// </summary>
+    Task<bool> IsWingetProvisionedAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Provisions the latest App Installer (winget) for all users: downloads
+    /// the release bundle, architecture-matched dependencies and license from
+    /// <c>microsoft/winget-cli</c> and runs <c>Add-AppxProvisionedPackage</c>
+    /// (<c>Add-AppxPackage</c> is refused under LocalSystem). Throws
+    /// <see cref="InvalidOperationException"/> on an unsupported platform
+    /// (Windows Server 2019 / builds below Windows 10 1809) or on a failed
+    /// provisioning. Does NOT write the LocalSystem wrapper — call
+    /// <see cref="EnsureWingetWrapperAsync"/> for that (it must run even when
+    /// winget was already provisioned on the image).
+    /// </summary>
+    Task ProvisionWingetAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Idempotently writes the LocalSystem wrapper
+    /// (<c>C:\ProgramData\eryph\winget\winget-system.ps1</c>) and smoke-tests it
+    /// with <c>winget --version</c>. Required before any
+    /// <see cref="RunWingetAsync"/> call. Throws
+    /// <see cref="InvalidOperationException"/> when winget does not run as
+    /// LocalSystem through the wrapper afterwards.
+    /// </summary>
+    Task EnsureWingetWrapperAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs winget as LocalSystem through the generated wrapper
+    /// (<c>C:\ProgramData\eryph\winget\winget-system.ps1</c>), passing
+    /// <paramref name="argv"/> verbatim as winget arguments. The returned
+    /// <see cref="RunCommandResult.ExitCode"/> is winget's own exit code so the
+    /// module can map the documented success codes
+    /// (<c>0x8A15002B</c> / <c>0x8A150061</c>).
+    /// </summary>
+    Task<RunCommandResult> RunWingetAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Resolves the on-disk name of the built-in Administrator account
     /// (RID 500) via its SID so the lookup survives a rename. Falls back to

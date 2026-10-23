@@ -125,10 +125,18 @@ winget:
   (Stage = Final, Frequency = PerInstance). No ordering dependency on
   `UsersGroupsModule` — winget runs as LocalSystem, not as a user.
 - Bootstrap: if `install_winget` is unset/`true` and winget is not
-  provisioned, provision it (download + `Add-AppxProvisionedPackage`),
-  then ensure the LocalSystem wrapper exists. If `install_winget:
-  false` and winget is missing while `packages:` is non-empty → log
-  Warning and exit Ok (skipped; operator opted out of bootstrap).
+  provisioned, provision it (download + `Add-AppxProvisionedPackage`).
+  If `install_winget: false` and winget is missing while `packages:` is
+  non-empty → log Warning and exit Ok (skipped; operator opted out of
+  bootstrap) and do **not** touch the wrapper.
+- Wrapper: once winget is known present (whether we just provisioned it
+  or it shipped with the image — Windows 11 and Server 2025 ship App
+  Installer provisioned), **always** ensure the LocalSystem wrapper via
+  `EnsureWingetWrapperAsync` before any `winget` invocation. This is a
+  separate step from provisioning precisely because the provisioning
+  step is skipped on images that already have winget, yet the wrapper
+  (our artifact) still has to be written. A failed wrapper smoke-test
+  (`winget --version`) fails the module.
 - Unsupported platform (Server 2019 / build below the minimum) → log
   Error, exit failed.
 - For each source: `winget source add ...` through the wrapper.
@@ -149,11 +157,17 @@ winget:
 
 ```csharp
 Task<bool> IsWingetProvisionedAsync(CancellationToken ct);
-Task ProvisionWingetAsync(CancellationToken ct);              // download + Add-AppxProvisionedPackage + wrapper
+Task ProvisionWingetAsync(CancellationToken ct);              // download + Add-AppxProvisionedPackage (NOT the wrapper)
+Task EnsureWingetWrapperAsync(CancellationToken ct);          // (re)write winget-system.ps1 + smoke-test --version
 Task<RunCommandResult> RunWingetAsync(IReadOnlyList<string> argv, CancellationToken ct);  // via the LocalSystem wrapper
 ```
 
-No `RunCommandAsUserAsync` — the earlier draft needed it only for the
+`ProvisionWingetAsync` and `EnsureWingetWrapperAsync` are deliberately
+split so the wrapper is written even on images that ship winget
+provisioned (where provisioning is skipped). `RunWingetAsync` and
+`ProvisionWingetAsync` carry generous safety-net timeouts so a hung
+installer / download cannot block the Final stage forever. No
+`RunCommandAsUserAsync` — the earlier draft needed it only for the
 scheduled-task approach that this RFC drops.
 
 ## Cross-references
@@ -169,9 +183,27 @@ scheduled-task approach that this RFC drops.
 ## Open questions
 
 - **Idempotency of pinned versions.** `winget install <id> --version
-  <v>` on a system already holding a different version: upgrade,
-  downgrade, or no-op? Tentative: pass `--force` only when the version
-  is pinned.
+  <v>` on a system already holding a different version is currently a
+  no-op (returns `0x8A150061`, treated as success). We do **not** pass
+  `--force`: it re-runs the installer on an already-satisfied package
+  and bypasses winget's installer-integrity checks. Moving an existing
+  install to a different pinned version is therefore not yet supported;
+  revisit if operators need it.
+- **No auto-update of an existing winget.** If winget is already
+  provisioned we skip provisioning, so a stale App Installer on the
+  image is not upgraded (a divergence from the gene, which always
+  re-provisioned). The module is `PerInstance`, so re-provisioning would
+  only cost one GitHub download per instance — but skipping avoids the
+  network dependency entirely when winget is present. Acceptable for v1;
+  an operator who needs a newer winget rebuilds the base image.
+- **Stage ordering vs `runcmd`.** `RuncmdModule` runs in the **Config**
+  stage; `WingetModule` runs in **Final**. So `runcmd` / `write_files`
+  cannot consume packages installed by `winget:` — the packages don't
+  exist yet when those modules run. This matches cloud-init's intent
+  only partially (cloud-init executes `runcmd` in the final stage, after
+  config-stage package install; this repo executes `runcmd` in config).
+  Documented as a known limitation; if operators need packages available
+  to `runcmd`, revisit either this module's stage or `RuncmdModule`'s.
 - **`install_winget` default.** The gene always provisions. The module
   defaults `install_winget` to `true` to match; an operator on a
   locked-down image sets it `false` to skip the GitHub download.

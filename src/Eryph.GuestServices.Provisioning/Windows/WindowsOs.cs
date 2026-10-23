@@ -1075,6 +1075,239 @@ internal sealed class WindowsOs : IWindowsOs
             logger.LogInformation("Restarted sshd to reload configuration.");
         }, cancellationToken);
 
+    // ---- Windows Package Manager (winget) — RFC 0020 ----
+    //
+    // Ported from gene:dbosoft/winget:install. The agent runs as LocalSystem,
+    // so winget is PROVISIONED for all users (Add-AppxPackage is refused under
+    // LocalSystem) and driven through a generated wrapper that puts the
+    // App Installer + dependency package dirs on PATH.
+
+    private static string WingetWrapperPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "eryph", "winget", "winget-system.ps1");
+
+    public async Task<bool> IsWingetProvisionedAsync(CancellationToken cancellationToken)
+    {
+        const string script =
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()\n"
+            + "$ErrorActionPreference = 'Stop'\n"
+            + "$p = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'Microsoft.DesktopAppInstaller'\n"
+            + "if ($p) { 'provisioned' } else { 'absent' }\n";
+        var result = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
+        return result.ExitCode == 0
+            && result.StdOut.Contains("provisioned", StringComparison.Ordinal);
+    }
+
+    public async Task ProvisionWingetAsync(CancellationToken cancellationToken)
+    {
+        // Mirrors the fodder gene: OS-build gate (throws on Server 2019 /
+        // pre-1809), download the latest release, provision for all users. The
+        // LocalSystem wrapper is written separately by EnsureWingetWrapperAsync
+        // so it is also refreshed when winget was already provisioned on the
+        // image. A generous timeout guards against a hung download / DISM.
+        var psi = BuildPowerShellCommandPsi(BuildWingetProvisionScript());
+        var result = await RunWithTimeoutAsync(psi, WingetProvisionTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"winget provisioning failed (exit {result.ExitCode}): {detail}");
+        }
+
+        logger.LogInformation("Provisioned winget (App Installer) for all users.");
+    }
+
+    public async Task EnsureWingetWrapperAsync(CancellationToken cancellationToken)
+    {
+        // Idempotent: always (re)write the wrapper so it exists regardless of
+        // whether winget was provisioned by us or shipped with the image, then
+        // smoke-test that winget actually runs as LocalSystem through it.
+        var wrapperPath = WingetWrapperPath;
+        Directory.CreateDirectory(Path.GetDirectoryName(wrapperPath)!);
+        // UTF-8 with BOM so Windows PowerShell 5.1 detects the encoding when it
+        // runs the wrapper via -File (the content is ASCII, so this is belt-and-
+        // suspenders rather than strictly required).
+        await File.WriteAllTextAsync(
+            wrapperPath,
+            BuildWingetWrapperScript(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            cancellationToken).ConfigureAwait(false);
+
+        var result = await RunWingetAsync(["--version"], cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"winget does not run as LocalSystem through the wrapper (exit {result.ExitCode}): {detail}");
+        }
+
+        logger.LogInformation("winget LocalSystem wrapper ready at {Path}.", wrapperPath);
+    }
+
+    public async Task<RunCommandResult> RunWingetAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken)
+    {
+        var psi = CreateUtf8Psi("powershell.exe");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(WingetWrapperPath);
+        foreach (var arg in argv)
+            psi.ArgumentList.Add(arg);
+
+        return await RunWithTimeoutAsync(psi, WingetRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Generous safety-net timeouts so a hung installer / download cannot block
+    // the Final stage forever. RunAsync kills the whole process tree on cancel.
+    private static readonly TimeSpan WingetProvisionTimeout = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan WingetRunTimeout = TimeSpan.FromMinutes(15);
+
+    // Distinct, non-success exit code reported when a winget run times out.
+    private const int WingetTimeoutExitCode = -2;
+
+    private ProcessStartInfo BuildPowerShellCommandPsi(string script)
+    {
+        var psi = CreateUtf8Psi("powershell.exe");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(script);
+        return psi;
+    }
+
+    // Runs a PowerShell script block via powershell.exe -Command with UTF-8
+    // streams. Shared by the winget probe path.
+    private Task<RunCommandResult> RunPowerShellAsync(string script, CancellationToken cancellationToken) =>
+        RunAsync(BuildPowerShellCommandPsi(script), cancellationToken);
+
+    // Runs a process with an upper time bound. An outer cancellation propagates
+    // as OperationCanceledException; a timeout is translated into a non-zero
+    // RunCommandResult (the tree is already killed by RunAsync).
+    private async Task<RunCommandResult> RunWithTimeoutAsync(
+        ProcessStartInfo psi,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        try
+        {
+            return await RunAsync(psi, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError("'{File}' timed out after {Minutes} minutes and was killed.", psi.FileName, timeout.TotalMinutes);
+            return new RunCommandResult(
+                WingetTimeoutExitCode, "", $"timed out after {timeout.TotalMinutes:0} minutes");
+        }
+    }
+
+    // The winget provisioning script (OS gate + download + provision). Kept as a
+    // builder so a unit test can assert its shape without a Windows host.
+    internal static string BuildWingetProvisionScript() =>
+        """
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+        $ErrorActionPreference = 'Stop'
+        $ProgressPreference = 'SilentlyContinue'
+
+        if ([System.Net.ServicePointManager]::SecurityProtocol -ne 0) {
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        }
+
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem
+        $build = [int]$os.BuildNumber
+        $isServer = $os.ProductType -ne 1
+        # The current App Installer package cannot be provisioned on Server 2019
+        # (DISM rejects its manifest); clients need Windows 10 1809 or later.
+        if (($isServer -and $build -lt 20348) -or $build -lt 17763) {
+            throw "winget is not supported on $($os.Caption) (build $build). Supported: Windows 10 1809+, Windows 11, Windows Server 2022+."
+        }
+
+        $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+            'AMD64' { 'x64' }
+            'ARM64' { 'arm64' }
+            default { 'x86' }
+        }
+
+        $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/microsoft/winget-cli/releases/latest' -UseBasicParsing
+        function Get-ReleaseAsset([string]$pattern) {
+            $asset = $release.assets | Where-Object { $_.name -like $pattern } | Select-Object -First 1
+            if (-not $asset) { throw "winget release $($release.tag_name) has no asset matching '$pattern'" }
+            return $asset
+        }
+
+        $bundleVersion = $release.tag_name -replace '^v', ''
+        $existing = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'Microsoft.DesktopAppInstaller'
+        Write-Host "winget release: $bundleVersion; provisioned App Installer: $(if ($existing) { $existing.Version } else { 'none' })"
+
+        $tempDir = Join-Path $env:TEMP 'winget-install'
+        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+        try {
+            $bundlePath = Join-Path $tempDir 'Microsoft.DesktopAppInstaller.msixbundle'
+            $dependenciesZip = Join-Path $tempDir 'dependencies.zip'
+            $licensePath = Join-Path $tempDir 'license.xml'
+
+            Write-Host "Downloading winget $bundleVersion..."
+            Invoke-WebRequest -Uri (Get-ReleaseAsset 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle').browser_download_url -OutFile $bundlePath -UseBasicParsing
+            Invoke-WebRequest -Uri (Get-ReleaseAsset 'DesktopAppInstaller_Dependencies.zip').browser_download_url -OutFile $dependenciesZip -UseBasicParsing
+            Invoke-WebRequest -Uri (Get-ReleaseAsset '*_License1.xml').browser_download_url -OutFile $licensePath -UseBasicParsing
+
+            Expand-Archive -Path $dependenciesZip -DestinationPath (Join-Path $tempDir 'dependencies') -Force
+            $dependencies = @(Get-ChildItem (Join-Path $tempDir "dependencies\$arch") -Filter *.appx | ForEach-Object FullName)
+            if ($dependencies.Count -eq 0) {
+                throw "The winget dependencies contain no packages for $arch"
+            }
+
+            Write-Host "Provisioning winget for all users..."
+            Add-AppxProvisionedPackage -Online -PackagePath $bundlePath -DependencyPackagePath $dependencies -LicensePath $licensePath | Out-Null
+        }
+        finally {
+            Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        $provisioned = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'Microsoft.DesktopAppInstaller'
+        if (-not $provisioned) {
+            throw "App Installer is not provisioned after installation"
+        }
+        Write-Host "winget provisioned: App Installer $($provisioned.Version)."
+        """;
+
+    // The LocalSystem wrapper written to winget-system.ps1. winget.exe cannot
+    // run as LocalSystem out of the box (0xC0000135 — missing dependency DLLs);
+    // this puts the App Installer + dependency package dirs on PATH first. Kept
+    // as a builder so a unit test can assert its shape without a Windows host.
+    internal static string BuildWingetWrapperScript() =>
+        """
+        # Runs winget as Local System. Written by eryph guest-services (WingetModule).
+        $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'AMD64' { 'x64' } 'ARM64' { 'arm64' } default { 'x86' } }
+        $apps = Join-Path $env:ProgramFiles 'WindowsApps'
+        function Get-NewestPackage([string]$name) {
+            Get-ChildItem $apps -Directory -Filter "$($name)_*_$($arch)__8wekyb3d8bbwe" -ErrorAction SilentlyContinue |
+                Sort-Object { [version](($_.Name -split '_')[1]) } | Select-Object -Last 1
+        }
+        $appInstaller = Get-NewestPackage 'Microsoft.DesktopAppInstaller'
+        if (-not $appInstaller) { Write-Error 'winget (App Installer) is not installed'; exit 1 }
+        $dependencies = @('Microsoft.VCLibs.140.00.UWPDesktop', 'Microsoft.VCLibs.140.00') + @(
+            Get-ChildItem $apps -Directory -Filter "Microsoft.WindowsAppRuntime.*_$($arch)__8wekyb3d8bbwe" -ErrorAction SilentlyContinue |
+                ForEach-Object { ($_.Name -split '_')[0] } | Sort-Object -Unique)
+        $paths = @($appInstaller.FullName) + @($dependencies | ForEach-Object { (Get-NewestPackage $_).FullName } | Where-Object { $_ })
+        $env:PATH = ($paths -join ';') + ';' + $env:PATH
+        & (Join-Path $appInstaller.FullName 'winget.exe') @args
+        exit $LASTEXITCODE
+        """;
+
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
         Task.Run(() =>
         {

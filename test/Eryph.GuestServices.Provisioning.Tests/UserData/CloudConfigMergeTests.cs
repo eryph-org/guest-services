@@ -373,6 +373,12 @@ public sealed class CloudConfigMergeTests
             Settings = new EgsSettingsConfig { RemoteAccess = false, Provisioning = true, KvpAuth = false, PortForwarding = true },
             Update = new EgsUpdateConfig { Enabled = true, Version = "0.4.0", Channel = "stable" },
         },
+        Winget = new WingetConfig
+        {
+            InstallWinget = true,
+            Sources = [new WingetSource { Name = "contoso", Argument = "https://example/winget", Type = "Microsoft.Rest" }],
+            Packages = [new WingetPackage { Id = "Git.Git", Version = "2.46.0", Source = "winget", Scope = "machine" }],
+        },
         Apt = new AptConfig { Proxy = "http://proxy:8080" },
         AptPipelining = "default",
         Packages = "pkgs",

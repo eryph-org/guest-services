@@ -1,0 +1,189 @@
+using Eryph.GuestServices.CloudConfig;
+using Eryph.GuestServices.Provisioning.Stages;
+using Eryph.GuestServices.Provisioning.UserData;
+using Microsoft.Extensions.Logging;
+
+namespace Eryph.GuestServices.Provisioning.Modules;
+
+/// <summary>
+/// Installs packages with the Windows Package Manager (winget), replacing the
+/// <c>gene:dbosoft/winget:install</c> fodder. The agent runs as LocalSystem:
+/// winget is provisioned for all users and driven through a generated wrapper,
+/// so there is no user-impersonation or ordering dependency on
+/// <c>UsersGroupsModule</c>. Under LocalSystem only the <c>winget</c> source
+/// and machine scope work. See RFC 0020.
+/// </summary>
+[Stage(Stage.Final, Order = 1, Frequency = ModuleFrequency.PerInstance)]
+internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
+{
+    // winget exit codes treated as success (match the fodder gene):
+    //   0            — installed
+    //   0x8A15002B   — no newer version available (already up to date)
+    //   0x8A150061   — package already installed
+    private static readonly int[] SuccessExitCodes = [0, unchecked((int)0x8A15002B), unchecked((int)0x8A150061)];
+
+    public async Task<ModuleOutcome> ApplyAsync(
+        ResolvedUserData userData,
+        IModuleContext context,
+        CancellationToken cancellationToken)
+    {
+        var config = userData.CloudConfig.Winget;
+        if (config is null)
+            return ModuleOutcome.Ok();
+
+        var hasWork = config.Packages is { Count: > 0 } || config.Sources is { Count: > 0 };
+        var install = config.InstallWinget ?? true;
+
+        // 1. Ensure winget is present.
+        var provisioned = await context.Os.IsWingetProvisionedAsync(cancellationToken).ConfigureAwait(false);
+        if (!provisioned)
+        {
+            if (!install)
+            {
+                // Operator opted out of bootstrap on a (fresh) image without
+                // winget — nothing we can do, but don't fail provisioning.
+                if (hasWork)
+                    logger.LogWarning(
+                        "winget is not provisioned and install_winget is false; skipping winget sources/packages.");
+                return ModuleOutcome.Ok();
+            }
+
+            try
+            {
+                logger.LogInformation("winget not provisioned; provisioning the App Installer (install_winget).");
+                await context.Os.ProvisionWingetAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to provision winget.");
+                return ModuleOutcome.Fail("winget provisioning failed.", ex);
+            }
+        }
+
+        // 2. Ensure the LocalSystem wrapper exists. This is REQUIRED before any
+        // RunWingetAsync call and must run even when winget was already
+        // provisioned on the image (Windows 11 / Server 2025 ship it, so the
+        // provisioning step above is skipped and would never write the wrapper).
+        try
+        {
+            await context.Os.EnsureWingetWrapperAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to prepare the winget LocalSystem wrapper.");
+            return ModuleOutcome.Fail("winget LocalSystem wrapper preparation failed.", ex);
+        }
+
+        // 3. Register custom sources.
+        if (config.Sources is { Count: > 0 })
+            await ProcessSourcesAsync(config.Sources, context, cancellationToken).ConfigureAwait(false);
+
+        // 4. Install packages.
+        if (config.Packages is { Count: > 0 })
+        {
+            var failed = await ProcessPackagesAsync(config.Packages, context, cancellationToken).ConfigureAwait(false);
+            if (failed.Count > 0)
+                return ModuleOutcome.Fail($"winget failed for package(s): {string.Join(", ", failed)}.");
+        }
+
+        return ModuleOutcome.Ok();
+    }
+
+    private async Task ProcessSourcesAsync(
+        IReadOnlyList<WingetSource> sources,
+        IModuleContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (var source in sources)
+        {
+            if (string.IsNullOrWhiteSpace(source.Name) || string.IsNullOrWhiteSpace(source.Argument))
+            {
+                logger.LogWarning("Skipping winget source with empty name/argument.");
+                continue;
+            }
+
+            var argv = new List<string>
+            {
+                "source", "add", "--name", source.Name, "--arg", source.Argument,
+                "--accept-source-agreements",
+            };
+            if (!string.IsNullOrWhiteSpace(source.Type))
+            {
+                argv.Add("--type");
+                argv.Add(source.Type);
+            }
+
+            logger.LogInformation("Registering winget source '{Name}'.", source.Name);
+            var result = await context.Os.RunWingetAsync(argv, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode != 0)
+                logger.LogWarning(
+                    "winget source add '{Name}' returned exit code {Code}; continuing.",
+                    source.Name, result.ExitCode);
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> ProcessPackagesAsync(
+        IReadOnlyList<WingetPackage> packages,
+        IModuleContext context,
+        CancellationToken cancellationToken)
+    {
+        var failed = new List<string>();
+        foreach (var package in packages)
+        {
+            if (string.IsNullOrWhiteSpace(package.Id))
+            {
+                logger.LogWarning("Skipping winget package with empty id.");
+                continue;
+            }
+
+            // Under LocalSystem only the winget source and machine scope work;
+            // msstore / user need a logged-on user token. Reject with a clear
+            // warning rather than attempt an install that cannot succeed.
+            if (!string.IsNullOrWhiteSpace(package.Source)
+                && !string.Equals(package.Source, "winget", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "Skipping winget package '{Id}': source '{Source}' is unsupported under LocalSystem (only 'winget').",
+                    package.Id, package.Source);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(package.Scope)
+                && !string.Equals(package.Scope, "machine", StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "Skipping winget package '{Id}': scope '{Scope}' is unsupported under LocalSystem (only 'machine').",
+                    package.Id, package.Scope);
+                continue;
+            }
+
+            var argv = new List<string>
+            {
+                "install", "--id", package.Id, "--exact",
+                "--source", "winget", "--scope", "machine", "--silent",
+                "--accept-source-agreements", "--accept-package-agreements",
+                "--disable-interactivity",
+            };
+            if (!string.IsNullOrWhiteSpace(package.Version))
+            {
+                // Pin the version. We deliberately do NOT pass --force: it would
+                // re-run the installer on an already-satisfied package and bypass
+                // winget's installer integrity checks. An already-installed
+                // package returns 0x8A150061, which we treat as success.
+                argv.Add("--version");
+                argv.Add(package.Version);
+            }
+
+            logger.LogInformation("Installing winget package '{Id}'.", package.Id);
+            var result = await context.Os.RunWingetAsync(argv, cancellationToken).ConfigureAwait(false);
+            if (Array.IndexOf(SuccessExitCodes, result.ExitCode) < 0)
+            {
+                logger.LogError(
+                    "winget install '{Id}' failed with exit code {Code}.", package.Id, result.ExitCode);
+                failed.Add(package.Id);
+            }
+        }
+
+        return failed;
+    }
+}

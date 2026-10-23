@@ -25,6 +25,7 @@ internal static class ModuleRegistry
         typeof(SshModule),
         typeof(TimezoneModule),
         typeof(UsersGroupsModule),
+        typeof(WingetModule),
         typeof(WriteFilesModule),
         typeof(WriteFilesDeferredModule),
     ];
