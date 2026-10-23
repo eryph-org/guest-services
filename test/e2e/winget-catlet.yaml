@@ -1,0 +1,31 @@
+name: winget-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The cloud-config below IS the test input. Our embedded provisioning agent
+# (baked into the VHD before first start) discovers the ConfigDrive, parses
+# this cloud-config, and runs the stages. The winget: block drives the new
+# WingetModule (RFC 0020): it provisions winget for all users (the winsrv
+# starter image does not ship App Installer), writes the LocalSystem wrapper,
+# and installs 7-Zip machine-wide.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-winget
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-winget-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      winget:
+        packages:
+          # 7-Zip: small, fast, and installs a deterministic path
+          # (C:\Program Files\7-Zip\7z.exe) the test can assert on.
+          - id: 7zip.7zip
