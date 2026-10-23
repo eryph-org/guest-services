@@ -15,7 +15,10 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// checkpoint state survives reboots so multi-stage installers
 /// (driver → reboot → role → reboot → done) make incremental progress.
 /// </summary>
-[Stage(Stage.Config, Order = 4, Frequency = ModuleFrequency.PerInstance)]
+// Order 6: after the package modules (Winget 4 / Chocolatey 5) so runcmd can
+// use installed packages, matching cloud-init (packages in config, runcmd
+// executed afterwards).
+[Stage(Stage.Config, Order = 6, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class RuncmdModule(
     ILogger<RuncmdModule> logger,
     ProvisioningSettings settings,

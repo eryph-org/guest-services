@@ -17,12 +17,12 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | SetPasswords | Config / 1 | per-instance | `chpasswd`, `password` |
 | SshModule | Config / 2 | per-instance | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` |
 | WriteFiles | Config / 3 | per-instance | `write_files` |
-| Runcmd | Config / 4 | per-instance | `runcmd` |
-| Licensing | Config / 5 | per-instance | `license` |
+| Winget | Config / 4 | per-instance | `winget` (Windows only) |
+| Chocolatey | Config / 5 | per-instance | `chocolatey` (Windows only) |
+| Runcmd | Config / 6 | per-instance | `runcmd` |
+| Licensing | Config / 7 | per-instance | `license` |
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
 | ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
-| Winget | Final / 1 | per-instance | `winget` (Windows only) |
-| Chocolatey | Final / 2 | per-instance | `chocolatey` (Windows only) |
 | PowerState | Final / last | per-instance | `power_state` |
 
 To run a different set of modules in a stage, use the `stages` block in
@@ -406,7 +406,9 @@ Requires Windows 10 1809+, Windows 11, or Windows Server 2022+ (Server 2019 is
 not supported). Set `install_winget: false` to skip the download and only use a
 winget that is already present.
 
-Packages are not available to `runcmd` (which runs earlier, in the Config stage).
+Winget runs in the Config stage before `runcmd`, so `runcmd` entries can use the
+packages it installs (matching cloud-init, where packages install before runcmd
+runs).
 
 ## Chocolatey
 
@@ -438,8 +440,8 @@ Set `install_chocolatey: false` to skip the download and use only a Chocolatey
 that is already present. Bootstrapping downloads `install.ps1` from
 community.chocolatey.org, so the guest needs outbound internet.
 
-As with Winget, packages are not available to `runcmd` (which runs earlier, in
-the Config stage).
+As with Winget, Chocolatey runs before `runcmd`, so `runcmd` can use the
+packages it installs.
 
 ## PowerState
 

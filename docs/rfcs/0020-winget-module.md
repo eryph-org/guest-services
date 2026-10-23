@@ -122,8 +122,13 @@ winget:
 ### Module
 
 - `Eryph.GuestServices.Provisioning.Modules.WingetModule`
-  (Stage = Final, Frequency = PerInstance). No ordering dependency on
-  `UsersGroupsModule` — winget runs as LocalSystem, not as a user.
+  (Stage = Config, Order before `RuncmdModule`, Frequency = PerInstance).
+  Config stage so packages are installed before `runcmd` executes —
+  cloud-init installs packages in the config stage and only executes
+  runcmd in the final stage, and our `RuncmdModule` executes in Config,
+  so the package modules run earlier in Config to preserve that. No
+  ordering dependency on `UsersGroupsModule` — winget runs as
+  LocalSystem, not as a user.
 - Bootstrap: if `install_winget` is unset/`true` and winget is not
   provisioned, provision it (download + `Add-AppxProvisionedPackage`).
   If `install_winget: false` and winget is missing while `packages:` is
@@ -196,14 +201,6 @@ scheduled-task approach that this RFC drops.
   only cost one GitHub download per instance — but skipping avoids the
   network dependency entirely when winget is present. Acceptable for v1;
   an operator who needs a newer winget rebuilds the base image.
-- **Stage ordering vs `runcmd`.** `RuncmdModule` runs in the **Config**
-  stage; `WingetModule` runs in **Final**. So `runcmd` / `write_files`
-  cannot consume packages installed by `winget:` — the packages don't
-  exist yet when those modules run. This matches cloud-init's intent
-  only partially (cloud-init executes `runcmd` in the final stage, after
-  config-stage package install; this repo executes `runcmd` in config).
-  Documented as a known limitation; if operators need packages available
-  to `runcmd`, revisit either this module's stage or `RuncmdModule`'s.
 - **`install_winget` default.** The gene always provisions. The module
   defaults `install_winget` to `true` to match; an operator on a
   locked-down image sets it `false` to skip the GitHub download.

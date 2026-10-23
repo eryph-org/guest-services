@@ -14,7 +14,9 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// <c>1641</c> / <c>3010</c>. Ordered after <see cref="WingetModule"/> so an
 /// operator who lists both gets winget first. See RFC 0021.
 /// </summary>
-[Stage(Stage.Final, Order = 2, Frequency = ModuleFrequency.PerInstance)]
+// Config stage, after WingetModule and before RuncmdModule (see the ordering
+// note on WingetModule): packages must be installed before runcmd executes.
+[Stage(Stage.Config, Order = 5, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModule
 {
     // choco exit codes that mean "installed, but reboot required".

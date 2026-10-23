@@ -13,7 +13,11 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// <c>UsersGroupsModule</c>. Under LocalSystem only the <c>winget</c> source
 /// and machine scope work. See RFC 0020.
 /// </summary>
-[Stage(Stage.Final, Order = 1, Frequency = ModuleFrequency.PerInstance)]
+// Config stage, before RuncmdModule: cloud-init installs packages in the config
+// stage and only executes runcmd in the final stage, so packages are available
+// to runcmd. Our RuncmdModule executes in Config, so the package modules must
+// run earlier in Config to preserve that ordering (RFC 0020).
+[Stage(Stage.Config, Order = 4, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
 {
     // winget exit codes treated as success (match the fodder gene):

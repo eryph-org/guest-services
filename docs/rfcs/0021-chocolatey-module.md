@@ -117,8 +117,9 @@ chocolatey:
 ### Module
 
 - `Eryph.GuestServices.Provisioning.Modules.ChocolateyModule`
-  (Stage = Final, Order after `WingetModule` so an operator who lists
-  both gets winget first. Frequency = PerInstance.)
+  (Stage = Config, Order after `WingetModule` and before `RuncmdModule`
+  so an operator who lists both gets winget first and `runcmd` can use
+  the installed packages. Frequency = PerInstance.)
 - Bootstrap: if `install_chocolatey: true` and `choco.exe` is missing,
   run the bootstrap one-liner. Skip if already present.
 - Sources: for each entry, `choco source add` (idempotent — choco's
@@ -188,8 +189,3 @@ Both are thin wrappers; everything else reuses the existing
   package install failure, by contrast, fails the module. Revisit if a
   missing source turns out to be a common silent cause of package
   failures.
-- **Stage ordering vs `runcmd`.** Same limitation as
-  [RFC 0020](0020-winget-module.md): `ChocolateyModule` runs in the
-  Final stage (Order 2, after `WingetModule`), while `RuncmdModule`
-  runs in Config — so `runcmd` cannot consume choco-installed packages.
-  Documented; revisit alongside the winget ordering question.
