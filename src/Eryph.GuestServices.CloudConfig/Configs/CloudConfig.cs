@@ -104,6 +104,14 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Windows Package Manager (winget) package installation; no Linux equivalent")]
     public WingetConfig? Winget { get; init; }
 
+    /// <summary>
+    /// eryph <c>chocolatey:</c> block — installs packages with Chocolatey,
+    /// replacing the <c>gene:dbosoft/chocolatey:install</c> fodder. Windows-only;
+    /// no cloud-init equivalent. See <see cref="ChocolateyConfig"/> and RFC 0021.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Chocolatey package installation; no Linux equivalent")]
+    public ChocolateyConfig? Chocolatey { get; init; }
+
     // ---------------------------------------------------------------------
     // Known cloud-init top-level keys that the agent ACCEPTS but does not
     // act on. CloudConfigSerializer walks these after parsing and emits one

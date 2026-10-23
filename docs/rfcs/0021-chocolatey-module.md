@@ -182,3 +182,14 @@ Both are thin wrappers; everything else reuses the existing
 - Should the module check that the catlet has internet access before
   attempting bootstrap? Tentative no — failing fast with the network
   error is more useful than a silent skip.
+- **Source-add failures are warnings, not failures.** A failing
+  `choco source add` logs a Warning and continues (choco's source-add
+  is idempotent, and a package may not even need that source). A
+  package install failure, by contrast, fails the module. Revisit if a
+  missing source turns out to be a common silent cause of package
+  failures.
+- **Stage ordering vs `runcmd`.** Same limitation as
+  [RFC 0020](0020-winget-module.md): `ChocolateyModule` runs in the
+  Final stage (Order 2, after `WingetModule`), while `RuncmdModule`
+  runs in Config — so `runcmd` cannot consume choco-installed packages.
+  Documented; revisit alongside the winget ordering question.

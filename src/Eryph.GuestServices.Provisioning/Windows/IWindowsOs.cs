@@ -228,6 +228,35 @@ public interface IWindowsOs
         IReadOnlyList<string> argv,
         CancellationToken cancellationToken);
 
+    // Chocolatey — used by ChocolateyModule. RFC 0021. Runs cleanly as
+    // LocalSystem from C:\ProgramData\chocolatey (no wrapper, no impersonation).
+
+    /// <summary>
+    /// True when <c>choco.exe</c> is present (resolved from
+    /// <c>%ChocolateyInstall%\bin\choco.exe</c>, default
+    /// <c>C:\ProgramData\chocolatey\bin\choco.exe</c>).
+    /// </summary>
+    Task<bool> IsChocolateyInstalledAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Bootstraps Chocolatey by running the community <c>install.ps1</c>. Throws
+    /// <see cref="InvalidOperationException"/> when the install fails and no
+    /// reboot was requested. <see cref="ChocolateyBootstrapResult.RebootRequired"/>
+    /// is set when the installer reports a .NET Framework reboot is required
+    /// (choco is not usable until after that reboot).
+    /// </summary>
+    Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs <c>choco.exe</c> (resolved by full path) with <paramref name="argv"/>
+    /// as its arguments. The returned <see cref="RunCommandResult.ExitCode"/> is
+    /// choco's own exit code so the module can map <c>1641</c> / <c>3010</c>
+    /// (reboot required).
+    /// </summary>
+    Task<RunCommandResult> RunChocoAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Resolves the on-disk name of the built-in Administrator account
     /// (RID 500) via its SID so the lookup survives a rename. Falls back to

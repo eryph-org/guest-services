@@ -1308,6 +1308,97 @@ internal sealed class WindowsOs : IWindowsOs
         exit $LASTEXITCODE
         """;
 
+    // ---- Chocolatey — RFC 0021 ----
+    //
+    // Ported from gene:dbosoft/chocolatey:install. choco runs cleanly as
+    // LocalSystem from C:\ProgramData\chocolatey — no wrapper, no impersonation.
+
+    private static readonly TimeSpan ChocolateyBootstrapTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan ChocolateyRunTimeout = TimeSpan.FromMinutes(15);
+
+    // Distinct exit code the bootstrap script emits when the installer reports a
+    // .NET Framework reboot is required (choco is unusable until after it).
+    private const int ChocolateyRebootExitCode = 3010;
+
+    private static string ChocolateyExePath
+    {
+        get
+        {
+            var root = Environment.GetEnvironmentVariable("ChocolateyInstall");
+            if (string.IsNullOrWhiteSpace(root))
+                root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "chocolatey");
+            return Path.Combine(root, "bin", "choco.exe");
+        }
+    }
+
+    public Task<bool> IsChocolateyInstalledAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(File.Exists(ChocolateyExePath));
+
+    public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
+    {
+        var psi = BuildPowerShellCommandPsi(BuildChocolateyBootstrapScript());
+        var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.ExitCode == ChocolateyRebootExitCode)
+        {
+            logger.LogInformation("Chocolatey bootstrap reported a .NET Framework reboot is required.");
+            return new ChocolateyBootstrapResult { RebootRequired = true };
+        }
+
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"Chocolatey bootstrap failed (exit {result.ExitCode}): {detail}");
+        }
+
+        // Verify choco actually landed where we will invoke it (honouring
+        // %ChocolateyInstall%). Doing the check here — not in the script — keeps
+        // one source of truth for the path (the script and C# used to disagree).
+        if (!File.Exists(ChocolateyExePath))
+            throw new InvalidOperationException(
+                $"Chocolatey bootstrap completed but choco.exe was not found at {ChocolateyExePath}.");
+
+        logger.LogInformation("Bootstrapped Chocolatey.");
+        return new ChocolateyBootstrapResult { RebootRequired = false };
+    }
+
+    public async Task<RunCommandResult> RunChocoAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken)
+    {
+        var psi = CreateUtf8Psi(ChocolateyExePath);
+        foreach (var arg in argv)
+            psi.ArgumentList.Add(arg);
+        return await RunWithTimeoutAsync(psi, ChocolateyRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    // The Chocolatey bootstrap script (community install.ps1). Kept as a builder
+    // so a unit test can assert its shape without a Windows host. Exits
+    // ChocolateyRebootExitCode (3010) when a .NET Framework reboot is required.
+    internal static string BuildChocolateyBootstrapScript() =>
+        """
+        [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+        $ErrorActionPreference = 'Stop'
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+
+        # Merge ALL streams (*>&1): the installer reports the .NET Framework
+        # reboot via Write-Warning / Write-Host, which 2>&1 (error stream only)
+        # would miss — leaving the reboot path dead.
+        $out = (& { Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')) } *>&1 | Out-String)
+        Write-Host $out
+
+        if ($out -match 'reboot is required') {
+            exit 3010
+        }
+        # choco.exe presence is verified by the caller (honouring %ChocolateyInstall%).
+        """;
+
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
         Task.Run(() =>
         {

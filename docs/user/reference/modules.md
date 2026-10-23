@@ -22,6 +22,7 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
 | ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
 | Winget | Final / 1 | per-instance | `winget` (Windows only) |
+| Chocolatey | Final / 2 | per-instance | `chocolatey` (Windows only) |
 | PowerState | Final / last | per-instance | `power_state` |
 
 To run a different set of modules in a stage, use the `stages` block in
@@ -406,6 +407,39 @@ not supported). Set `install_winget: false` to skip the download and only use a
 winget that is already present.
 
 Packages are not available to `runcmd` (which runs earlier, in the Config stage).
+
+## Chocolatey
+
+Installs packages with Chocolatey. Windows only — no Linux equivalent. Replaces
+the `gene:dbosoft/chocolatey:install` fodder. Runs after Winget, so an operator
+who lists both gets winget first.
+
+```yaml
+chocolatey:
+  install_chocolatey: true   # bootstrap Chocolatey if missing (default true)
+  sources:                   # optional
+    - name: internal
+      url: https://nuget.example/choco
+      priority: 1            # 1..100, lower = higher priority
+  packages:
+    - name: 7zip
+    - name: git
+      version: '2.46.0'      # optional
+      params: '/GitOnlyOnPath'   # optional installer params
+```
+
+Chocolatey runs as `LocalSystem` directly (no wrapper, unlike winget). Two
+things can request a reboot and both are handled by reboot-and-continue: the
+bootstrap's .NET Framework reboot, and a package returning `1641` / `3010`.
+After the reboot the module re-runs and continues. An install failure fails the
+module; a source that can't be added logs a warning and continues.
+
+Set `install_chocolatey: false` to skip the download and use only a Chocolatey
+that is already present. Bootstrapping downloads `install.ps1` from
+community.chocolatey.org, so the guest needs outbound internet.
+
+As with Winget, packages are not available to `runcmd` (which runs earlier, in
+the Config stage).
 
 ## PowerState
 

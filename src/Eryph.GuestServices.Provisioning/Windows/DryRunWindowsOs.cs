@@ -233,6 +233,27 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.FromResult(new RunCommandResult(0, "", ""));
     }
 
+    // ---- Chocolatey ----
+
+    public Task<bool> IsChocolateyInstalledAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through so dry-run reflects the real guest state.
+        inner.IsChocolateyInstalledAsync(cancellationToken);
+
+    public Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would bootstrap Chocolatey");
+        // Never claim a reboot in dry-run so a what-if doesn't trigger restart paths.
+        return Task.FromResult(new ChocolateyBootstrapResult { RebootRequired = false });
+    }
+
+    public Task<RunCommandResult> RunChocoAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would run choco: {Argv}", string.Join(" ", argv));
+        return Task.FromResult(new RunCommandResult(0, "", ""));
+    }
+
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
         // Read-only — pass through so dry-run resolves the real RID-500 name.
         inner.ResolveBuiltinAdministratorNameAsync(cancellationToken);
