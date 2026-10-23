@@ -1,0 +1,31 @@
+name: chocolatey-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The cloud-config below IS the test input. Our embedded provisioning agent
+# (baked into the VHD before first start) discovers the ConfigDrive, parses
+# this cloud-config, and runs the stages. The chocolatey: block drives the new
+# ChocolateyModule (RFC 0021): it bootstraps Chocolatey from
+# community.chocolatey.org (choco runs as LocalSystem) and installs 7-Zip.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-chocolatey
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-choco-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      chocolatey:
+        install_chocolatey: true
+        packages:
+          # 7zip.install installs the real program to a deterministic path
+          # (C:\Program Files\7-Zip\7z.exe) the test can assert on.
+          - name: 7zip.install
