@@ -1,6 +1,6 @@
 # RFC 0021 — `chocolatey` cloud-config module
 
-Status: Draft
+Status: Accepted
 
 ## Problem
 
@@ -47,9 +47,30 @@ choco source add -n <name> -s <url> --priority <n>
 choco install <name> -y --version <v> --params '<params>'
 ```
 
-Exit codes: 0 = success, 1641 / 3010 = reboot required. Map the reboot
-codes to `ModuleOutcome.RebootRequested` to ride the
-[RFC 0007](0007-scripts-per-frequency-edge-cases.md) contract.
+There are **two** distinct reboot triggers, both of which the agent
+maps to `ModuleOutcome.RebootRequested` to ride the
+[RFC 0007](0007-scripts-per-frequency-edge-cases.md) contract:
+
+1. **Bootstrap .NET Framework reboot.** The community `install.ps1`
+   may pull in a .NET Framework that needs a reboot before choco is
+   usable. The existing gene detects this from the installer output
+   (`"reboot is required"`) and, under cloudbase-init, drops a marker
+   file and exits `1003` (cbi's reboot-and-run-again code). In the
+   agent this becomes `RebootRequested` with no marker file —
+   reboot-and-continue re-enters the module and the bootstrap check
+   finds choco already (or re-runs the installer, which is idempotent).
+2. **Package install reboot.** `choco install` exit codes `1641` /
+   `3010` = reboot required.
+
+## Decision
+
+Keep choco in the **LocalSystem** service context — this is correct and
+needs no change from the draft. Reconcile the reboot handling with the
+gene's reality: the agent replaces the cbi-specific `exit 1003` +
+marker-file dance with the native `RebootRequested` outcome, covering
+both triggers above. The current gene only *bootstraps* choco (no
+source/package loop); the module adds the full declarative surface
+below.
 
 ## Tentative direction
 
