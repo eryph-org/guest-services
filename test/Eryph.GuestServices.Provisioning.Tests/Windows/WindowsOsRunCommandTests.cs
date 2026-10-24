@@ -118,6 +118,26 @@ public sealed class WindowsOsRunCommandTests
         }
     }
 
+    [Theory]
+    [InlineData("http://config.example/app.dsc.yaml")]   // plain http, no integrity
+    [InlineData("ftp://config.example/app.dsc.yaml")]    // unsupported scheme
+    [InlineData("file://C:/Users/Public/app.dsc.yaml")]  // local, user-controllable
+    public async Task DownloadDscDocument_rejects_unauthenticated_sources(string url)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // The guard runs before any download or path staging: a document whose
+        // authenticity can't be established (plain http without a checksum, or a
+        // non-http(s) scheme) is refused before it can be written to the trusted
+        // directory and executed as LocalSystem.
+        var os = new WindowsOs(NullLogger<WindowsOs>.Instance);
+
+        var act = async () => await os.DownloadDscDocumentAsync(
+            "app", url, checksum: null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
     [Fact]
     public async Task RunShell_keeps_exclamation_marks_literal()
     {

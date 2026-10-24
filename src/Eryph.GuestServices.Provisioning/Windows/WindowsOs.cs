@@ -700,12 +700,42 @@ internal sealed class WindowsOs : IWindowsOs
         try
         {
             var security = new DirectoryInfo(directory).GetAccessControl();
-            return NonPrivilegedController(security, DangerousDiscoveryCreateRights) is null;
+            if (NonPrivilegedController(security, DangerousDiscoveryCreateRights) is not null)
+                return false;
+
+            // A protected directory can still CONTAIN a manifest that is a reparse
+            // point to a user-controlled file or carries an explicit non-privileged
+            // write ACE. DSC reads those manifests and runs the commands they name,
+            // so each existing discovery manifest must itself be trusted (owner /
+            // reparse / non-privileged write). DSC scans one level only (read_dir),
+            // so this does not recurse.
+            foreach (var manifest in EnumerateDiscoveryManifests(directory))
+                if (UntrustedPathReason(manifest) is not null)
+                    return false;
+
+            return true;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static readonly string[] DscManifestSuffixes =
+    [
+        ".dsc.resource.json", ".dsc.resource.yaml", ".dsc.resource.yml",
+        ".dsc.extension.json", ".dsc.extension.yaml", ".dsc.extension.yml",
+    ];
+
+    // The DSC resource/extension manifest files directly in <paramref name="directory"/>
+    // (DSC discovers one level deep). The OS pattern pre-filters; the suffix
+    // re-check guards against legacy 8.3 / wildcard quirks.
+    private static IEnumerable<string> EnumerateDiscoveryManifests(string directory)
+    {
+        foreach (var suffix in DscManifestSuffixes)
+            foreach (var file in Directory.EnumerateFiles(directory, "*" + suffix, SearchOption.TopDirectoryOnly))
+                if (file.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    yield return file;
     }
 
     private static bool IsOnFixedLocalVolume(string path)
@@ -2067,6 +2097,20 @@ internal sealed class WindowsOs : IWindowsOs
         string? checksum,
         CancellationToken cancellationToken)
     {
+        // The downloaded document is staged into the trusted directory and its
+        // resource actions run as LocalSystem, so its authenticity matters. TLS
+        // gives it over https; plain http is only acceptable when a checksum pins
+        // the content. Reject anything else (and non-http(s) schemes such as
+        // file:// that could point at a user-controlled path).
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            throw new InvalidOperationException(
+                $"Refusing to download a DSC document from '{url}': only http/https URLs are supported.");
+        if (uri.Scheme == Uri.UriSchemeHttp && string.IsNullOrWhiteSpace(checksum))
+            throw new InvalidOperationException(
+                $"Refusing to download a DSC document over plain HTTP without integrity protection: '{url}'. "
+                + "Use https, or provide a 'sha256:...' checksum.");
+
         var path = PrepareDscDocumentPath(fileName);
 
         using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
