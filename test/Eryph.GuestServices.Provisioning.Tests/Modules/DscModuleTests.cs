@@ -3,6 +3,7 @@ using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Modules;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using CloudConfigModel = global::Eryph.GuestServices.CloudConfig.CloudConfig;
@@ -319,6 +320,94 @@ public sealed class DscModuleTests
     }
 
     [Fact]
+    public async Task Apply_exception_honours_continue_on_error()
+    {
+        var os = DscOs();
+        // RunDscConfigAsync THROWS for the first configuration (as it does for an
+        // untrusted document_path) rather than returning a non-zero exit. That
+        // must be a per-configuration failure, not an unhandled exception that
+        // aborts provisioning — the second configuration still runs.
+        var call = 0;
+        os.RunDscConfigAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<DscApplyResult>(_ =>
+            {
+                if (Interlocked.Increment(ref call) == 1)
+                    throw new InvalidOperationException("Refusing to apply a DSC document from an untrusted path.");
+                return new DscApplyResult { ExitCode = 0 };
+            });
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig { ContinueOnError = true, Configurations = [Inline("one"), Inline("two")] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+        await os.Received(2).RunDscConfigAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Apply_exception_stops_at_first_when_continue_on_error_false()
+    {
+        var os = DscOs();
+        os.RunDscConfigAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<DscApplyResult>(_ => throw new InvalidOperationException("untrusted path"));
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig { Configurations = [Inline("one"), Inline("two")] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+        await os.Received(1).RunDscConfigAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Apply_genuine_cancellation_propagates()
+    {
+        var os = DscOs();
+        using var cts = new CancellationTokenSource();
+        os.RunDscConfigAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns<DscApplyResult>(_ =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            });
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig { ContinueOnError = true, Configurations = [Inline("one"), Inline("two")] },
+        };
+
+        var act = () => CreateModule().ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task Test_verb_surfaces_the_result_output_on_the_log()
+    {
+        var logger = new CapturingLogger<DscModule>();
+        var os = DscOs();
+        os.RunDscConfigAsync(Arg.Any<string>(), Arg.Any<string>(), "test", Arg.Any<CancellationToken>())
+            .Returns(new DscApplyResult { ExitCode = 0, JsonOutput = "{ \"inDesiredState\": false }" });
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig { Apply = "test", Configurations = [Inline()] },
+        };
+
+        var outcome = await new DscModule(logger).ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        // The read-only verb's output is surfaced, not discarded.
+        logger.Messages.Should().Contain(m => m.Contains("inDesiredState"));
+    }
+
+    [Fact]
     public async Task Reboot_request_surfaces_as_Reboot_when_all_succeed()
     {
         var os = DscOs(reboot: true);
@@ -455,5 +544,25 @@ public sealed class DscModuleTests
 
         outcome.Should().BeOfType<ModuleOutcome.Completed>();
         await os.Received().RunDscConfigAsync(DscPath, Arg.Any<string>(), "set", Arg.Any<CancellationToken>());
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
     }
 }

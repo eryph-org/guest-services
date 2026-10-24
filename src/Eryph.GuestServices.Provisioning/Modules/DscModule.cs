@@ -111,8 +111,28 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
             }
 
             logger.LogInformation("dsc: applying configuration '{Name}' ({Verb}).", name, verb);
-            var result = await context.Os.RunDscConfigAsync(dscPath, documentPath, verb, cancellationToken)
-                .ConfigureAwait(false);
+            DscApplyResult result;
+            try
+            {
+                result = await context.Os.RunDscConfigAsync(dscPath, documentPath, verb, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // RunDscConfigAsync can throw, not just return a non-zero exit —
+                // e.g. it refuses an untrusted document_path. That must be a
+                // per-configuration failure honouring continue_on_error, not an
+                // unhandled exception that aborts the whole provisioning run.
+                logger.LogError(ex, "dsc: applying configuration '{Name}' failed.", name);
+                failed.Add(name);
+                if (!continueOnError)
+                    break;
+                continue;
+            }
 
             if (result.ExitCode != 0)
             {
@@ -122,6 +142,12 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
                     break;
                 continue;
             }
+
+            // 'get' / 'test' are read-only: their value is the reported state /
+            // drift, which would otherwise be discarded. Surface it on the
+            // provisioning log (capped) so an operator can see the result.
+            if (verb is "get" or "test")
+                LogInspectionResult(name, verb, result.JsonOutput);
 
             if (result.RebootRequested)
             {
@@ -261,6 +287,25 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
         var chars = slug.Select(c =>
             char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray();
         return new string(chars) + ".dsc.yaml";
+    }
+
+    // Logs the dsc.exe output of a read-only verb (get / test) on the
+    // provisioning log, capped so a large state document cannot flood it.
+    private void LogInspectionResult(string name, string verb, string? jsonOutput)
+    {
+        const int maxChars = 4000;
+        var output = (jsonOutput ?? string.Empty).Trim();
+        if (output.Length == 0)
+        {
+            logger.LogInformation("dsc: configuration '{Name}' ({Verb}) produced no output.", name, verb);
+            return;
+        }
+
+        var shown = output.Length > maxChars
+            ? output[..maxChars] + $" …(+{output.Length - maxChars} more chars)"
+            : output;
+        logger.LogInformation(
+            "dsc: configuration '{Name}' ({Verb}) result:\n{Result}", name, verb, shown);
     }
 
     private static string? NormalizeVerb(string? apply)
