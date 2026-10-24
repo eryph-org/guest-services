@@ -13,7 +13,7 @@ public sealed class WindowsOsChocolateyScriptTests
     [Fact]
     public void BootstrapScript_downloads_installer_and_signals_reboot()
     {
-        var script = WindowsOs.BuildChocolateyBootstrapScript();
+        var script = PackageScripts.ChocolateyBootstrap();
 
         script.Should().Contain("community.chocolatey.org/install.ps1");
         // All streams merged so the installer's Write-Warning/Write-Host reboot

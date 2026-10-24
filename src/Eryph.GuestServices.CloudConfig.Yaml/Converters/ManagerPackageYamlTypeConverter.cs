@@ -74,19 +74,19 @@ internal sealed class ManagerPackageYamlTypeConverter : IYamlTypeConverter
             throw new InvalidOperationException(
                 $"Expected a {nameof(ManagerPackage)} to serialise, got {value.GetType().Name}.");
 
-        // Bare name -> scalar; name + version -> a compact mapping. Quote values
-        // that a plain scalar would misread under PyYAML (e.g. a numeric version).
+        // Bare name -> scalar; name + version -> a [name, version] pair (what
+        // cloud-init expects for a pinned item — NOT a {name, version} mapping,
+        // which cloud-init rejects). Quote values a plain scalar would misread
+        // under PyYAML (e.g. a numeric version).
         if (string.IsNullOrEmpty(pkg.Version))
         {
             YamlStringScalar.Emit(emitter, pkg.Name);
             return;
         }
 
-        emitter.Emit(new MappingStart(AnchorName.Empty, TagName.Empty, isImplicit: true, MappingStyle.Flow));
-        emitter.Emit(new Scalar("name"));
+        emitter.Emit(new SequenceStart(AnchorName.Empty, TagName.Empty, isImplicit: true, SequenceStyle.Flow));
         YamlStringScalar.Emit(emitter, pkg.Name);
-        emitter.Emit(new Scalar("version"));
         YamlStringScalar.Emit(emitter, pkg.Version);
-        emitter.Emit(new MappingEnd());
+        emitter.Emit(new SequenceEnd());
     }
 }

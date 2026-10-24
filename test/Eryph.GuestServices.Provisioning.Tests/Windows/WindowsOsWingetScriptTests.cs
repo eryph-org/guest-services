@@ -15,7 +15,7 @@ public sealed class WindowsOsWingetScriptTests
     [Fact]
     public void ProvisionScript_has_the_platform_gate_and_no_leftover_interpolation()
     {
-        var script = WindowsOs.BuildWingetProvisionScript();
+        var script = PackageScripts.WingetProvision();
 
         script.Should().NotContain("{{").And.NotContain("}}");
         // Server 2019 (build < 20348) and pre-1809 (build < 17763) are gated out.
@@ -28,7 +28,7 @@ public sealed class WindowsOsWingetScriptTests
     [Fact]
     public void WrapperScript_execs_winget_and_propagates_exit_code()
     {
-        var script = WindowsOs.BuildWingetWrapperScript();
+        var script = PackageScripts.WingetWrapper();
 
         script.Should().NotContain("{{").And.NotContain("}}");
         script.Should().Contain("winget.exe");
