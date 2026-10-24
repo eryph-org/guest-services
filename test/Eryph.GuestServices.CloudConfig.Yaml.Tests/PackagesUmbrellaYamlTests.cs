@@ -95,6 +95,51 @@ public sealed class PackagesUmbrellaYamlTests
     }
 
     [Fact]
+    public void Manager_item_name_version_pair_is_accepted()
+    {
+        // cloud-init allows [name, version] pairs as manager items, including
+        // for Linux managers that Windows ignores — this must parse, not reject
+        // the whole document.
+        const string yaml = """
+            #cloud-config
+            packages:
+              - winget:
+                  - [Git.Git, 2.46.0]
+              - apt:
+                  - [curl, '7.88.1-10']
+            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+
+        var winget = config.Packages![0].Managers!["winget"][0];
+        winget.Name.Should().Be("Git.Git");
+        winget.Version.Should().Be("2.46.0");
+        var apt = config.Packages[1].Managers!["apt"][0];
+        apt.Name.Should().Be("curl");
+        apt.Version.Should().Be("7.88.1-10");
+    }
+
+    [Fact]
+    public void Null_mapping_values_become_unset_not_literal_null()
+    {
+        const string yaml = """
+            #cloud-config
+            packages:
+              - winget:
+                  - id: Git.Git
+                    version: null
+                  - id: ~
+            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+        var items = config.Packages![0].Managers!["winget"];
+
+        items[0].Name.Should().Be("Git.Git");
+        items[0].Version.Should().BeNull(); // not the string "null"
+        items[1].Name.Should().Be("");      // ~ is unset, not literal "~"
+    }
+
+    [Fact]
     public void Numeric_version_is_quoted_on_write_for_pyyaml_fidelity()
     {
         // A plain 20.11 would be read back by PyYAML (cloud-init) as a float, so

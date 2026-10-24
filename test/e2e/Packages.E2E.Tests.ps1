@@ -144,6 +144,16 @@ Describe 'packages: umbrella at first boot' {
     $r.Output.Trim() | Should -Be 'True'
   }
 
+  It 'runcmd can invoke a just-installed tool by name (PATH refresh)' {
+    # git was installed via the chocolatey group; runcmd runs after the package
+    # modules in the same boot. The agent refreshes PATH, so `git` resolves.
+    $hostName = "$($catlet.VmId).hyper-v.alt"
+    $r = Invoke-GuestPS -HostName $hostName `
+      -Script 'Get-Content -Raw -LiteralPath C:\ProgramData\eryph-e2e\git-version.txt'
+    $r.ExitCode | Should -Be 0
+    $r.Output | Should -Match 'git version'
+  }
+
   It 'logged both providers routing from the single packages: list' {
     $localLog = Join-Path ([System.IO.Path]::GetTempPath()) "egs-packages-$($catlet.VmId).log"
     Remove-Item $localLog -ErrorAction SilentlyContinue

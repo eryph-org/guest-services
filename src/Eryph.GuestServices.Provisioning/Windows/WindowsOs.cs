@@ -404,6 +404,7 @@ internal sealed class WindowsOs : IWindowsOs
             var psi = CreateUtf8Psi("cmd.exe");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
+            ApplyRefreshedPath(psi);
             ApplyEnvironment(psi, environment);
 
             return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
@@ -430,9 +431,34 @@ internal sealed class WindowsOs : IWindowsOs
         var psi = CreateUtf8Psi(argv[0]);
         for (var i = 1; i < argv.Count; i++)
             psi.ArgumentList.Add(argv[i]);
+        ApplyRefreshedPath(psi);
         ApplyEnvironment(psi, environment);
 
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Overrides the child's PATH with the CURRENT machine + user PATH read from
+    // the registry. The agent process inherited its PATH at service start, so a
+    // tool installed this boot (winget/chocolatey adding to the machine PATH)
+    // would otherwise be invisible to a same-boot runcmd / user script until a
+    // reboot. Caller-supplied environment overlays this (ApplyEnvironment runs
+    // after), so an explicit PATH override still wins. Best-effort: on any
+    // failure the inherited PATH is kept.
+    private static void ApplyRefreshedPath(ProcessStartInfo psi)
+    {
+        try
+        {
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine);
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+            var combined = string.Join(
+                ';', new[] { machine, user }.Where(p => !string.IsNullOrEmpty(p)));
+            if (!string.IsNullOrEmpty(combined))
+                psi.Environment["Path"] = combined;
+        }
+        catch
+        {
+            // Keep the inherited PATH (e.g. non-Windows host in a unit test).
+        }
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment =

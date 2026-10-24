@@ -22,6 +22,18 @@ internal sealed class ManagerPackageYamlTypeConverter : IYamlTypeConverter
         if (parser.TryConsume<Scalar>(out var scalar))
             return new ManagerPackage { Name = YamlStringScalar.IsNullLike(scalar) ? "" : scalar.Value };
 
+        // cloud-init also allows a [name, version] pair as a manager item
+        // (e.g. `apt: [[curl, '7.88.1-10']]`), same as the top-level entry.
+        if (parser.Accept<SequenceStart>(out _))
+        {
+            var pair = (IReadOnlyList<string>?)rootDeserializer(typeof(List<string>)) ?? [];
+            return new ManagerPackage
+            {
+                Name = pair.Count > 0 ? pair[0] : "",
+                Version = pair.Count > 1 ? pair[1] : null,
+            };
+        }
+
         parser.Consume<MappingStart>();
         string? name = null;
         string? version = null;
@@ -36,14 +48,17 @@ internal sealed class ManagerPackageYamlTypeConverter : IYamlTypeConverter
                 continue;
             }
 
+            // A null-like value (version: null / name: ~) is "unset", not the
+            // literal string "null" — otherwise it becomes `--version null`.
+            var value = YamlStringScalar.IsNullLike(valueScalar) ? null : valueScalar.Value;
             switch (key.ToLowerInvariant())
             {
                 case "name":
                 case "id":
-                    name = valueScalar.Value;
+                    name = value;
                     break;
                 case "version":
-                    version = valueScalar.Value;
+                    version = value;
                     break;
                 // Other keys are intentionally ignored in the umbrella.
             }

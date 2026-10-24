@@ -26,3 +26,8 @@ fodder:
         - 7zip.7zip              # bare name -> default provider (winget)
         - chocolatey:
             - name: git
+      runcmd:
+        # Proves the agent refreshes PATH after installs: git (installed via the
+        # chocolatey group above, in the same Config stage) must be resolvable by
+        # name here, in runcmd, in the same boot.
+        - 'powershell -NoProfile -Command "New-Item -Force -ItemType Directory C:\ProgramData\eryph-e2e | Out-Null; $v = (git --version) 2>&1 | Out-String; Set-Content -LiteralPath C:\ProgramData\eryph-e2e\git-version.txt -Value $v"'
