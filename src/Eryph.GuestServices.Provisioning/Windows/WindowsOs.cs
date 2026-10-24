@@ -2080,7 +2080,25 @@ internal sealed class WindowsOs : IWindowsOs
             throw new InvalidOperationException(
                 $"Refusing to apply a DSC document from an untrusted path: {documentReason}.");
 
+        // dsc.exe also takes discovery directories from its settings files, which
+        // outrank (and can disable, via allowEnvOverride:false) the environment we
+        // filter below. The machine/policy settings live in %ProgramData%\dsc —
+        // refuse if that directory exists but a standard user could drop a
+        // settings file into it. (The per-user settings dir is under SYSTEM's own
+        // profile, and the workspace settings file is handled by the working
+        // directory set on the process below.)
+        var dscSettingsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "dsc");
+        if (Directory.Exists(dscSettingsDir) && !IsTrustedDiscoveryDirectory(dscSettingsDir))
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' is not " +
+                "restricted to privileged accounts and could inject manifest discovery paths.");
+
         var psi = CreateUtf8Psi(dscExePath);
+        // DSC reads a workspace settings file from the current working directory
+        // ({CWD}\dsc.settings.json). Run from a SYSTEM-protected directory so a
+        // standard user cannot plant one beside the process.
+        psi.WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
         psi.ArgumentList.Add("config");
         psi.ArgumentList.Add(verb);
         psi.ArgumentList.Add("--file");
