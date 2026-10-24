@@ -1857,7 +1857,13 @@ internal sealed class WindowsOs : IWindowsOs
             //    below instead of via their PATH alias.
             var onPath = ResolveExecutableOnRefreshedPath("dsc.exe");
             if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal)
-                && File.Exists(onPath) && IsTrustedSystemPath(onPath))
+                && File.Exists(onPath) && IsTrustedSystemPath(onPath)
+                // The managed install target is resolved ONLY by branch 2, which
+                // also requires the completion marker. Never resurrect it here
+                // (where the marker isn't checked) just because it is on PATH.
+                && !string.Equals(
+                    Path.GetFullPath(onPath), Path.GetFullPath(DscProgramFilesExePath),
+                    StringComparison.OrdinalIgnoreCase))
                 return onPath;
 
             // 4. The winget zip/portable install tree (machine scope) under
@@ -2141,7 +2147,16 @@ internal sealed class WindowsOs : IWindowsOs
         // document is as privileged as the executable. Documents we stage land in
         // the hardened SYSTEM-only DSC directory, but an operator-supplied
         // document_path may sit in a standard-user-writable location where its
-        // contents could be swapped before we run it — trust-check it too.
+        // contents could be swapped before we run it — trust-check it too. The
+        // document must already EXIST: UntrustedPathReason treats a missing
+        // descendant of a trusted root (e.g. %ProgramData%) as trusted, so a
+        // not-yet-created path there would pass and a standard user could create
+        // the file before dsc opens it. Requiring existence means we validate the
+        // real file's ownership and rights (our staged inline/downloaded
+        // documents already exist in the SYSTEM-only directory).
+        if (!File.Exists(documentPath))
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document that does not exist: '{documentPath}'.");
         if (UntrustedPathReason(documentPath) is { } documentReason)
             throw new InvalidOperationException(
                 $"Refusing to apply a DSC document from an untrusted path: {documentReason}.");
