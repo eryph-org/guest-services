@@ -596,6 +596,69 @@ internal sealed class WindowsOs : IWindowsOs
         }
     }
 
+    // Builds the child environment for dsc.exe so that BOTH its executable search
+    // and its resource/extension manifest discovery are confined to trusted
+    // directories. dsc discovers resources by scanning PATH (and, if set,
+    // DSC_RESOURCE_PATH) for *.dsc.resource.json manifests and then invoking the
+    // commands they declare — so a user-writable directory on either search path
+    // would let a planted manifest execute code as LocalSystem, bypassing the
+    // executable and document trust checks. We therefore pass a refreshed PATH
+    // filtered to SYSTEM-protected entries only (keeping tools installed this
+    // boot under %ProgramFiles% etc.) and filter any inherited DSC_RESOURCE_PATH
+    // the same way, dropping it when nothing trusted remains.
+    private static void ApplyTrustedDscDiscoveryEnvironment(ProcessStartInfo psi)
+    {
+        try
+        {
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine);
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+            var combined = string.Join(';', new[] { machine, user }.Where(p => !string.IsNullOrEmpty(p)));
+            // Replace outright — never fall back to the inherited, unfiltered PATH.
+            psi.Environment["Path"] = FilterTrustedPathEntries(combined);
+
+            if (psi.Environment.TryGetValue("DSC_RESOURCE_PATH", out var resourcePath)
+                && !string.IsNullOrEmpty(resourcePath))
+            {
+                var trusted = FilterTrustedPathEntries(resourcePath);
+                if (string.IsNullOrEmpty(trusted))
+                    psi.Environment.Remove("DSC_RESOURCE_PATH");
+                else
+                    psi.Environment["DSC_RESOURCE_PATH"] = trusted;
+            }
+        }
+        catch
+        {
+            // Fail closed: an empty discovery path is safer than an unfiltered
+            // one for LocalSystem execution.
+            psi.Environment["Path"] = "";
+            try { psi.Environment.Remove("DSC_RESOURCE_PATH"); }
+            catch { /* ignore */ }
+        }
+    }
+
+    // Keeps only the directories of a ';'-separated search path that exist and
+    // pass the trusted-system-path check (SYSTEM/Administrators-owned, no
+    // reparse point or non-privileged write up the ancestor chain).
+    internal static string FilterTrustedPathEntries(string pathList)
+    {
+        var trusted = pathList
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(SafeIsTrustedDirectory);
+        return string.Join(';', trusted);
+    }
+
+    private static bool SafeIsTrustedDirectory(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory) && IsTrustedSystemPath(directory);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment =
         new Dictionary<string, string>(0);
 
@@ -1983,9 +2046,13 @@ internal sealed class WindowsOs : IWindowsOs
         psi.ArgumentList.Add("--file");
         psi.ArgumentList.Add(documentPath);
         // dsc.exe (and the resources / pwsh it spawns) must see tools installed
-        // earlier this boot — the service's startup PATH is stale. The resolver
-        // already probes the refreshed PATH; the launch must use it too.
-        ApplyRefreshedPath(psi);
+        // earlier this boot — the service's startup PATH is stale. But dsc also
+        // DISCOVERS resource/extension manifests by scanning PATH (and
+        // DSC_RESOURCE_PATH) and then runs the commands they name, so an
+        // unrestricted search would let a planted manifest in a user-writable
+        // directory run code as LocalSystem. Hand dsc a refreshed PATH filtered
+        // down to trusted (SYSTEM-protected) directories only.
+        ApplyTrustedDscDiscoveryEnvironment(psi);
 
         var result = await RunWithTimeoutAsync(psi, DscRunTimeout, cancellationToken).ConfigureAwait(false);
         // Only trust the reboot signal on a successful run; a non-zero exit is a

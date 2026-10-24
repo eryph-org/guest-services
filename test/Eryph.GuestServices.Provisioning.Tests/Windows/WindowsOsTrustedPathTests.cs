@@ -56,4 +56,31 @@ public sealed class WindowsOsTrustedPathTests
             "eryph-nonexistent-" + Guid.NewGuid().ToString("N"), "winget");
         WindowsOs.IsTrustedSystemPath(path).Should().BeTrue();
     }
+
+    [Fact]
+    public void FilterTrustedPathEntries_keeps_trusted_dirs_and_drops_the_rest()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // DSC discovers resource manifests by scanning PATH, so the PATH we hand
+        // it must contain only trusted directories: System32 stays, a
+        // user-writable temp directory and a non-existent entry are dropped.
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var userDir = Path.Combine(Path.GetTempPath(), "egs-path-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(userDir);
+        var missing = @"C:\egs-nonexistent-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            var entries = WindowsOs.FilterTrustedPathEntries($"{system32};{userDir};{missing}")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries);
+
+            entries.Should().Contain(system32);
+            entries.Should().NotContain(userDir);
+            entries.Should().NotContain(missing);
+        }
+        finally
+        {
+            Directory.Delete(userDir, recursive: true);
+        }
+    }
 }
