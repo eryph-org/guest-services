@@ -274,6 +274,21 @@ public sealed class WingetModuleTests
     }
 
     [Fact]
+    public async Task Version_with_leading_dash_is_skipped_not_run()
+    {
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel
+        {
+            Winget = new WingetConfig { Packages = [new WingetPackage { Id = "Git.Git", Version = "-x" }] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RunWingetAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Umbrella_packages_install_without_a_winget_block()
     {
         // packages: [7zip.7zip] with no winget: block — the module must still

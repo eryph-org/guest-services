@@ -203,6 +203,16 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
                 continue;
             }
 
+            // A version is passed as the argv value after --version; guard a
+            // leading '-' so it can't be read as a winget option, matching the
+            // id/source guards above.
+            if (!string.IsNullOrWhiteSpace(package.Version) && package.Version.StartsWith('-'))
+            {
+                logger.LogWarning(
+                    "Skipping winget package '{Id}': invalid version '{Version}'.", package.Id, package.Version);
+                continue;
+            }
+
             var argv = new List<string>
             {
                 "install", "--id", package.Id, "--exact",

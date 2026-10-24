@@ -402,9 +402,12 @@ internal sealed class WindowsOs : IWindowsOs
         try
         {
             var psi = CreateUtf8Psi("cmd.exe");
-            // /v:off forces delayed expansion OFF regardless of the guest's
-            // global Command Processor registry setting, so a '!' in the command
-            // stays literal (cmd's default) instead of triggering !var! expansion.
+            // /d skips any AutoRun command configured in the Command Processor
+            // registry key, and /v:off forces delayed expansion OFF regardless of
+            // the guest's global setting, so a '!' in the command stays literal
+            // (cmd's default) instead of triggering !var! expansion. Matches the
+            // flags BuildCmdBatchArguments uses for the batch-dispatch path.
+            psi.ArgumentList.Add("/d");
             psi.ArgumentList.Add("/v:off");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
@@ -538,11 +541,16 @@ internal sealed class WindowsOs : IWindowsOs
             var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
             var dirs = (machine + ";" + user)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var hasExt = Path.HasExtension(exe);
-            var exts = hasExt
+            var pathext = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var nameExt = Path.GetExtension(exe);
+            // Only treat the name as already carrying its executable extension when
+            // that extension is itself a PATHEXT entry. A name like "python3.11"
+            // has extension ".11" (not executable), so we must still probe
+            // "python3.11" + each PATHEXT ("python3.11.exe"), not only the literal.
+            var exts = nameExt.Length > 0 && pathext.Any(p => p.Equals(nameExt, StringComparison.OrdinalIgnoreCase))
                 ? [""]
-                : (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
-                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                : (string[])[.. pathext.Prepend("")];
 
             foreach (var dir in dirs)
             {

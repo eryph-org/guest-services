@@ -119,6 +119,23 @@ public sealed class WindowsOsRunCommandTests
     }
 
     [Fact]
+    public async Task RunShell_keeps_exclamation_marks_literal()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // The shell dispatch passes /d /v:off to cmd, so delayed expansion is off
+        // and a '!' is echoed literally rather than triggering !var! expansion —
+        // even if the guest enabled delayed expansion globally.
+        var os = new WindowsOs(NullLogger<WindowsOs>.Instance);
+
+        var result = await os.RunShellCommandAsync(
+            "echo VAL=a!PATH!b", new Dictionary<string, string>(), CancellationToken.None);
+
+        result.ExitCode.Should().Be(0);
+        result.StdOut.Should().Contain("VAL=a!PATH!b");
+    }
+
+    [Fact]
     public async Task RunArgv_handles_spaces_in_the_batch_path_and_arguments()
     {
         if (!OperatingSystem.IsWindows()) return;
