@@ -18,6 +18,43 @@ internal static class PackageUmbrella
     private static readonly HashSet<string> ChocolateyManagers =
         new(StringComparer.OrdinalIgnoreCase) { "chocolatey", "choco" };
 
+    // Linux package managers cloud-config may carry cross-cloud; accepted and
+    // no-op on Windows (Info-logged, not a typo).
+    private static readonly HashSet<string> KnownLinuxManagers =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "apt", "snap", "yum", "dnf", "zypper", "apk", "pacman", "portage", "pkg", "brew",
+        };
+
+    /// <summary>
+    /// Classifies the manager keys used under <c>packages:</c> into Linux
+    /// managers (accepted, no-op on Windows) and unrecognized ones (likely typos
+    /// that would otherwise install nothing silently). winget / chocolatey keys
+    /// are the handled set and appear in neither list.
+    /// </summary>
+    public static (IReadOnlyList<string> IgnoredLinux, IReadOnlyList<string> Unknown) ClassifyManagers(
+        CloudConfigModel config)
+    {
+        var ignored = new List<string>();
+        var unknown = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in config.Packages ?? [])
+        {
+            if (entry.Managers is not { } managers)
+                continue;
+            foreach (var key in managers.Keys)
+            {
+                if (!seen.Add(key)
+                    || WingetManagers.Contains(key)
+                    || ChocolateyManagers.Contains(key))
+                    continue;
+                (KnownLinuxManagers.Contains(key) ? ignored : unknown).Add(key);
+            }
+        }
+
+        return (ignored, unknown);
+    }
+
     /// <summary>winget packages contributed by the <c>packages:</c> umbrella.</summary>
     public static IReadOnlyList<WingetPackage> WingetPackages(CloudConfigModel config)
     {

@@ -117,8 +117,8 @@ internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModu
             {
                 if (string.IsNullOrWhiteSpace(source.Name) || string.IsNullOrWhiteSpace(source.Url))
                     return ModuleOutcome.Fail("chocolatey: a source entry is missing 'name' or 'url'.");
-                if (source.Priority is { } p && (p < 1 || p > 100))
-                    return ModuleOutcome.Fail($"chocolatey: source '{source.Name}' priority {p} is outside 1..100.");
+                if (source.Priority is { } p && p < 0)
+                    return ModuleOutcome.Fail($"chocolatey: source '{source.Name}' priority {p} is negative.");
             }
         }
 

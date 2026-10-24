@@ -160,6 +160,29 @@ public sealed class PackagesUmbrellaYamlTests
 
         var yaml = CloudConfigYamlSerializer.Serialize(config);
 
-        yaml.Should().Contain("\"20.11\"");
+        // Emitted as a [name, version] PAIR (what cloud-init expects), with the
+        // numeric version quoted — NOT a {name, version} mapping.
+        yaml.Should().MatchRegex(@"\[\s*Foo\s*,\s*""20\.11""\s*\]");
+        yaml.Should().NotContain("version:");
+    }
+
+    [Fact]
+    public void Single_mapping_manager_value_is_tolerated()
+    {
+        // `winget: {id: ...}` (a single mapping instead of a sequence) must parse
+        // as one item, not fail the whole document.
+        const string yaml = """
+            #cloud-config
+            packages:
+              - winget:
+                  id: Git.Git
+                  version: 2.46.0
+            """;
+
+        var config = CloudConfigYamlSerializer.Deserialize(yaml);
+        var items = config.Packages![0].Managers!["winget"];
+        items.Should().ContainSingle();
+        items[0].Name.Should().Be("Git.Git");
+        items[0].Version.Should().Be("2.46.0");
     }
 }

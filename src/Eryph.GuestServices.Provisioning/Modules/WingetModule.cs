@@ -33,6 +33,18 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
     {
         var block = userData.CloudConfig.Winget;
 
+        // Surface the packages: umbrella's manager keys once (this module always
+        // runs and is the first package module). A Linux manager is accepted and
+        // no-op; an unrecognized key is almost certainly a typo that would
+        // otherwise install nothing silently while provisioning reports success.
+        var (ignoredLinux, unknownManagers) = PackageUmbrella.ClassifyManagers(userData.CloudConfig);
+        foreach (var manager in ignoredLinux)
+            logger.LogInformation(
+                "packages: manager '{Manager}' is a Linux package manager; accepted but no-op on Windows.", manager);
+        foreach (var manager in unknownManagers)
+            logger.LogWarning(
+                "packages: unrecognized manager '{Manager}' — nothing installed for it (typo?).", manager);
+
         // Effective package list = the winget: block plus the winget entries of
         // the packages: umbrella (RFC 0033). The module runs whenever either
         // source contributes work, even if the winget: block itself is absent.

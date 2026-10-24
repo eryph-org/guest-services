@@ -45,7 +45,10 @@ internal static class PackageScripts
         $existing = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'Microsoft.DesktopAppInstaller'
         Write-Host "winget release: $bundleVersion; provisioned App Installer: $(if ($existing) { $existing.Version } else { 'none' })"
 
-        $tempDir = Join-Path $env:TEMP 'winget-install'
+        # Unpredictable temp dir: under LocalSystem $env:TEMP is C:\Windows\Temp,
+        # where standard users can create but not list — a GUID name they cannot
+        # discover prevents a pre-create / swap (TOCTOU) of the extraction dir.
+        $tempDir = Join-Path $env:TEMP ('egs-winget-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
         try {
             $bundlePath = Join-Path $tempDir 'Microsoft.DesktopAppInstaller.msixbundle'
@@ -114,14 +117,35 @@ internal static class PackageScripts
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
 
+        # install.ps1 extracts and dot-sources tools\chocolateyInstall.ps1 from
+        # $env:TEMP\chocolatey. Under LocalSystem that is C:\Windows\Temp, where a
+        # standard user can create dirs — a classic TOCTOU to SYSTEM. Point TEMP
+        # at an unpredictable GUID dir (users cannot list C:\Windows\Temp, so the
+        # name is undiscoverable) created by us for this run.
+        $tmp = Join-Path $env:TEMP ('egs-choco-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $env:TEMP = $tmp
+        $env:TMP = $tmp
+
         # Merge ALL streams (*>&1): the installer reports the .NET Framework
         # reboot via Write-Warning / Write-Host, which 2>&1 (error stream only)
-        # would miss — leaving the reboot path dead.
-        $out = (& { Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')) } *>&1 | Out-String)
+        # would miss. Capture even when a terminating error aborts the install
+        # AFTER printing the reboot notice, so the reboot path is not lost.
+        $failed = $false
+        try {
+            $out = (& { Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')) } *>&1 | Out-String)
+        }
+        catch {
+            $out = ($_ | Out-String)
+            $failed = $true
+        }
         Write-Host $out
 
         if ($out -match 'reboot is required') {
             exit 3010
+        }
+        if ($failed) {
+            throw "Chocolatey install failed: $out"
         }
         # choco.exe presence is verified by the caller (honouring %ChocolateyInstall%).
         """;

@@ -98,7 +98,7 @@ public sealed record WingetSource
     public string Name { get; init; } = "";
     public string Argument { get; init; } = "";
     public string? Type { get; init; }       // e.g. Microsoft.Rest
-    public bool? Accept { get; init; }        // --accept-source-agreements
+    // --accept-source-agreements is always passed; no per-source flag.
 }
 
 public sealed record WingetPackage

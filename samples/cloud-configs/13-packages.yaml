@@ -6,7 +6,7 @@
 # blocks cover sources and advanced options and combine with packages:.
 packages:
   - Git.Git                       # bare name -> winget (default provider)
-  - [7zip.7zip, 24.08]            # name + version -> winget
+  - [7zip.7zip, '24.08']          # name + version -> winget (quote numeric versions)
   - winget:
       - id: Microsoft.PowerShell
         version: 7.4.6

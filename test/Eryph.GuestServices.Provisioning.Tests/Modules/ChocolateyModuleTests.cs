@@ -307,10 +307,29 @@ public sealed class ChocolateyModuleTests
         await os.DidNotReceive().IsChocolateyInstalledAsync(Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Priority_zero_is_valid_no_priority()
+    {
+        // 0 is Chocolatey's documented "no priority" default — must be accepted.
+        var os = ChocoOs(installed: true);
+        var config = new CloudConfigModel
+        {
+            Chocolatey = new ChocolateyConfig
+            {
+                Sources = [new ChocolateySource { Name = "x", Url = "https://x", Priority = 0 }],
+                Packages = [new ChocolateyPackage { Name = "7zip" }],
+            },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+    }
+
     [Theory]
-    [InlineData(0)]
-    [InlineData(101)]
-    public async Task Source_priority_out_of_range_is_a_validation_Fail(int priority)
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public async Task Negative_source_priority_is_a_validation_Fail(int priority)
     {
         var os = ChocoOs(installed: true);
         var config = new CloudConfigModel

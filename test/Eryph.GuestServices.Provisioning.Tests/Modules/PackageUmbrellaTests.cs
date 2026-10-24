@@ -75,4 +75,24 @@ public sealed class PackageUmbrellaTests
         PackageUmbrella.WingetPackages(new CloudConfigModel()).Should().BeEmpty();
         PackageUmbrella.ChocolateyPackages(new CloudConfigModel()).Should().BeEmpty();
     }
+
+    [Fact]
+    public void ClassifyManagers_separates_linux_from_unknown()
+    {
+        var config = Config(new PackageEntry
+        {
+            Managers = new Dictionary<string, IReadOnlyList<ManagerPackage>>
+            {
+                ["winget"] = [new ManagerPackage { Name = "Git.Git" }],
+                ["chocolatey"] = [new ManagerPackage { Name = "nodejs" }],
+                ["apt"] = [new ManagerPackage { Name = "htop" }],
+                ["chocolaty"] = [new ManagerPackage { Name = "typo" }], // typo
+            },
+        });
+
+        var (ignoredLinux, unknown) = PackageUmbrella.ClassifyManagers(config);
+
+        ignoredLinux.Should().BeEquivalentTo("apt");
+        unknown.Should().BeEquivalentTo("chocolaty");
+    }
 }

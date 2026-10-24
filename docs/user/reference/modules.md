@@ -421,7 +421,7 @@ chocolatey:
   sources:                   # optional
     - name: internal
       url: https://nuget.example/choco
-      priority: 1            # 1..100, lower = higher priority
+      priority: 1            # optional; lower = higher priority, 0 = none
   packages:
     - name: 7zip
     - name: git

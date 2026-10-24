@@ -428,13 +428,57 @@ internal sealed class WindowsOs : IWindowsOs
         if (argv.Count == 0)
             throw new ArgumentException("argv must contain at least one element.", nameof(argv));
 
-        var psi = CreateUtf8Psi(argv[0]);
+        // CreateProcess resolves a bare argv[0] against the PARENT's PATH, not
+        // the (refreshed) environment block we hand the child — so a tool
+        // installed this boot would not be found by name in an argv-form runcmd.
+        // Resolve it ourselves against the refreshed PATH first.
+        var psi = CreateUtf8Psi(ResolveExecutableOnRefreshedPath(argv[0]));
         for (var i = 1; i < argv.Count; i++)
             psi.ArgumentList.Add(argv[i]);
         ApplyRefreshedPath(psi);
         ApplyEnvironment(psi, environment);
 
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Resolves a bare executable name (no directory component) against the
+    // CURRENT machine + user PATH and PATHEXT. Returns the original string when
+    // already rooted or not found (letting the OS do its default resolution).
+    private static string ResolveExecutableOnRefreshedPath(string exe)
+    {
+        try
+        {
+            if (Path.IsPathRooted(exe)
+                || exe.Contains(Path.DirectorySeparatorChar)
+                || exe.Contains(Path.AltDirectorySeparatorChar))
+                return exe;
+
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine) ?? "";
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
+            var dirs = (machine + ";" + user)
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var hasExt = Path.HasExtension(exe);
+            var exts = hasExt
+                ? [""]
+                : (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            foreach (var dir in dirs)
+            {
+                foreach (var ext in exts)
+                {
+                    var candidate = Path.Combine(dir, exe + ext);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to the original name (non-Windows host / odd PATH).
+        }
+
+        return exe;
     }
 
     // Overrides the child's PATH with the CURRENT machine + user PATH read from
@@ -1232,14 +1276,21 @@ internal sealed class WindowsOs : IWindowsOs
     private const string TrustedInstallerSid =
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
-    // Rights that let a non-privileged principal REPLACE or take over existing
-    // content (and thus swap what the agent executes as LocalSystem). Note we do
-    // NOT flag CreateFiles/CreateDirectories/AppendData: %ProgramData% grants
-    // those to Users by default on every child, and they only add NEW siblings —
-    // they can't modify, delete or take over our files/directories.
-    private const FileSystemRights DangerousControlRights =
+    // Directory rights that let a non-privileged principal REPLACE or take over
+    // existing content (and thus swap what the agent executes as LocalSystem).
+    // We do NOT flag CreateFiles/CreateDirectories/AppendData on a directory:
+    // %ProgramData% grants those to Users by default on every child, and they
+    // only add NEW siblings — they can't modify, delete or take over our dirs.
+    private const FileSystemRights DangerousDirectoryRights =
         FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
         | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    // For a FILE, overwriting its contents in place is also dangerous. WriteData
+    // / AppendData are the same 0x2 / 0x4 bits that mean (benign) CreateFiles /
+    // CreateDirectories on a directory, so they must be checked for files only.
+    private const FileSystemRights DangerousFileRights =
+        DangerousDirectoryRights | FileSystemRights.WriteData | FileSystemRights.AppendData
+        | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes;
 
     private static bool IsPrivilegedSid(SecurityIdentifier sid) =>
         sid.IsWellKnown(WellKnownSidType.LocalSystemSid)
@@ -1247,15 +1298,22 @@ internal sealed class WindowsOs : IWindowsOs
         || sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid)
         || string.Equals(sid.Value, TrustedInstallerSid, StringComparison.Ordinal);
 
-    // The non-privileged principal the ACL grants dangerous control to, or null.
-    private static SecurityIdentifier? NonPrivilegedController(FileSystemSecurity security)
+    // The non-privileged principal the ACL grants a dangerous right to, or null.
+    private static SecurityIdentifier? NonPrivilegedController(
+        FileSystemSecurity security, FileSystemRights dangerous)
     {
         foreach (FileSystemAccessRule rule in
                  security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType != AccessControlType.Allow)
                 continue;
-            if ((rule.FileSystemRights & DangerousControlRights) == 0)
+            // Inherit-only ACEs don't grant access to THIS node (only to its
+            // children, which are validated on their own) — e.g. the volume
+            // root's inherit-only "Authenticated Users: Modify" must not flag
+            // the root itself. Skip them here.
+            if (rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly))
+                continue;
+            if ((rule.FileSystemRights & dangerous) == 0)
                 continue;
             if (rule.IdentityReference is SecurityIdentifier sid && !IsPrivilegedSid(sid))
                 return sid;
@@ -1267,8 +1325,8 @@ internal sealed class WindowsOs : IWindowsOs
     // Returns why <paramref name="path"/> (or an ancestor up to a system root)
     // is not trusted for LocalSystem execution — a reparse point, a
     // non-privileged owner, or a non-privileged principal with replace/delete/
-    // take-ownership rights — or null when the whole chain is trusted. Fails
-    // closed (returns a reason) on any error.
+    // take-ownership (or, for a file, write) rights — or null when the whole
+    // chain is trusted. Fails closed (returns a reason) on any error.
     internal static string? UntrustedPathReason(string path)
     {
         try
@@ -1277,17 +1335,16 @@ internal sealed class WindowsOs : IWindowsOs
             var current = Path.GetFullPath(path);
             while (!string.IsNullOrEmpty(current))
             {
-                var trimmed = Path.TrimEndingDirectorySeparator(current);
-                if (anchors.Contains(trimmed))
+                // System-provided roots (%ProgramData% / %ProgramFiles% /
+                // %windir%) are trusted; stop. The VOLUME root is NOT shortcut
+                // here — it is validated below (a data drive like D:\ may grant
+                // non-privileged delete rights), then traversal ends at its null
+                // parent.
+                if (anchors.Contains(Path.TrimEndingDirectorySeparator(current)))
                     return null;
 
-                var root = Path.GetPathRoot(current);
-                if (root is not null
-                    && string.Equals(trimmed, Path.TrimEndingDirectorySeparator(root),
-                        StringComparison.OrdinalIgnoreCase))
-                    return null; // volume root: system-owned, trusted
-
                 FileSystemSecurity? security = null;
+                var dangerous = DangerousDirectoryRights;
                 if (Directory.Exists(current))
                 {
                     var di = new DirectoryInfo(current);
@@ -1301,6 +1358,7 @@ internal sealed class WindowsOs : IWindowsOs
                     if (fi.Attributes.HasFlag(FileAttributes.ReparsePoint))
                         return $"'{current}' is a reparse point";
                     security = fi.GetAccessControl();
+                    dangerous = DangerousFileRights;
                 }
 
                 if (security is not null)
@@ -1308,13 +1366,13 @@ internal sealed class WindowsOs : IWindowsOs
                     if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
                         && !IsPrivilegedSid(owner))
                         return $"'{current}' is owned by a non-privileged account ({owner})";
-                    if (NonPrivilegedController(security) is { } controller)
-                        return $"'{current}' grants replace/delete rights to a non-privileged account ({controller})";
+                    if (NonPrivilegedController(security, dangerous) is { } controller)
+                        return $"'{current}' grants modify/replace rights to a non-privileged account ({controller})";
                 }
 
                 var parent = Path.GetDirectoryName(current);
                 if (string.IsNullOrEmpty(parent) || parent == current)
-                    return null;
+                    return null; // reached the volume root (validated above)
                 current = parent;
             }
 
@@ -1350,6 +1408,12 @@ internal sealed class WindowsOs : IWindowsOs
         IReadOnlyList<string> argv,
         CancellationToken cancellationToken)
     {
+        // Defence-in-depth: never execute the wrapper from an untrusted path
+        // (parity with RunChocoAsync; EnsureWingetWrapperAsync also validates).
+        if (UntrustedPathReason(WingetWrapperPath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to run the winget wrapper from an untrusted path: {reason}.");
+
         var psi = CreateUtf8Psi("powershell.exe");
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-NonInteractive");
@@ -1445,6 +1509,14 @@ internal sealed class WindowsOs : IWindowsOs
 
     public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
     {
+        // Refuse to bootstrap into an already-existing, untrusted install dir: a
+        // standard user can pre-create %ProgramData%\chocolatey and plant files
+        // that install.ps1 would copy over / run from (it execs choco.exe from
+        // that dir). Validate BEFORE launching, not only after.
+        if (UntrustedPathReason(ChocolateyExePath) is { } preReason)
+            throw new InvalidOperationException(
+                $"Refusing to bootstrap Chocolatey into '{Path.GetDirectoryName(ChocolateyExePath)}': {preReason}.");
+
         var psi = BuildPowerShellCommandPsi(PackageScripts.ChocolateyBootstrap());
         var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)
             .ConfigureAwait(false);

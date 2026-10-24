@@ -40,10 +40,11 @@ internal sealed class PackageEntryYamlTypeConverter : IYamlTypeConverter
             var manager = parser.Consume<Scalar>().Value;
 
             List<ManagerPackage> items;
-            if (parser.Accept<Scalar>(out _))
+            if (parser.Accept<Scalar>(out _) || parser.Accept<MappingStart>(out _))
             {
-                // Tolerate a single scalar where a sequence is expected
-                // (`winget: git`) and a null value (`apt:`) — one item, or none.
+                // Tolerate a single item where a sequence is expected: a scalar
+                // (`winget: git`), a null value (`apt:`), or a single mapping
+                // (`winget: {id: x}`) — one item, or none.
                 var one = (ManagerPackage?)rootDeserializer(typeof(ManagerPackage));
                 items = one is null || string.IsNullOrEmpty(one.Name) ? [] : [one];
             }

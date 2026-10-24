@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 
@@ -7,35 +6,40 @@ namespace Eryph.GuestServices.CloudConfig.Yaml.Converters;
 /// <summary>
 /// Helpers for emitting and reading string scalars that must survive a
 /// PyYAML (YAML 1.1) round trip. cloud-init is the reference reader, so a
-/// value like <c>20.11</c>, <c>3</c>, <c>yes</c> or <c>null</c> that is
-/// semantically a string must be quoted on write — otherwise PyYAML reads it
-/// back as a float / int / bool / null.
+/// value like <c>20.11</c>, <c>3</c>, <c>yes</c>, <c>0x1F</c>, <c>2024-01-15</c>
+/// or <c>null</c> that is semantically a string must be quoted on write —
+/// otherwise PyYAML reads it back as a float / int / bool / date / null.
 /// </summary>
-internal static partial class YamlStringScalar
+internal static class YamlStringScalar
 {
-    // YAML 1.1 bool + null token set (PyYAML SafeLoader), plus int / float.
+    // YAML 1.1 bool + null tokens (PyYAML SafeLoader). These start with a letter,
+    // so the letter-leading rule below would otherwise leave them unquoted.
     private static readonly HashSet<string> BoolNullTokens = new(StringComparer.Ordinal)
     {
         "y", "Y", "yes", "Yes", "YES", "n", "N", "no", "No", "NO",
         "true", "True", "TRUE", "false", "False", "FALSE",
         "on", "On", "ON", "off", "Off", "OFF",
-        "~", "null", "Null", "NULL", "",
+        "null", "Null", "NULL",
     };
-
-    [GeneratedRegex(@"^[-+]?[0-9][0-9_]*$")]
-    private static partial Regex IntToken();
-
-    [GeneratedRegex(@"^[-+]?(\.[0-9]+|[0-9][0-9_]*(\.[0-9]*)?)([eE][-+]?[0-9]+)?$")]
-    private static partial Regex FloatToken();
 
     /// <summary>
     /// True when a plain scalar with this value would be read back by PyYAML as
-    /// a non-string (bool, null, int, float), so it must be quoted on write.
+    /// a non-string, so it must be quoted on write. Conservative: anything that
+    /// does not start with an ASCII letter or <c>_</c> is quoted (covers ints,
+    /// floats, hex/octal/binary, sexagesimal, dates/times, <c>.inf</c>/<c>.nan</c>,
+    /// <c>~</c> and the empty string), plus the letter-leading bool/null tokens.
+    /// Over-quoting a genuine string is harmless; under-quoting is the bug.
     /// </summary>
-    public static bool LooksNonString(string value) =>
-        BoolNullTokens.Contains(value)
-        || IntToken().IsMatch(value)
-        || FloatToken().IsMatch(value);
+    public static bool LooksNonString(string value)
+    {
+        if (value.Length == 0)
+            return true;
+        if (BoolNullTokens.Contains(value))
+            return true;
+        var c = value[0];
+        var startsStringLike = c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or '_';
+        return !startsStringLike;
+    }
 
     /// <summary>Emits a string, quoting it when a plain scalar would be misread.</summary>
     public static void Emit(IEmitter emitter, string? value)
