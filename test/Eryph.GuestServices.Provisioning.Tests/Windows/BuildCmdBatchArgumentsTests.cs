@@ -16,9 +16,10 @@ public sealed class BuildCmdBatchArgumentsTests
     {
         var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\npm.cmd", [@"C:\tools\npm.cmd"]);
 
-        // /d /s /c "<...>" — /s makes cmd strip exactly the first and last quote.
-        line.Should().StartWith("/d /s /c \"").And.EndWith("\"");
-        line.Should().Be("/d /s /c \"\"C:\\tools\\npm.cmd\"\"");
+        // /d /s /c "<...>" — /s makes cmd strip exactly the first and last quote;
+        // chcp 65001 switches the session to UTF-8 before the batch runs.
+        line.Should().StartWith("/d /s /c \"chcp 65001>nul & ").And.EndWith("\"");
+        line.Should().Be("/d /s /c \"chcp 65001>nul & \"C:\\tools\\npm.cmd\"\"");
     }
 
     [Fact]
@@ -26,7 +27,7 @@ public sealed class BuildCmdBatchArgumentsTests
     {
         var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", "install", "foo"]);
 
-        line.Should().Be("/d /s /c \"\"C:\\tools\\x.cmd\" \"install\" \"foo\"\"");
+        line.Should().Be("/d /s /c \"chcp 65001>nul & \"C:\\tools\\x.cmd\" \"install\" \"foo\"\"");
     }
 
     [Fact]
@@ -43,7 +44,7 @@ public sealed class BuildCmdBatchArgumentsTests
     {
         var line = WindowsOs.BuildCmdBatchArguments(@"C:\Program Files\x.cmd", [@"C:\Program Files\x.cmd", "arg with space"]);
 
-        line.Should().Be("/d /s /c \"\"C:\\Program Files\\x.cmd\" \"arg with space\"\"");
+        line.Should().Be("/d /s /c \"chcp 65001>nul & \"C:\\Program Files\\x.cmd\" \"arg with space\"\"");
     }
 
     [Fact]
@@ -54,7 +55,7 @@ public sealed class BuildCmdBatchArgumentsTests
         // the token at the cmd layer regardless of a trailing backslash.
         var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", @"a\b\"]);
 
-        line.Should().Be("/d /s /c \"\"C:\\tools\\x.cmd\" \"a\\b\\\"\"");
+        line.Should().Be("/d /s /c \"chcp 65001>nul & \"C:\\tools\\x.cmd\" \"a\\b\\\"\"");
     }
 
     [Theory]

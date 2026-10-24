@@ -67,6 +67,32 @@ public sealed class WindowsOsRunCommandTests
     }
 
     [Fact]
+    public async Task RunArgv_round_trips_non_ascii_batch_output()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // The batch is launched directly (no chance to inject chcp into it), so
+        // the dispatch must set the cmd session to UTF-8 itself — otherwise echo
+        // emits the OEM code page and our UTF-8 decode mangles non-ASCII.
+        var os = new WindowsOs(NullLogger<WindowsOs>.Instance);
+        var dir = Path.Combine(Path.GetTempPath(), "egs-cmd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var batch = Path.Combine(dir, "egs-echo.cmd");
+        await File.WriteAllTextAsync(batch, "@echo off\r\necho VAL=%~1\r\n");
+        try
+        {
+            var result = await os.RunArgvCommandAsync([batch, "Hällöchen"], CancellationToken.None);
+
+            result.ExitCode.Should().Be(0);
+            result.StdOut.Should().Contain("VAL=Hällöchen");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RunArgv_rejects_a_batch_argument_that_would_inject_commands()
     {
         if (!OperatingSystem.IsWindows()) return;

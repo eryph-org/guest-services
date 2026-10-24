@@ -472,17 +472,21 @@ internal sealed class WindowsOs : IWindowsOs
     //
     // /d skips AutoRun, and /s makes cmd strip exactly the first and last quote
     // of the remainder (deterministic — no reliance on the fragile outer-quote
-    // heuristic). Every token is wrapped in one pair of double quotes, so cmd
-    // treats embedded metacharacters (& | < > ^ ( )) as literal. cmd does NOT
-    // honour backslash as a quote escape and expands variables / breaks lines
-    // even inside quotes, so an argument containing a double quote, '%', CR or
-    // LF cannot be carried safely (an embedded quote would close the pair early
-    // and expose the rest as live cmd syntax — command injection). Such an
-    // argument is rejected rather than corrupted or mis-executed; everything
-    // else is emitted literally.
+    // heuristic). `chcp 65001>nul &` sets the cmd session to UTF-8 before the
+    // batch runs so its output (e.g. `echo %~1` with non-ASCII) is decoded by
+    // our StandardOutputEncoding=UTF8 — the batch is run directly, so unlike
+    // RunShellCommandAsync we cannot inject chcp into the script itself. The
+    // trailing exit code stays the batch's (`&`, not `&&`). Every token is
+    // wrapped in one pair of double quotes, so cmd treats embedded
+    // metacharacters (& | < > ^ ( )) as literal. cmd does NOT honour backslash
+    // as a quote escape and expands variables / breaks lines even inside quotes,
+    // so an argument containing a double quote, '%', CR or LF cannot be carried
+    // safely (an embedded quote would close the pair early and expose the rest
+    // as live cmd syntax — command injection). Such an argument is rejected
+    // rather than corrupted or mis-executed; everything else is emitted literally.
     internal static string BuildCmdBatchArguments(string batchPath, IReadOnlyList<string> argv)
     {
-        var sb = new StringBuilder("/d /s /c \"");
+        var sb = new StringBuilder("/d /s /c \"chcp 65001>nul & ");
         AppendCmdQuotedArgument(sb, batchPath);
         for (var i = 1; i < argv.Count; i++)
         {
