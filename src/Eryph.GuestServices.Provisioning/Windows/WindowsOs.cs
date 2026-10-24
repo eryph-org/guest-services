@@ -2011,6 +2011,7 @@ internal sealed class WindowsOs : IWindowsOs
             ExitCode = result.ExitCode,
             RebootRequested = reboot,
             JsonOutput = result.StdOut,
+            StdErr = result.StdErr,
         };
     }
 

@@ -408,6 +408,52 @@ public sealed class DscModuleTests
     }
 
     [Fact]
+    public async Task Test_verb_does_not_reboot_even_when_a_restart_is_reported()
+    {
+        // A 'test'/'get' run can surface restartRequired as reported state;
+        // inspecting a guest must never reboot it. Only 'set' acts on a reboot.
+        var os = DscOs(reboot: true);
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig { Apply = "test", Configurations = [Inline()] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+    }
+
+    [Fact]
+    public async Task Winget_install_failure_surfaces_output_in_the_reason()
+    {
+        var os = DscOs(dscPath: null);
+        os.RunWingetAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1, "no applicable installer found", "winget: install failed"));
+        var config = new CloudConfigModel { Dsc = new DscConfig { Configurations = [Inline()] } };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>()
+            .Which.Reason.Should().Contain("winget: install failed").And.Contain("no applicable installer found");
+    }
+
+    [Fact]
+    public async Task Failed_dsc_run_logs_bounded_stderr_diagnostics()
+    {
+        var logger = new CapturingLogger<DscModule>();
+        var os = DscOs();
+        os.RunDscConfigAsync(Arg.Any<string>(), Arg.Any<string>(), "set", Arg.Any<CancellationToken>())
+            .Returns(new DscApplyResult { ExitCode = 2, StdErr = "resource 'Foo' not found", JsonOutput = "" });
+        var config = new CloudConfigModel { Dsc = new DscConfig { Configurations = [Inline()] } };
+
+        var outcome = await new DscModule(logger).ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+        logger.Messages.Should().Contain(m => m.Contains("resource 'Foo' not found"));
+    }
+
+    [Fact]
     public async Task Reboot_request_surfaces_as_Reboot_when_all_succeed()
     {
         var os = DscOs(reboot: true);

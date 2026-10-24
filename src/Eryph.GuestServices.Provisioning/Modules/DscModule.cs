@@ -136,7 +136,9 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
 
             if (result.ExitCode != 0)
             {
-                logger.LogError("dsc: configuration '{Name}' failed with exit code {Code}.", name, result.ExitCode);
+                logger.LogError(
+                    "dsc: configuration '{Name}' failed with exit code {Code}.{Detail}",
+                    name, result.ExitCode, StreamDetail(result.StdErr, result.JsonOutput));
                 failed.Add(name);
                 if (!continueOnError)
                     break;
@@ -151,8 +153,21 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
 
             if (result.RebootRequested)
             {
-                logger.LogInformation("dsc: configuration '{Name}' requested a reboot.", name);
-                rebootRequested = true;
+                // Only an actual apply ('set') acts on a restart request. 'get' /
+                // 'test' are read-only: a configuration under inspection may
+                // report a pending restart (DSC surfaces restartRequired in their
+                // output too), and inspecting a guest must never reboot it.
+                if (verb == "set")
+                {
+                    logger.LogInformation("dsc: configuration '{Name}' requested a reboot.", name);
+                    rebootRequested = true;
+                }
+                else
+                {
+                    logger.LogInformation(
+                        "dsc: configuration '{Name}' ({Verb}) reports a pending restart; not acting on it for a read-only verb.",
+                        name, verb);
+                }
             }
         }
 
@@ -238,7 +253,8 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
 
             var result = await context.Os.RunWingetAsync(argv, cancellationToken).ConfigureAwait(false);
             if (Array.IndexOf(WingetSuccessExitCodes, result.ExitCode) < 0)
-                return ModuleOutcome.Fail($"dsc: winget install of Microsoft.DSC failed (exit {result.ExitCode}).");
+                return ModuleOutcome.Fail(
+                    $"dsc: winget install of Microsoft.DSC failed (exit {result.ExitCode}).{StreamDetail(result.StdErr, result.StdOut)}");
 
             return null;
         }
@@ -293,19 +309,38 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
     // provisioning log, capped so a large state document cannot flood it.
     private void LogInspectionResult(string name, string verb, string? jsonOutput)
     {
-        const int maxChars = 4000;
-        var output = (jsonOutput ?? string.Empty).Trim();
+        var output = Truncate(jsonOutput, 4000);
         if (output.Length == 0)
         {
             logger.LogInformation("dsc: configuration '{Name}' ({Verb}) produced no output.", name, verb);
             return;
         }
 
-        var shown = output.Length > maxChars
-            ? output[..maxChars] + $" …(+{output.Length - maxChars} more chars)"
-            : output;
         logger.LogInformation(
-            "dsc: configuration '{Name}' ({Verb}) result:\n{Result}", name, verb, shown);
+            "dsc: configuration '{Name}' ({Verb}) result:\n{Result}", name, verb, output);
+    }
+
+    // Bounded stderr / stdout detail appended to a failure message so an
+    // operator can diagnose a failed run from the provisioning log, rather than
+    // seeing only a numeric exit code. Empty when both streams are empty.
+    private static string StreamDetail(string? stdErr, string? stdOut)
+    {
+        var parts = new List<string>();
+        var err = Truncate(stdErr, 2000);
+        if (err.Length > 0)
+            parts.Add($"stderr: {err}");
+        var outp = Truncate(stdOut, 2000);
+        if (outp.Length > 0)
+            parts.Add($"output: {outp}");
+        return parts.Count == 0 ? "" : "\n  " + string.Join("\n  ", parts);
+    }
+
+    private static string Truncate(string? value, int maxChars)
+    {
+        var trimmed = (value ?? string.Empty).Trim();
+        return trimmed.Length > maxChars
+            ? trimmed[..maxChars] + $" …(+{trimmed.Length - maxChars} more chars)"
+            : trimmed;
     }
 
     private static string? NormalizeVerb(string? apply)
