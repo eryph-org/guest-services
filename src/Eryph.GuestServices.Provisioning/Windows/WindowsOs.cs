@@ -1528,21 +1528,17 @@ internal sealed class WindowsOs : IWindowsOs
 
     public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
     {
-        // Reserve the install dir before launching install.ps1 so a standard
-        // user cannot create+own %ChocolateyInstall% during the (slow) download
-        // and plant files the installer runs as LocalSystem. %ProgramData% lets
-        // Users create directories, so we create it ourselves AS LOCALSYSTEM
-        // (owner SYSTEM) first, and reject an already-existing untrusted / reparse
-        // tree. We deliberately do NOT strip the inherited ACL here: Chocolatey's
-        // installer manages its own permissions, and a protected SYSTEM-only DACL
-        // makes it complete without placing choco.exe. SYSTEM ownership is enough
-        // to deny the create+own race; the post-install trust check then confirms
-        // the result, and RunChocoAsync refuses to execute an untrusted path.
-        var chocoRoot = Path.GetDirectoryName(Path.GetDirectoryName(ChocolateyExePath))!;
-        Directory.CreateDirectory(chocoRoot);
-        if (UntrustedPathReason(chocoRoot) is { } preReason)
+        // Refuse to bootstrap into an ALREADY-EXISTING untrusted / reparse
+        // install dir. We do NOT pre-create or lock the tree: Chocolatey's
+        // installer self-manages %ChocolateyInstall% (creates it, copies files,
+        // sets its own ACLs), and both a protected ACL and a bare SYSTEM
+        // pre-create make install.ps1 complete without placing choco.exe
+        // (verified on a real catlet). The post-install trust check and
+        // RunChocoAsync's guard still refuse to execute an untrusted choco.exe,
+        // and the installer runs as LocalSystem and force-copies its binaries.
+        if (UntrustedPathReason(ChocolateyExePath) is { } preReason)
             throw new InvalidOperationException(
-                $"Refusing to bootstrap Chocolatey into '{chocoRoot}': {preReason}.");
+                $"Refusing to bootstrap Chocolatey into '{Path.GetDirectoryName(ChocolateyExePath)}': {preReason}.");
 
         var psi = BuildPowerShellCommandPsi(PackageScripts.ChocolateyBootstrap());
         var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)

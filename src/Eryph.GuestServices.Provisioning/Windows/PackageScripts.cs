@@ -129,18 +129,13 @@ internal static class PackageScripts
 
         # Merge ALL streams (*>&1): the installer reports the .NET Framework
         # reboot via Write-Warning / Write-Host, which 2>&1 (error stream only)
-        # would miss. Accumulate INCREMENTALLY so that if the installer prints the
-        # reboot notice and only THEN hits a terminating error, the notice is
-        # still in $out (a plain `$out = (... | Out-String)` would be replaced by
-        # just the error record in the catch).
-        $out = ''
+        # would miss.
         $failed = $false
         try {
-            & { Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')) } *>&1 |
-                ForEach-Object { $out += ($_ | Out-String) }
+            $out = (& { Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1')) } *>&1 | Out-String)
         }
         catch {
-            $out += ($_ | Out-String)
+            $out = ($_ | Out-String)
             $failed = $true
         }
         Write-Host $out
