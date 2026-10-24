@@ -33,6 +33,9 @@ public sealed class WindowsOsWingetScriptTests
         script.Should().NotContain("{{").And.NotContain("}}");
         script.Should().Contain("winget.exe");
         script.Should().Contain("exit $LASTEXITCODE");
+        // A missing winget.exe must fail loudly instead of falling through to
+        // 'exit $LASTEXITCODE' with an unset code (which exits 0).
+        script.Should().Contain("Test-Path").And.Contain("exit 1");
         // First meaningful line is not stray-indented (raw-string stripping ok).
         script.Should().NotStartWith(" ").And.NotStartWith("\t");
     }

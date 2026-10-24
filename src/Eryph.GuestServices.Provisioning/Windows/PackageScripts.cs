@@ -101,7 +101,17 @@ internal static class PackageScripts
                 ForEach-Object { ($_.Name -split '_')[0] } | Sort-Object -Unique)
         $paths = @($appInstaller.FullName) + @($dependencies | ForEach-Object { (Get-NewestPackage $_).FullName } | Where-Object { $_ })
         $env:PATH = ($paths -join ';') + ';' + $env:PATH
-        & (Join-Path $appInstaller.FullName 'winget.exe') @args
+        # The selected App Installer directory may not actually contain winget.exe
+        # (a partial/renamed package). Fail explicitly: otherwise the call errors
+        # out, control still reaches 'exit $LASTEXITCODE', and an unset
+        # $LASTEXITCODE exits 0 — the smoke test and installs would report
+        # success without winget ever running.
+        $wingetExe = Join-Path $appInstaller.FullName 'winget.exe'
+        if (-not (Test-Path -LiteralPath $wingetExe)) {
+            Write-Error "winget.exe not found in $($appInstaller.FullName)"
+            exit 1
+        }
+        & $wingetExe @args
         exit $LASTEXITCODE
         """;
 

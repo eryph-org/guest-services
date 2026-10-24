@@ -439,17 +439,21 @@ internal sealed class WindowsOs : IWindowsOs
         {
             // A just-installed tool often resolves to a .cmd/.bat shim (e.g.
             // npm.cmd). CreateProcess (UseShellExecute=false) cannot launch a
-            // batch file directly, so dispatch it through cmd.exe /c.
+            // batch file directly, so dispatch it through cmd.exe. cmd re-parses
+            // its command line with DIFFERENT rules than the MSVCRT quoting that
+            // ArgumentList produces: an unquoted metacharacter (& | < > ^) would
+            // split or redirect the line, and cmd's default /c outer-quote
+            // heuristic can strip the quotes around a space-containing path. So
+            // hand-build the line with cmd-correct quoting and pass it verbatim.
             psi = CreateUtf8Psi("cmd.exe");
-            psi.ArgumentList.Add("/c");
-            psi.ArgumentList.Add(resolved);
+            psi.Arguments = BuildCmdBatchArguments(resolved, argv);
         }
         else
         {
             psi = CreateUtf8Psi(resolved);
+            for (var i = 1; i < argv.Count; i++)
+                psi.ArgumentList.Add(argv[i]);
         }
-        for (var i = 1; i < argv.Count; i++)
-            psi.ArgumentList.Add(argv[i]);
         ApplyRefreshedPath(psi);
         ApplyEnvironment(psi, environment);
 
@@ -459,6 +463,68 @@ internal sealed class WindowsOs : IWindowsOs
     private static bool IsBatchFile(string path) =>
         path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
         || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+
+    // Builds the raw command line for launching a batch file through cmd.exe,
+    // to be assigned verbatim to ProcessStartInfo.Arguments (NOT ArgumentList,
+    // whose MSVCRT quoting cmd would re-parse incorrectly):
+    //
+    //   /d /s /c "<batch> <arg> <arg> ..."
+    //
+    // /d skips AutoRun, and /s makes cmd strip exactly the first and last quote
+    // of the remainder (deterministic — no reliance on the fragile outer-quote
+    // heuristic). Every token is force-quoted, so cmd treats embedded
+    // metacharacters (& | < > ^ ( )) as literal; the MSVCRT quoting inside the
+    // quotes is what the batch file's %1..%* then tokenize. '%' and CR/LF cannot
+    // be escaped on a cmd command line (variable expansion and line breaks happen
+    // even inside quotes), so an argument containing one is rejected rather than
+    // silently corrupted.
+    internal static string BuildCmdBatchArguments(string batchPath, IReadOnlyList<string> argv)
+    {
+        var sb = new StringBuilder("/d /s /c \"");
+        AppendCmdQuotedArgument(sb, batchPath);
+        for (var i = 1; i < argv.Count; i++)
+        {
+            sb.Append(' ');
+            AppendCmdQuotedArgument(sb, argv[i]);
+        }
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    private static void AppendCmdQuotedArgument(StringBuilder sb, string argument)
+    {
+        if (argument.AsSpan().IndexOfAny("%\r\n") >= 0)
+            throw new ArgumentException(
+                $"A batch-file argument may not contain '%', CR or LF — cmd.exe cannot escape these on a command line. Argument: '{argument}'.",
+                nameof(argument));
+
+        // MSVCRT argv quoting (backslashes doubled only before a quote or the
+        // closing quote), force-quoted so cmd.exe sees the whole token as one
+        // quoted string and leaves its metacharacters literal.
+        sb.Append('"');
+        var backslashes = 0;
+        foreach (var c in argument)
+        {
+            switch (c)
+            {
+                case '\\':
+                    backslashes++;
+                    break;
+                case '"':
+                    sb.Append('\\', backslashes * 2 + 1);
+                    sb.Append('"');
+                    backslashes = 0;
+                    break;
+                default:
+                    sb.Append('\\', backslashes);
+                    backslashes = 0;
+                    sb.Append(c);
+                    break;
+            }
+        }
+        sb.Append('\\', backslashes * 2);
+        sb.Append('"');
+    }
 
     // Resolves a bare executable name (no directory component) against the
     // CURRENT machine + user PATH and PATHEXT. Returns the original string when
