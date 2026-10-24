@@ -1509,19 +1509,13 @@ internal sealed class WindowsOs : IWindowsOs
 
     public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
     {
-        // RESERVE the install tree before launching install.ps1. %ProgramData%
-        // lets standard users create directories, so a plain "validate first"
-        // leaves a race: a user could create %ChocolateyInstall% during the
-        // (slow) download and plant files the installer runs as LocalSystem.
-        // Create the root ourselves, reject an already-existing untrusted /
-        // reparse tree, then lock it to SYSTEM + Administrators (inherited by
-        // everything install.ps1 writes) so it cannot be raced in.
-        var chocoRoot = Path.GetDirectoryName(Path.GetDirectoryName(ChocolateyExePath))!;
-        Directory.CreateDirectory(chocoRoot);
-        if (UntrustedPathReason(chocoRoot) is { } preReason)
+        // Refuse to bootstrap into an already-existing, untrusted install dir: a
+        // standard user can pre-create %ProgramData%\chocolatey and plant files
+        // that install.ps1 would copy over / run from (it execs choco.exe from
+        // that dir). Validate BEFORE launching, not only after.
+        if (UntrustedPathReason(ChocolateyExePath) is { } preReason)
             throw new InvalidOperationException(
-                $"Refusing to bootstrap Chocolatey into '{chocoRoot}': {preReason}.");
-        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(chocoRoot));
+                $"Refusing to bootstrap Chocolatey into '{Path.GetDirectoryName(ChocolateyExePath)}': {preReason}.");
 
         var psi = BuildPowerShellCommandPsi(PackageScripts.ChocolateyBootstrap());
         var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)
