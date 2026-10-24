@@ -296,13 +296,17 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
     }
 
     // A safe, deterministic file name derived from the configuration name, so an
-    // operator-chosen name cannot escape the hardened document directory.
+    // operator-chosen name cannot escape the hardened document directory. The
+    // constant "dsc-" prefix also means the base name is never a bare reserved
+    // DOS device name (CON, NUL, COM1, …) — appending an extension does not stop
+    // Windows treating those as devices, so a config labelled "CON" would
+    // otherwise fail during staging.
     private static string DocumentFileName(string? name)
     {
         var slug = string.IsNullOrWhiteSpace(name) ? "configuration" : name.Trim();
         var chars = slug.Select(c =>
             char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_').ToArray();
-        return new string(chars) + ".dsc.yaml";
+        return "dsc-" + new string(chars) + ".dsc.yaml";
     }
 
     // Logs the dsc.exe output of a read-only verb (get / test) on the

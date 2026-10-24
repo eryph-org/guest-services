@@ -1808,6 +1808,12 @@ internal sealed class WindowsOs : IWindowsOs
     private static string DscProgramFilesExePath =>
         Path.Combine(DscProgramFilesDirectory, "dsc.exe");
 
+    // Written only after a GitHub-release install extracts and verifies fully.
+    // Resolution requires it so a half-written install (interrupted extract /
+    // service stop after dsc.exe landed) is not accepted and silently used.
+    private static string DscInstallMarkerPath =>
+        Path.Combine(DscProgramFilesDirectory, ".egs-dsc-install.complete");
+
     private static string DscDocumentDirectory =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "eryph", "dsc");
@@ -1833,8 +1839,12 @@ internal sealed class WindowsOs : IWindowsOs
                 return expanded;
             }
 
-            // 2. The GitHub-release install target.
-            if (File.Exists(DscProgramFilesExePath) && IsTrustedSystemPath(DscProgramFilesExePath))
+            // 2. The GitHub-release install target — only when the completion
+            //    marker proves the install finished (a partial install is ignored
+            //    so the module reinstalls rather than running a broken dsc).
+            if (File.Exists(DscProgramFilesExePath)
+                && File.Exists(DscInstallMarkerPath)
+                && IsTrustedSystemPath(DscProgramFilesExePath))
                 return DscProgramFilesExePath;
 
             // 3. A non-symlink dsc.exe on the refreshed machine PATH in a trusted
@@ -1928,14 +1938,20 @@ internal sealed class WindowsOs : IWindowsOs
     public async Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken)
     {
         // RESERVE the install tree before downloading (same race the Chocolatey
-        // bootstrap guards): %ProgramFiles% lets standard users create dirs, so
-        // create it ourselves, reject an already-existing untrusted / reparse
-        // tree, and lock it to SYSTEM + Administrators before extracting into it.
+        // bootstrap guards): create it ourselves and reject an already-existing
+        // untrusted / reparse tree BEFORE touching its contents.
         var target = DscProgramFilesDirectory;
         Directory.CreateDirectory(target);
         if (UntrustedPathReason(target) is { } preReason)
             throw new InvalidOperationException(
                 $"Refusing to install DSC into '{target}': {preReason}.");
+        // Extract into a CLEAN, locked tree: wipe any pre-existing contents (a
+        // stray/planted manifest, or a half-written install from an interrupted
+        // prior run) so discovery can't pick up a stray file and the completion
+        // marker written at the end is the sole proof of a finished install.
+        try { Directory.Delete(target, recursive: true); }
+        catch (DirectoryNotFoundException) { /* already gone */ }
+        Directory.CreateDirectory(target);
         ApplySystemOnlyDirectoryAcl(new DirectoryInfo(target));
 
         var arch = RuntimeInformation.OSArchitecture switch
@@ -1973,29 +1989,22 @@ internal sealed class WindowsOs : IWindowsOs
             throw new InvalidOperationException(
                 $"Refusing to download the DSC release asset from an untrusted URL: {assetUrl}");
 
-        var tempDir = Path.Combine(
-            Path.GetTempPath(), "egs-dsc-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        byte[] zipBytes;
         try
         {
-            var zipPath = Path.Combine(tempDir, "dsc.zip");
-            byte[] zipBytes;
-            try
-            {
-                zipBytes = await http.GetByteArrayAsync(assetUrl, linked.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                throw new InvalidOperationException($"Failed to download the DSC release: {ex.Message}", ex);
-            }
-
-            await File.WriteAllBytesAsync(zipPath, zipBytes, linked.Token).ConfigureAwait(false);
-            ZipFile.ExtractToDirectory(zipPath, target, overwriteFiles: true);
+            zipBytes = await http.GetByteArrayAsync(assetUrl, linked.Token).ConfigureAwait(false);
         }
-        finally
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+            throw new InvalidOperationException($"Failed to download the DSC release: {ex.Message}", ex);
         }
+
+        // Extract straight from the in-memory bytes — never stage the archive in a
+        // world-writable temp directory (e.g. C:\Windows\Temp under LocalSystem),
+        // where a local user could race to substitute it before extraction.
+        using (var zipStream = new MemoryStream(zipBytes))
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read))
+            archive.ExtractToDirectory(target, overwriteFiles: true);
 
         // Re-harden: files extracted into the (already-locked) directory inherit
         // its ACL, but set the owner/ACL on the executable explicitly too.
@@ -2006,6 +2015,12 @@ internal sealed class WindowsOs : IWindowsOs
         if (UntrustedPathReason(DscProgramFilesExePath) is { } reason)
             throw new InvalidOperationException(
                 $"Refusing to trust the installed dsc.exe at '{DscProgramFilesExePath}': {reason}.");
+
+        // Publish the install only now that dsc.exe is present, trusted and the
+        // tree is complete. Resolution requires this marker, so an install that
+        // failed before this point is not picked up on the next run.
+        await File.WriteAllTextAsync(
+            DscInstallMarkerPath, DateTimeOffset.UtcNow.ToString("o"), cancellationToken).ConfigureAwait(false);
 
         logger.LogInformation("Installed DSC v3 to {Path}.", DscProgramFilesExePath);
     }
