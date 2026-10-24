@@ -402,6 +402,10 @@ internal sealed class WindowsOs : IWindowsOs
         try
         {
             var psi = CreateUtf8Psi("cmd.exe");
+            // /v:off forces delayed expansion OFF regardless of the guest's
+            // global Command Processor registry setting, so a '!' in the command
+            // stays literal (cmd's default) instead of triggering !var! expansion.
+            psi.ArgumentList.Add("/v:off");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
             ApplyRefreshedPath(psi);
@@ -468,11 +472,14 @@ internal sealed class WindowsOs : IWindowsOs
     // to be assigned verbatim to ProcessStartInfo.Arguments (NOT ArgumentList,
     // whose MSVCRT quoting cmd would re-parse incorrectly):
     //
-    //   /d /s /c "<batch> <arg> <arg> ..."
+    //   /d /v:off /s /c "<batch> <arg> <arg> ..."
     //
-    // /d skips AutoRun, and /s makes cmd strip exactly the first and last quote
-    // of the remainder (deterministic — no reliance on the fragile outer-quote
-    // heuristic). `chcp 65001>nul &` sets the cmd session to UTF-8 before the
+    // /d skips AutoRun, /v:off forces delayed expansion OFF so a '!' in an
+    // argument stays literal even when the guest enabled delayed expansion
+    // globally (otherwise "a!PATH!b" would expand inside the quotes), and /s
+    // makes cmd strip exactly the first and last quote of the remainder
+    // (deterministic — no reliance on the fragile outer-quote heuristic).
+    // `chcp 65001>nul &` sets the cmd session to UTF-8 before the
     // batch runs so its output (e.g. `echo %~1` with non-ASCII) is decoded by
     // our StandardOutputEncoding=UTF8 — the batch is run directly, so unlike
     // RunShellCommandAsync we cannot inject chcp into the script itself. The
@@ -486,7 +493,7 @@ internal sealed class WindowsOs : IWindowsOs
     // rather than corrupted or mis-executed; everything else is emitted literally.
     internal static string BuildCmdBatchArguments(string batchPath, IReadOnlyList<string> argv)
     {
-        var sb = new StringBuilder("/d /s /c \"chcp 65001>nul & ");
+        var sb = new StringBuilder("/d /v:off /s /c \"chcp 65001>nul & ");
         AppendCmdQuotedArgument(sb, batchPath);
         for (var i = 1; i < argv.Count; i++)
         {

@@ -20,7 +20,7 @@
 #>
 param (
     [Parameter()]
-    [ValidateSet('winsrv2019', 'winsrv2022', 'winsrv2025')]
+    [ValidateSet('winsrv2022', 'winsrv2025')]  # winget requires Server 2022+ (build 20348+)
     [string] $OSVersion = 'winsrv2022',
 
     [Parameter()]
