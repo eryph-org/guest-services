@@ -184,7 +184,10 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
                     package.Id);
                 continue;
             }
-            if (source.StartsWith('-') || source.Any(char.IsWhiteSpace))
+            // A source is one argv value, so an embedded space (a multiword
+            // custom source such as "Internal Tools") is safe and must be kept;
+            // only a leading '-' could be read by winget as an option.
+            if (source.StartsWith('-'))
             {
                 logger.LogWarning(
                     "Skipping winget package '{Id}': invalid source '{Source}'.", package.Id, source);

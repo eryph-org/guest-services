@@ -142,6 +142,21 @@ public sealed class ChocolateyModuleTests
     }
 
     [Fact]
+    public async Task Install_forces_use_package_exit_codes()
+    {
+        // Regression: with the global usePackageExitCodes feature disabled, choco
+        // normalizes 1641/3010 to 0 and we would skip the reboot. Passing the flag
+        // per-invocation keeps reboot detection independent of global config.
+        var os = ChocoOs(installed: true);
+
+        await Apply(CreateModule(), os, WithPackages("7zip"));
+
+        await os.Received().RunChocoAsync(
+            Arg.Is<IReadOnlyList<string>>(a => a.Contains("install") && a.Contains("--use-package-exit-codes")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Params_with_spaces_and_colon_stay_one_argv_element()
     {
         var os = ChocoOs(installed: true);

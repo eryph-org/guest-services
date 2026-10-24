@@ -169,7 +169,12 @@ internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModu
                 continue;
             }
 
-            var argv = new List<string> { "install", package.Name, "-y", "--no-progress" };
+            // Force --use-package-exit-codes so the installer's real exit code
+            // (e.g. 1641/3010 = reboot) reaches us. With the global
+            // usePackageExitCodes feature disabled, choco would otherwise
+            // normalize those to 0 and we would skip the required reboot.
+            var argv = new List<string>
+                { "install", package.Name, "-y", "--no-progress", "--use-package-exit-codes" };
             if (!string.IsNullOrWhiteSpace(package.Version))
             {
                 argv.Add("--version");

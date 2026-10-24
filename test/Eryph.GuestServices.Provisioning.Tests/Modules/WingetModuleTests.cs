@@ -342,6 +342,31 @@ public sealed class WingetModuleTests
     }
 
     [Fact]
+    public async Task Multiword_custom_source_is_registered_and_installed_from()
+    {
+        // Regression: a custom source name with a space ("Internal Tools") is
+        // accepted at registration and is a single argv value at install, so the
+        // package must install from it — not be silently skipped.
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel
+        {
+            Winget = new WingetConfig
+            {
+                Sources = [new WingetSource { Name = "Internal Tools", Argument = "https://winget.contoso.example/" }],
+                Packages = [new WingetPackage { Id = "Contoso.Tool", Source = "Internal Tools" }],
+            },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().RunWingetAsync(
+            Arg.Is<IReadOnlyList<string>>(a =>
+                a.Contains("Contoso.Tool") && a.Contains("--source") && a.Contains("Internal Tools")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Sources_are_registered_before_packages()
     {
         var os = WingetOs(provisioned: true);
