@@ -1,6 +1,8 @@
 # RFC 0033 — `packages` cloud-config umbrella
 
-Status: Accepted
+Status: Implemented
+
+Implemented in commit `7879170` (umbrella) and `6a5248c` (review follow-ups).
 
 ## Problem
 

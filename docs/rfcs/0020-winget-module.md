@@ -1,6 +1,8 @@
 # RFC 0020 — `winget` cloud-config module
 
-Status: Accepted
+Status: Implemented
+
+Implemented in commit `de11f16` (module) and `a6f754e` (Config-stage ordering).
 
 ## Problem
 

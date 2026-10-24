@@ -1,6 +1,8 @@
 # RFC 0021 — `chocolatey` cloud-config module
 
-Status: Accepted
+Status: Implemented
+
+Implemented in commit `1dce79d` (module) and `a6f754e` (Config-stage ordering).
 
 ## Problem
 
