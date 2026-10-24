@@ -67,6 +67,32 @@ public sealed class WindowsOsRunCommandTests
     }
 
     [Fact]
+    public async Task RunArgv_rejects_a_batch_argument_that_would_inject_commands()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // An embedded quote would close cmd's quoting and expose the following
+        // '&echo ...' as a separate command. RunArgvCommandAsync must reject it
+        // before launch rather than run the injected command.
+        var os = new WindowsOs(NullLogger<WindowsOs>.Instance);
+        var dir = Path.Combine(Path.GetTempPath(), "egs-cmd-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var batch = Path.Combine(dir, "egs-echo.cmd");
+        await File.WriteAllTextAsync(batch, "@echo off\r\necho VAL=%1\r\n");
+        try
+        {
+            var act = async () => await os.RunArgvCommandAsync(
+                [batch, "a\"&echo PWNED&rem "], CancellationToken.None);
+
+            await act.Should().ThrowAsync<ArgumentException>();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RunArgv_handles_spaces_in_the_batch_path_and_arguments()
     {
         if (!OperatingSystem.IsWindows()) return;

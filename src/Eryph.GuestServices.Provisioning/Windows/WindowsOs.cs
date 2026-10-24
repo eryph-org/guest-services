@@ -472,12 +472,14 @@ internal sealed class WindowsOs : IWindowsOs
     //
     // /d skips AutoRun, and /s makes cmd strip exactly the first and last quote
     // of the remainder (deterministic — no reliance on the fragile outer-quote
-    // heuristic). Every token is force-quoted, so cmd treats embedded
-    // metacharacters (& | < > ^ ( )) as literal; the MSVCRT quoting inside the
-    // quotes is what the batch file's %1..%* then tokenize. '%' and CR/LF cannot
-    // be escaped on a cmd command line (variable expansion and line breaks happen
-    // even inside quotes), so an argument containing one is rejected rather than
-    // silently corrupted.
+    // heuristic). Every token is wrapped in one pair of double quotes, so cmd
+    // treats embedded metacharacters (& | < > ^ ( )) as literal. cmd does NOT
+    // honour backslash as a quote escape and expands variables / breaks lines
+    // even inside quotes, so an argument containing a double quote, '%', CR or
+    // LF cannot be carried safely (an embedded quote would close the pair early
+    // and expose the rest as live cmd syntax — command injection). Such an
+    // argument is rejected rather than corrupted or mis-executed; everything
+    // else is emitted literally.
     internal static string BuildCmdBatchArguments(string batchPath, IReadOnlyList<string> argv)
     {
         var sb = new StringBuilder("/d /s /c \"");
@@ -493,36 +495,19 @@ internal sealed class WindowsOs : IWindowsOs
 
     private static void AppendCmdQuotedArgument(StringBuilder sb, string argument)
     {
-        if (argument.AsSpan().IndexOfAny("%\r\n") >= 0)
+        if (argument.AsSpan().IndexOfAny("\"%\r\n") >= 0)
             throw new ArgumentException(
-                $"A batch-file argument may not contain '%', CR or LF — cmd.exe cannot escape these on a command line. Argument: '{argument}'.",
+                "A batch-file argument may not contain a double quote, '%', CR or LF — "
+                + $"cmd.exe cannot safely escape these on a command line. Argument: '{argument}'.",
                 nameof(argument));
 
-        // MSVCRT argv quoting (backslashes doubled only before a quote or the
-        // closing quote), force-quoted so cmd.exe sees the whole token as one
-        // quoted string and leaves its metacharacters literal.
+        // One pair of double quotes, content kept literal. cmd leaves the
+        // metacharacters inside the quotes alone; backslashes pass through
+        // unchanged (cmd does not treat them as escapes, and we reject the only
+        // character — a double quote — that would make a trailing backslash
+        // ambiguous).
         sb.Append('"');
-        var backslashes = 0;
-        foreach (var c in argument)
-        {
-            switch (c)
-            {
-                case '\\':
-                    backslashes++;
-                    break;
-                case '"':
-                    sb.Append('\\', backslashes * 2 + 1);
-                    sb.Append('"');
-                    backslashes = 0;
-                    break;
-                default:
-                    sb.Append('\\', backslashes);
-                    backslashes = 0;
-                    sb.Append(c);
-                    break;
-            }
-        }
-        sb.Append('\\', backslashes * 2);
+        sb.Append(argument);
         sb.Append('"');
     }
 

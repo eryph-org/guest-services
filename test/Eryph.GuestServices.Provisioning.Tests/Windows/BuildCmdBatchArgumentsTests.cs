@@ -47,31 +47,26 @@ public sealed class BuildCmdBatchArgumentsTests
     }
 
     [Fact]
-    public void Escapes_embedded_quotes_with_a_backslash()
+    public void Preserves_backslashes_literally()
     {
-        var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", "a\"b"]);
+        // cmd does not treat backslash as a quote escape, so it is passed
+        // through unchanged (not doubled). The closing quote still terminates
+        // the token at the cmd layer regardless of a trailing backslash.
+        var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", @"a\b\"]);
 
-        line.Should().Contain("\"a\\\"b\"");
-    }
-
-    [Fact]
-    public void Doubles_trailing_backslashes_before_the_closing_quote()
-    {
-        // A trailing backslash must not escape the closing quote the MSVCRT
-        // tokenizer sees, so it is doubled.
-        var line = WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", @"a\"]);
-
-        line.Should().Contain("\"a\\\\\"");
+        line.Should().Be("/d /s /c \"\"C:\\tools\\x.cmd\" \"a\\b\\\"\"");
     }
 
     [Theory]
-    [InlineData("%PATH%")]
+    [InlineData("a\"b")]                      // an embedded quote would close the pair early
+    [InlineData("a\"&echo UNEXPECTED&rem ")]  // ... and expose the rest as live cmd syntax
+    [InlineData("%PATH%")]                    // variable expansion, not escapable on a cmd line
     [InlineData("a\nb")]
     [InlineData("a\rb")]
     public void Rejects_arguments_that_cmd_cannot_escape(string argument)
     {
-        // '%' (variable expansion) and CR/LF cannot be escaped on a cmd command
-        // line even inside quotes — reject rather than silently corrupt.
+        // A double quote, '%' and CR/LF cannot be safely carried through
+        // cmd /c — reject rather than corrupt or (for the quote) mis-execute.
         var act = () => WindowsOs.BuildCmdBatchArguments(@"C:\tools\x.cmd", [@"C:\tools\x.cmd", argument]);
 
         act.Should().Throw<ArgumentException>();
