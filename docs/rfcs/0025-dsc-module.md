@@ -1,6 +1,6 @@
 # RFC 0025 — `dsc` cloud-config module (DSCv3)
 
-Status: Draft
+Status: Implemented
 
 ## Problem
 
