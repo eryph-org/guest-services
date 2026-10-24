@@ -637,8 +637,7 @@ internal sealed class WindowsOs : IWindowsOs
     }
 
     // Keeps only the directories of a ';'-separated search path that exist and
-    // pass the trusted-system-path check (SYSTEM/Administrators-owned, no
-    // reparse point or non-privileged write up the ancestor chain).
+    // are trusted for DSC manifest DISCOVERY (see IsTrustedDiscoveryDirectory).
     internal static string FilterTrustedPathEntries(string pathList)
     {
         var trusted = pathList
@@ -651,7 +650,36 @@ internal sealed class WindowsOs : IWindowsOs
     {
         try
         {
-            return Directory.Exists(directory) && IsTrustedSystemPath(directory);
+            return Directory.Exists(directory) && IsTrustedDiscoveryDirectory(directory);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // On a directory DSC SCANS for resource/extension manifests, planting a NEW
+    // file is itself the attack: a user-dropped *.dsc.resource.json is executed
+    // as LocalSystem. That is weaker than the replace/delete threat the
+    // execution-path check guards — IsTrustedSystemPath deliberately permits the
+    // non-privileged CreateFiles/CreateDirectories that %ProgramData% grants by
+    // default, because adding a sibling can't alter what we execute. A discovery
+    // directory must additionally deny those create rights.
+    private const FileSystemRights DangerousDiscoveryCreateRights =
+        FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories;
+
+    // True when <paramref name="directory"/> is safe for DSC to scan as a
+    // discovery directory: trusted for execution (owner / reparse / replace up
+    // the chain) AND it grants no non-privileged principal the right to create
+    // a new file or subdirectory in it.
+    internal static bool IsTrustedDiscoveryDirectory(string directory)
+    {
+        if (UntrustedPathReason(directory) is not null)
+            return false;
+        try
+        {
+            var security = new DirectoryInfo(directory).GetAccessControl();
+            return NonPrivilegedController(security, DangerousDiscoveryCreateRights) is null;
         }
         catch
         {
@@ -2030,6 +2058,18 @@ internal sealed class WindowsOs : IWindowsOs
         if (UntrustedPathReason(dscExePath) is { } reason)
             throw new InvalidOperationException(
                 $"Refusing to run dsc.exe from an untrusted path: {reason}.");
+
+        // With DSC_RESOURCE_PATH unset, dsc.exe always adds its OWN directory to
+        // the manifest discovery set (for its bundled resources). Filtering PATH
+        // alone would leave that directory unchecked, so an operator-supplied
+        // dsc.exe in a create-grantable directory (e.g. %ProgramData% root) would
+        // let a standard user plant a manifest beside it. Hold the executable's
+        // directory to the same discovery-directory standard.
+        var dscExeDir = Path.GetDirectoryName(Path.GetFullPath(dscExePath));
+        if (string.IsNullOrEmpty(dscExeDir) || !IsTrustedDiscoveryDirectory(dscExeDir))
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe from '{dscExeDir}': its directory is scanned for DSC " +
+                "resource manifests and is not restricted to privileged accounts.");
 
         // dsc.exe enforces the document's resource actions as LocalSystem, so the
         // document is as privileged as the executable. Documents we stage land in

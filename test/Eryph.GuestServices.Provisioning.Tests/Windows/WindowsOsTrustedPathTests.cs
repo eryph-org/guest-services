@@ -83,4 +83,46 @@ public sealed class WindowsOsTrustedPathTests
             Directory.Delete(userDir, recursive: true);
         }
     }
+
+    [Fact]
+    public void A_create_grantable_system_directory_is_trusted_to_execute_but_not_to_discover()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // %ProgramData% is SYSTEM-owned (safe to execute from — nobody can replace
+        // our files), yet grants BUILTIN\Users create rights by default. A planted
+        // *.dsc.resource.json there would run as LocalSystem, so it must NOT be
+        // accepted as a DSC discovery directory.
+        var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        WindowsOs.IsTrustedSystemPath(programData).Should().BeTrue();
+        WindowsOs.IsTrustedDiscoveryDirectory(programData).Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_system_directory_is_trusted_to_discover()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // System32 (TrustedInstaller-owned, no non-privileged create rights) is a
+        // legitimate discovery directory and must still pass.
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        WindowsOs.IsTrustedDiscoveryDirectory(system32).Should().BeTrue();
+    }
+
+    [Fact]
+    public void FilterTrustedPathEntries_drops_a_create_grantable_directory()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // The discovery PATH must exclude a directory where a standard user can
+        // drop a manifest, even when it is safe to execute from.
+        var system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+
+        var entries = WindowsOs.FilterTrustedPathEntries($"{system32};{programData}")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries);
+
+        entries.Should().Contain(system32);
+        entries.Should().NotContain(programData);
+    }
 }
