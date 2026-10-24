@@ -380,7 +380,7 @@ environment, and raise its own per-script cap (`reboot.maxPerScript`, default
 ## Winget
 
 Installs packages with the Windows Package Manager (winget). Windows only —
-there is no Linux equivalent. Replaces the `gene:dbosoft/winget:install` fodder.
+there is no Linux equivalent.
 
 ```yaml
 winget:
@@ -412,9 +412,8 @@ runs).
 
 ## Chocolatey
 
-Installs packages with Chocolatey. Windows only — no Linux equivalent. Replaces
-the `gene:dbosoft/chocolatey:install` fodder. Runs after Winget, so an operator
-who lists both gets winget first.
+Installs packages with Chocolatey. Windows only — no Linux equivalent. Runs
+after Winget, so an operator who lists both gets winget first.
 
 ```yaml
 chocolatey:
