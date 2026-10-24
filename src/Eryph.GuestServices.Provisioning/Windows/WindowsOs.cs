@@ -1164,10 +1164,9 @@ internal sealed class WindowsOs : IWindowsOs
         // refuse an untrusted path rather than try to fix it. Then lock the
         // directory and a freshly-written file down to SYSTEM + Administrators.
         Directory.CreateDirectory(wrapperDir);
-        if (!IsTrustedSystemPath(wrapperDir))
+        if (UntrustedPathReason(wrapperDir) is { } wrapperReason)
             throw new InvalidOperationException(
-                $"Refusing to use winget wrapper directory '{wrapperDir}': it or an ancestor is a "
-                + "reparse point or writable by a non-privileged account.");
+                $"Refusing to use winget wrapper directory '{wrapperDir}': {wrapperReason}.");
         ApplySystemOnlyDirectoryAcl(new DirectoryInfo(wrapperDir));
 
         File.Delete(wrapperPath);
@@ -1233,11 +1232,13 @@ internal sealed class WindowsOs : IWindowsOs
     private const string TrustedInstallerSid =
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
-    // Rights that let a principal plant or replace content at a path.
-    private const FileSystemRights WriteLikeRights =
-        FileSystemRights.WriteData | FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories
-        | FileSystemRights.AppendData | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes
-        | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
+    // Rights that let a non-privileged principal REPLACE or take over existing
+    // content (and thus swap what the agent executes as LocalSystem). Note we do
+    // NOT flag CreateFiles/CreateDirectories/AppendData: %ProgramData% grants
+    // those to Users by default on every child, and they only add NEW siblings —
+    // they can't modify, delete or take over our files/directories.
+    private const FileSystemRights DangerousControlRights =
+        FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
         | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
 
     private static bool IsPrivilegedSid(SecurityIdentifier sid) =>
@@ -1246,30 +1247,29 @@ internal sealed class WindowsOs : IWindowsOs
         || sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid)
         || string.Equals(sid.Value, TrustedInstallerSid, StringComparison.Ordinal);
 
-    // True when the ACL grants a write-like right to any non-privileged principal.
-    private static bool AllowsNonPrivilegedWrite(FileSystemSecurity security)
+    // The non-privileged principal the ACL grants dangerous control to, or null.
+    private static SecurityIdentifier? NonPrivilegedController(FileSystemSecurity security)
     {
         foreach (FileSystemAccessRule rule in
                  security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType != AccessControlType.Allow)
                 continue;
-            if ((rule.FileSystemRights & WriteLikeRights) == 0)
+            if ((rule.FileSystemRights & DangerousControlRights) == 0)
                 continue;
             if (rule.IdentityReference is SecurityIdentifier sid && !IsPrivilegedSid(sid))
-                return true;
+                return sid;
         }
 
-        return false;
+        return null;
     }
 
-    // True when <paramref name="path"/> and every ancestor up to (but not
-    // including) a system-provided root — %ProgramData%, %ProgramFiles%,
-    // %windir%, or the volume root — is neither a reparse point nor writable by
-    // a non-privileged principal. Used to refuse executing a winget wrapper or a
-    // choco.exe that a standard user could have planted or could replace
-    // (LocalSystem privilege escalation). Fails closed on any error.
-    internal static bool IsTrustedSystemPath(string path)
+    // Returns why <paramref name="path"/> (or an ancestor up to a system root)
+    // is not trusted for LocalSystem execution — a reparse point, a
+    // non-privileged owner, or a non-privileged principal with replace/delete/
+    // take-ownership rights — or null when the whole chain is trusted. Fails
+    // closed (returns a reason) on any error.
+    internal static string? UntrustedPathReason(string path)
     {
         try
         {
@@ -1279,40 +1279,56 @@ internal sealed class WindowsOs : IWindowsOs
             {
                 var trimmed = Path.TrimEndingDirectorySeparator(current);
                 if (anchors.Contains(trimmed))
-                    return true;
+                    return null;
 
                 var root = Path.GetPathRoot(current);
                 if (root is not null
                     && string.Equals(trimmed, Path.TrimEndingDirectorySeparator(root),
                         StringComparison.OrdinalIgnoreCase))
-                    return true; // volume root: system-owned, trusted
+                    return null; // volume root: system-owned, trusted
 
+                FileSystemSecurity? security = null;
                 if (Directory.Exists(current))
                 {
                     var di = new DirectoryInfo(current);
-                    if (di.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
-                    if (AllowsNonPrivilegedWrite(di.GetAccessControl())) return false;
+                    if (di.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                        return $"'{current}' is a reparse point";
+                    security = di.GetAccessControl();
                 }
                 else if (File.Exists(current))
                 {
                     var fi = new FileInfo(current);
-                    if (fi.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
-                    if (AllowsNonPrivilegedWrite(fi.GetAccessControl())) return false;
+                    if (fi.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                        return $"'{current}' is a reparse point";
+                    security = fi.GetAccessControl();
+                }
+
+                if (security is not null)
+                {
+                    if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
+                        && !IsPrivilegedSid(owner))
+                        return $"'{current}' is owned by a non-privileged account ({owner})";
+                    if (NonPrivilegedController(security) is { } controller)
+                        return $"'{current}' grants replace/delete rights to a non-privileged account ({controller})";
                 }
 
                 var parent = Path.GetDirectoryName(current);
                 if (string.IsNullOrEmpty(parent) || parent == current)
-                    return true;
+                    return null;
                 current = parent;
             }
 
-            return true;
+            return null;
         }
-        catch
+        catch (Exception ex)
         {
-            return false; // fail closed — treat anything we cannot verify as untrusted
+            return $"could not verify trust of '{path}': {ex.Message}";
         }
     }
+
+    // True when <paramref name="path"/> and every ancestor up to a system root is
+    // safe for LocalSystem execution (see <see cref="UntrustedPathReason"/>).
+    internal static bool IsTrustedSystemPath(string path) => UntrustedPathReason(path) is null;
 
     private static HashSet<string> TrustedRootAnchors()
     {
@@ -1454,10 +1470,9 @@ internal sealed class WindowsOs : IWindowsOs
         if (!File.Exists(ChocolateyExePath))
             throw new InvalidOperationException(
                 $"Chocolatey bootstrap completed but choco.exe was not found at {ChocolateyExePath}.");
-        if (!IsTrustedSystemPath(ChocolateyExePath))
+        if (UntrustedPathReason(ChocolateyExePath) is { } chocoReason)
             throw new InvalidOperationException(
-                $"Refusing to trust Chocolatey at '{ChocolateyExePath}': it or an ancestor is a "
-                + "reparse point or writable by a non-privileged account.");
+                $"Refusing to trust Chocolatey at '{ChocolateyExePath}': {chocoReason}.");
 
         logger.LogInformation("Bootstrapped Chocolatey.");
         return new ChocolateyBootstrapResult { RebootRequired = false };
