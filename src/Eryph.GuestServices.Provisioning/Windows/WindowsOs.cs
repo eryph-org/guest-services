@@ -2183,6 +2183,19 @@ internal sealed class WindowsOs : IWindowsOs
             throw new InvalidOperationException(
                 $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' could not be " +
                 "restricted to privileged accounts and could inject manifest discovery paths.");
+        // Locking the directory stops FUTURE writes but leaves any file a user
+        // planted before the lock. The settings/policy files DSC reads from here
+        // control discovery, so validate each one that exists: an attacker-authored
+        // file is owned by (or writable by) a non-privileged account and is
+        // rejected; an admin-authored file is SYSTEM/Administrators-owned and
+        // passes.
+        foreach (var settingsFile in new[] { "dsc.settings.json", "dsc.policy.json" })
+        {
+            var settingsPath = Path.Combine(dscSettingsDir, settingsFile);
+            if (File.Exists(settingsPath) && UntrustedPathReason(settingsPath) is { } fileReason)
+                throw new InvalidOperationException(
+                    $"Refusing to run dsc.exe: the DSC settings file '{settingsPath}' is untrusted: {fileReason}.");
+        }
 
         var psi = CreateUtf8Psi(dscExePath);
         // DSC reads a workspace settings file from the current working directory
