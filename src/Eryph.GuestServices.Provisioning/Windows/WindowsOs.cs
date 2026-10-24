@@ -1707,21 +1707,22 @@ internal sealed class WindowsOs : IWindowsOs
             if (File.Exists(DscProgramFilesExePath) && IsTrustedSystemPath(DscProgramFilesExePath))
                 return DscProgramFilesExePath;
 
-            // 3. dsc.exe on the refreshed machine PATH. A winget machine-scope
-            //    install of Microsoft.DSC exposes it here through a symlink in
-            //    %ProgramFiles%\WinGet\Links, which is a reparse point that
-            //    IsTrustedSystemPath rejects — so resolve the link to its real
-            //    target and trust-check THAT (the package file itself).
+            // 3. A non-symlink dsc.exe on the refreshed machine PATH in a trusted
+            //    directory. We deliberately do NOT follow a PATH symlink to its
+            //    target: a standard user who can write to any PATH directory
+            //    could plant a `dsc.exe` link repointing at a different trusted
+            //    binary and have us run it as LocalSystem (a confused-deputy LPE).
+            //    IsTrustedSystemPath rejects reparse points, so a planted link is
+            //    refused here; the winget install locations are resolved directly
+            //    below instead of via their PATH alias.
             var onPath = ResolveExecutableOnRefreshedPath("dsc.exe");
-            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal) && File.Exists(onPath))
-            {
-                var real = ResolveFinalLinkTarget(onPath);
-                if (IsTrustedSystemPath(real))
-                    return real;
-            }
+            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal)
+                && File.Exists(onPath) && IsTrustedSystemPath(onPath))
+                return onPath;
 
             // 4. The winget zip/portable install tree (machine scope) under
-            //    %ProgramFiles%\WinGet\Packages\Microsoft.DSC_*.
+            //    %ProgramFiles%\WinGet\Packages\Microsoft.DSC_* — the real
+            //    executable, not the Links symlink that points at it.
             var inPackages = FindDscInWingetPackages();
             if (inPackages is not null && IsTrustedSystemPath(inPackages))
                 return inPackages;
@@ -1735,22 +1736,6 @@ internal sealed class WindowsOs : IWindowsOs
 
             return null;
         }, cancellationToken);
-
-    // Resolves a path to the final target of a symlink / reparse point, so the
-    // trust check runs against the real executable rather than the link. Returns
-    // the input unchanged when it is not a link (or cannot be resolved).
-    private static string ResolveFinalLinkTarget(string path)
-    {
-        try
-        {
-            var target = File.ResolveLinkTarget(path, returnFinalTarget: true);
-            return target?.FullName ?? path;
-        }
-        catch
-        {
-            return path;
-        }
-    }
 
     // Best-effort scan of the machine-scope winget portable store for a
     // Microsoft.DSC install: %ProgramFiles%\WinGet\Packages\Microsoft.DSC_*\dsc.exe
