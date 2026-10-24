@@ -625,6 +625,20 @@ internal sealed class WindowsOs : IWindowsOs
                 else
                     psi.Environment["DSC_RESOURCE_PATH"] = trusted;
             }
+
+            // The PowerShell adapter (and any pwsh-based resource) loads modules
+            // from PSModulePath, so an untrusted entry there is another path to
+            // LocalSystem code execution. Filter it to trusted directories too,
+            // dropping it when nothing trusted remains.
+            if (psi.Environment.TryGetValue("PSModulePath", out var psModulePath)
+                && !string.IsNullOrEmpty(psModulePath))
+            {
+                var trusted = FilterTrustedPathEntries(psModulePath);
+                if (string.IsNullOrEmpty(trusted))
+                    psi.Environment.Remove("PSModulePath");
+                else
+                    psi.Environment["PSModulePath"] = trusted;
+            }
         }
         catch
         {
@@ -632,6 +646,8 @@ internal sealed class WindowsOs : IWindowsOs
             // one for LocalSystem execution.
             psi.Environment["Path"] = "";
             try { psi.Environment.Remove("DSC_RESOURCE_PATH"); }
+            catch { /* ignore */ }
+            try { psi.Environment.Remove("PSModulePath"); }
             catch { /* ignore */ }
         }
     }
@@ -674,12 +690,35 @@ internal sealed class WindowsOs : IWindowsOs
     // a new file or subdirectory in it.
     internal static bool IsTrustedDiscoveryDirectory(string directory)
     {
+        // A UNC path or a non-fixed (network / removable) volume is never a
+        // trusted discovery location: a remote or remountable ACL says nothing
+        // about what the other end can change before dsc reads from it.
+        if (!IsOnFixedLocalVolume(directory))
+            return false;
         if (UntrustedPathReason(directory) is not null)
             return false;
         try
         {
             var security = new DirectoryInfo(directory).GetAccessControl();
             return NonPrivilegedController(security, DangerousDiscoveryCreateRights) is null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsOnFixedLocalVolume(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal))
+                return false; // UNC
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root))
+                return false;
+            return new DriveInfo(root).DriveType == DriveType.Fixed;
         }
         catch
         {
@@ -1911,7 +1950,11 @@ internal sealed class WindowsOs : IWindowsOs
         // GitHub's REST API requires a User-Agent.
         http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
 
-        var apiUrl = string.IsNullOrWhiteSpace(version) || IsLatestToken(version)
+        var useLatest = string.IsNullOrWhiteSpace(version) || IsLatestToken(version);
+        if (!useLatest && !DscSupport.IsValidReleaseVersion(version))
+            throw new InvalidOperationException(
+                $"Refusing to install DSC: '{version}' is not a valid release version.");
+        var apiUrl = useLatest
             ? "https://api.github.com/repos/PowerShell/DSC/releases/latest"
             : $"https://api.github.com/repos/PowerShell/DSC/releases/tags/v{version!.TrimStart('v')}";
 
@@ -1926,6 +1969,9 @@ internal sealed class WindowsOs : IWindowsOs
         }
 
         var assetUrl = DscSupport.SelectWindowsReleaseAsset(releaseJson, arch);
+        if (!DscSupport.IsTrustedGitHubAssetUrl(assetUrl))
+            throw new InvalidOperationException(
+                $"Refusing to download the DSC release asset from an untrusted URL: {assetUrl}");
 
         var tempDir = Path.Combine(
             Path.GetTempPath(), "egs-dsc-" + Guid.NewGuid().ToString("N"));
@@ -2053,6 +2099,11 @@ internal sealed class WindowsOs : IWindowsOs
         string verb,
         CancellationToken cancellationToken)
     {
+        // Validate and launch the SAME fully-rooted string: a relative dscExePath
+        // would be re-resolved by CreateProcess against the agent dir / cwd / PATH
+        // and could differ from what we trust-checked here.
+        dscExePath = Path.GetFullPath(dscExePath);
+
         // Defence-in-depth: never execute dsc.exe from an untrusted path
         // (ResolveDscExecutableAsync already validated it).
         if (UntrustedPathReason(dscExePath) is { } reason)
@@ -2065,7 +2116,7 @@ internal sealed class WindowsOs : IWindowsOs
         // dsc.exe in a create-grantable directory (e.g. %ProgramData% root) would
         // let a standard user plant a manifest beside it. Hold the executable's
         // directory to the same discovery-directory standard.
-        var dscExeDir = Path.GetDirectoryName(Path.GetFullPath(dscExePath));
+        var dscExeDir = Path.GetDirectoryName(dscExePath);
         if (string.IsNullOrEmpty(dscExeDir) || !IsTrustedDiscoveryDirectory(dscExeDir))
             throw new InvalidOperationException(
                 $"Refusing to run dsc.exe from '{dscExeDir}': its directory is scanned for DSC " +
@@ -2082,16 +2133,25 @@ internal sealed class WindowsOs : IWindowsOs
 
         // dsc.exe also takes discovery directories from its settings files, which
         // outrank (and can disable, via allowEnvOverride:false) the environment we
-        // filter below. The machine/policy settings live in %ProgramData%\dsc —
-        // refuse if that directory exists but a standard user could drop a
-        // settings file into it. (The per-user settings dir is under SYSTEM's own
-        // profile, and the workspace settings file is handled by the working
-        // directory set on the process below.)
+        // filter below. The machine/policy settings live in %ProgramData%\dsc.
+        // %ProgramData% grants standard users create rights, so on a stock machine
+        // (no dsc dir yet) a user could plant dsc\dsc.settings.json at any time —
+        // a validate-only check would fail open when the directory is absent and
+        // lose a check-then-use race. RESERVE it instead: create it and lock it to
+        // SYSTEM + Administrators (same pattern as the install/wrapper dirs), then
+        // verify, so no settings file a standard user controls can exist. (The
+        // per-user settings dir is under SYSTEM's own profile, and the workspace
+        // settings file is handled by the working directory set on the process.)
         var dscSettingsDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "dsc");
-        if (Directory.Exists(dscSettingsDir) && !IsTrustedDiscoveryDirectory(dscSettingsDir))
+        Directory.CreateDirectory(dscSettingsDir);
+        if (UntrustedPathReason(dscSettingsDir) is { } settingsReason)
             throw new InvalidOperationException(
-                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' is not " +
+                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' is untrusted: {settingsReason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(dscSettingsDir));
+        if (!IsTrustedDiscoveryDirectory(dscSettingsDir))
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' could not be " +
                 "restricted to privileged accounts and could inject manifest discovery paths.");
 
         var psi = CreateUtf8Psi(dscExePath);

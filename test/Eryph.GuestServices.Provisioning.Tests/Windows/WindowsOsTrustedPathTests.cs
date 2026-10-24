@@ -110,6 +110,16 @@ public sealed class WindowsOsTrustedPathTests
     }
 
     [Fact]
+    public void A_unc_path_is_not_a_trusted_discovery_directory()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // A remote/UNC directory's ACL says nothing about what the other end can
+        // change before dsc reads from it, so it is never a discovery directory.
+        WindowsOs.IsTrustedDiscoveryDirectory(@"\\server\share\bin").Should().BeFalse();
+    }
+
+    [Fact]
     public void FilterTrustedPathEntries_drops_a_create_grantable_directory()
     {
         if (!OperatingSystem.IsWindows()) return;
