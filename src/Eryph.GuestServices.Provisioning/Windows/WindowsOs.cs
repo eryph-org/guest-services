@@ -2115,13 +2115,24 @@ internal sealed class WindowsOs : IWindowsOs
 
         using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        using var http = new HttpClient();
+        // Without a checksum the only authenticity guarantee is TLS to the named
+        // host, so forbid redirects — a 30x could otherwise move the download to
+        // a downgraded (http) or off-origin location the scheme check never saw.
+        // With a checksum the content is verified regardless of hops, so redirects
+        // are fine.
+        using var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = !string.IsNullOrWhiteSpace(checksum),
+        };
+        using var http = new HttpClient(handler);
         http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
 
         byte[] bytes;
         try
         {
-            bytes = await http.GetByteArrayAsync(url, linked.Token).ConfigureAwait(false);
+            using var response = await http.GetAsync(url, linked.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            bytes = await response.Content.ReadAsByteArrayAsync(linked.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -2201,6 +2212,10 @@ internal sealed class WindowsOs : IWindowsOs
         if (!File.Exists(documentPath))
             throw new InvalidOperationException(
                 $"Refusing to apply a DSC document that does not exist: '{documentPath}'.");
+        if (!IsOnFixedLocalVolume(documentPath))
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document from a UNC or non-fixed volume: '{documentPath}'. "
+                + "Its trust cannot be established — stage it on the guest or use an https document_url.");
         if (UntrustedPathReason(documentPath) is { } documentReason)
             throw new InvalidOperationException(
                 $"Refusing to apply a DSC document from an untrusted path: {documentReason}.");
