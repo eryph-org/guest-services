@@ -1,0 +1,28 @@
+name: packages-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The cloud-config below IS the test input. It uses the cloud-init-compatible
+# packages: umbrella (RFC 0033) with BOTH providers in one list: a bare name
+# (default provider = winget) and a chocolatey manager group. Our embedded
+# agent routes them to WingetModule / ChocolateyModule respectively.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-packages
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-packages-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      packages:
+        - 7zip.7zip              # bare name -> default provider (winget)
+        - chocolatey:
+            - name: git
