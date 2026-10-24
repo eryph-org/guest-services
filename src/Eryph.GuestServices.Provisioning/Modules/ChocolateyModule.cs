@@ -27,17 +27,27 @@ internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModu
         IModuleContext context,
         CancellationToken cancellationToken)
     {
-        var config = userData.CloudConfig.Chocolatey;
-        if (config is null)
-            return ModuleOutcome.Ok();
+        var block = userData.CloudConfig.Chocolatey;
 
-        // Validate up front — bad input is an operator error, not a per-package
-        // continue-on-failure case.
-        if (Validate(config) is { } validationError)
+        // Validate the chocolatey: block up front — bad input is an operator
+        // error, not a per-package continue-on-failure case.
+        if (block is not null && Validate(block) is { } validationError)
             return validationError;
 
-        var hasWork = config.Packages is { Count: > 0 } || config.Sources is { Count: > 0 };
-        var install = config.InstallChocolatey ?? true;
+        // Effective package list = the chocolatey: block plus the chocolatey
+        // entries of the packages: umbrella (RFC 0033). The module runs whenever
+        // either source contributes work, even if the chocolatey: block is absent.
+        var packages = new List<ChocolateyPackage>(block?.Packages ?? []);
+        packages.AddRange(PackageUmbrella.ChocolateyPackages(userData.CloudConfig));
+        var sources = block?.Sources ?? [];
+        var hasWork = packages.Count > 0 || sources.Count > 0;
+
+        // Run when there is work, OR when an explicit chocolatey: block asked to
+        // bootstrap choco (install_chocolatey) even with no packages/sources.
+        if (block is null && !hasWork)
+            return ModuleOutcome.Ok();
+
+        var install = block?.InstallChocolatey ?? true;
 
         // 1. Ensure choco is present.
         var installed = await context.Os.IsChocolateyInstalledAsync(cancellationToken).ConfigureAwait(false);
@@ -68,14 +78,14 @@ internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModu
         }
 
         // 2. Register custom sources.
-        if (config.Sources is { Count: > 0 })
-            await ProcessSourcesAsync(config.Sources, context, cancellationToken).ConfigureAwait(false);
+        if (sources.Count > 0)
+            await ProcessSourcesAsync(sources, context, cancellationToken).ConfigureAwait(false);
 
         // 3. Install packages.
-        if (config.Packages is { Count: > 0 })
+        if (packages.Count > 0)
         {
             var (failed, rebootRequested) =
-                await ProcessPackagesAsync(config.Packages, context, cancellationToken).ConfigureAwait(false);
+                await ProcessPackagesAsync(packages, context, cancellationToken).ConfigureAwait(false);
             // Reboot takes precedence over a failure: a package legitimately
             // asked for a reboot, and reboot-and-continue re-enters the module,
             // which retries the failed packages (already-installed ones are
@@ -148,6 +158,17 @@ internal sealed class ChocolateyModule(ILogger<ChocolateyModule> logger) : IModu
 
         foreach (var package in packages)
         {
+            // Guard names that choco would read as an option or split (leading
+            // '-' / whitespace). Block names are also checked by Validate, but
+            // umbrella-sourced names bypass it, so enforce it here for both.
+            if (string.IsNullOrWhiteSpace(package.Name)
+                || package.Name.StartsWith('-')
+                || package.Name.Any(char.IsWhiteSpace))
+            {
+                logger.LogWarning("Skipping chocolatey package with an invalid name '{Name}'.", package.Name);
+                continue;
+            }
+
             var argv = new List<string> { "install", package.Name, "-y", "--no-progress" };
             if (!string.IsNullOrWhiteSpace(package.Version))
             {

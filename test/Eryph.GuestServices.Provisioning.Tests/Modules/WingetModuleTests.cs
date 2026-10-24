@@ -245,6 +245,79 @@ public sealed class WingetModuleTests
     }
 
     [Fact]
+    public async Task Empty_winget_block_still_provisions_winget()
+    {
+        // winget: {} (no packages/sources) with install defaulting true is a
+        // "just install winget" request — must still provision (regression guard).
+        var os = WingetOs(provisioned: false);
+        var config = new CloudConfigModel { Winget = new WingetConfig() };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().ProvisionWingetAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Invalid_winget_id_is_skipped_not_run()
+    {
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel
+        {
+            Winget = new WingetConfig { Packages = [new WingetPackage { Id = "--source=evil" }] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RunWingetAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Umbrella_packages_install_without_a_winget_block()
+    {
+        // packages: [7zip.7zip] with no winget: block — the module must still
+        // provision winget and install the default-provider package.
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel { Packages = [new PackageEntry { Name = "7zip.7zip" }] };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().EnsureWingetWrapperAsync(Arg.Any<CancellationToken>());
+        await os.Received().RunWingetAsync(
+            Arg.Is<IReadOnlyList<string>>(a => a.Contains("install") && a.Contains("7zip.7zip")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Winget_block_and_umbrella_packages_are_both_installed()
+    {
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel
+        {
+            Winget = new WingetConfig { Packages = [new WingetPackage { Id = "Git.Git" }] },
+            Packages =
+            [
+                new PackageEntry
+                {
+                    Managers = new Dictionary<string, IReadOnlyList<ManagerPackage>>
+                    {
+                        ["winget"] = [new ManagerPackage { Name = "7zip.7zip" }],
+                    },
+                },
+            ],
+        };
+
+        await Apply(CreateModule(), os, config);
+
+        await os.Received().RunWingetAsync(
+            Arg.Is<IReadOnlyList<string>>(a => a.Contains("Git.Git")), Arg.Any<CancellationToken>());
+        await os.Received().RunWingetAsync(
+            Arg.Is<IReadOnlyList<string>>(a => a.Contains("7zip.7zip")), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Sources_are_registered_before_packages()
     {
         var os = WingetOs(provisioned: true);

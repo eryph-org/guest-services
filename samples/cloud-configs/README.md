@@ -25,6 +25,7 @@ without mutating the host.
 | `10-hostname-only.yaml` | `hostname` + `preserve_hostname: false` | Computer name change attempted; may report reboot-pending. |
 | `11-write-files-permissions-formats.yaml` | `write_files[].permissions` literal shapes (`"0644"`, `0644`, `"0o755"`) | Three files written; three "permissions ignored on Windows" warnings. |
 | `12-vendor-and-user.yaml` | Combined platform vendor + operator user-data document | hostname + write_files + users + runcmd all applied. |
+| `13-packages.yaml` | `packages:` umbrella (bare / `[name, version]` / winget + chocolatey groups / no-op `apt`) plus a dedicated `winget:` block | Packages route to winget / chocolatey; the winget block combines with the umbrella. |
 | `broken/invalid-yaml.yaml` | YAML parse failure | `validate` exits non-zero with a parse error. |
 | `broken/duplicate-user.yaml` | Validator catches duplicate user names | `validate` exits non-zero with an aggregation error. |
 

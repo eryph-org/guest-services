@@ -31,12 +31,23 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
         IModuleContext context,
         CancellationToken cancellationToken)
     {
-        var config = userData.CloudConfig.Winget;
-        if (config is null)
+        var block = userData.CloudConfig.Winget;
+
+        // Effective package list = the winget: block plus the winget entries of
+        // the packages: umbrella (RFC 0033). The module runs whenever either
+        // source contributes work, even if the winget: block itself is absent.
+        var packages = new List<WingetPackage>(block?.Packages ?? []);
+        packages.AddRange(PackageUmbrella.WingetPackages(userData.CloudConfig));
+        var sources = block?.Sources ?? [];
+        var hasWork = packages.Count > 0 || sources.Count > 0;
+
+        // Run when there is work, OR when an explicit winget: block asked to
+        // provision winget (install_winget) even with no packages/sources. A
+        // bare, work-free module with no block is a no-op.
+        if (block is null && !hasWork)
             return ModuleOutcome.Ok();
 
-        var hasWork = config.Packages is { Count: > 0 } || config.Sources is { Count: > 0 };
-        var install = config.InstallWinget ?? true;
+        var install = block?.InstallWinget ?? true;
 
         // 1. Ensure winget is present.
         var provisioned = await context.Os.IsWingetProvisionedAsync(cancellationToken).ConfigureAwait(false);
@@ -79,13 +90,13 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
         }
 
         // 3. Register custom sources.
-        if (config.Sources is { Count: > 0 })
-            await ProcessSourcesAsync(config.Sources, context, cancellationToken).ConfigureAwait(false);
+        if (sources.Count > 0)
+            await ProcessSourcesAsync(sources, context, cancellationToken).ConfigureAwait(false);
 
         // 4. Install packages.
-        if (config.Packages is { Count: > 0 })
+        if (packages.Count > 0)
         {
-            var failed = await ProcessPackagesAsync(config.Packages, context, cancellationToken).ConfigureAwait(false);
+            var failed = await ProcessPackagesAsync(packages, context, cancellationToken).ConfigureAwait(false);
             if (failed.Count > 0)
                 return ModuleOutcome.Fail($"winget failed for package(s): {string.Join(", ", failed)}.");
         }
@@ -137,6 +148,15 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
             if (string.IsNullOrWhiteSpace(package.Id))
             {
                 logger.LogWarning("Skipping winget package with empty id.");
+                continue;
+            }
+
+            // Reject ids that would be read as an option or split into multiple
+            // arguments by winget (a leading '-' or embedded whitespace). argv is
+            // injection-safe, but such an id can never name a real package.
+            if (package.Id.StartsWith('-') || package.Id.Any(char.IsWhiteSpace))
+            {
+                logger.LogWarning("Skipping winget package with an invalid id '{Id}'.", package.Id);
                 continue;
             }
 

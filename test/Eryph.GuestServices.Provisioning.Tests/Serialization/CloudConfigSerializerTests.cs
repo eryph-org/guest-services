@@ -38,9 +38,12 @@ public sealed class CloudConfigSerializerTests
     [Fact]
     public void Multiple_linux_keys_each_log_one_Info_line()
     {
-        // Cross-cloud catlets routinely carry apt + packages + snap together;
-        // each acknowledged key surfaces its own log line so the operator
-        // sees the full inventory of "we saw this, we did nothing".
+        // Cross-cloud catlets routinely carry several Linux-only keys together;
+        // each acknowledged key surfaces its own log line so the operator sees
+        // the full inventory of "we saw this, we did nothing". NOTE: `packages:`
+        // is NOT among them anymore — it is an active key on Windows (routes to
+        // winget/chocolatey, RFC 0033), so it must NOT log an acknowledged-no-op
+        // line even though its apt/snap sub-entries are no-op.
         var captured = new CapturingLogger<CloudConfigSerializer>();
         var serializer = new CloudConfigSerializer(captured);
         const string yaml = """
@@ -58,10 +61,10 @@ public sealed class CloudConfigSerializerTests
         serializer.Deserialize(yaml);
 
         var infos = captured.Records.Where(r => r.Level == LogLevel.Information).ToList();
-        infos.Should().HaveCount(3);
+        infos.Should().HaveCount(2);
         infos.Should().Contain(r => r.Message.Contains("apt"));
         infos.Should().Contain(r => r.Message.Contains("snap"));
-        infos.Should().Contain(r => r.Message.Contains("packages"));
+        infos.Should().NotContain(r => r.Message.Contains("packages"));
     }
 
     [Fact]

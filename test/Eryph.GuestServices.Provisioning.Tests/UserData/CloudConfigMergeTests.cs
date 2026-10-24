@@ -387,7 +387,18 @@ public sealed class CloudConfigMergeTests
         },
         Apt = new AptConfig { Proxy = "http://proxy:8080" },
         AptPipelining = "default",
-        Packages = "pkgs",
+        Packages =
+        [
+            new PackageEntry { Name = "Git.Git" },
+            new PackageEntry
+            {
+                Managers = new Dictionary<string, IReadOnlyList<ManagerPackage>>
+                {
+                    ["winget"] = [new ManagerPackage { Name = "7zip.7zip", Version = "24.07" }],
+                    ["chocolatey"] = [new ManagerPackage { Name = "nodejs" }],
+                },
+            },
+        ],
         PackageUpdate = true,
         PackageUpgrade = true,
         PackageRebootIfRequired = true,

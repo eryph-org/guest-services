@@ -54,6 +54,7 @@ Describe 'Sample validation (validate subcommand)' {
         @{ Name = '10-hostname-only.yaml';                Dir = 'cloud-configs' }
         @{ Name = '11-write-files-permissions-formats.yaml'; Dir = 'cloud-configs' }
         @{ Name = '12-vendor-and-user.yaml';              Dir = 'cloud-configs' }
+        @{ Name = '13-packages.yaml';                     Dir = 'cloud-configs' }
         @{ Name = 'bootstrap-and-config.mime';            Dir = 'multipart' }
     )
 

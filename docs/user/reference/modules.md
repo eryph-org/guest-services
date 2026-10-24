@@ -17,8 +17,8 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | SetPasswords | Config / 1 | per-instance | `chpasswd`, `password` |
 | SshModule | Config / 2 | per-instance | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` |
 | WriteFiles | Config / 3 | per-instance | `write_files` |
-| Winget | Config / 4 | per-instance | `winget` (Windows only) |
-| Chocolatey | Config / 5 | per-instance | `chocolatey` (Windows only) |
+| Winget | Config / 4 | per-instance | `winget`, `packages` (winget entries) (Windows only) |
+| Chocolatey | Config / 5 | per-instance | `chocolatey`, `packages` (chocolatey entries) (Windows only) |
 | Runcmd | Config / 6 | per-instance | `runcmd` |
 | Licensing | Config / 7 | per-instance | `license` |
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
@@ -442,6 +442,34 @@ community.chocolatey.org, so the guest needs outbound internet.
 
 As with Winget, Chocolatey runs before `runcmd`, so `runcmd` can use the
 packages it installs.
+
+## packages: (umbrella)
+
+The cloud-init-compatible `packages:` key is the generic way to install
+software; on Windows it routes into the Winget and Chocolatey modules above.
+Each list entry is a bare name, a `[name, version]` pair, or a manager-keyed
+mapping:
+
+```yaml
+packages:
+  - 7zip.7zip                 # bare name -> default provider (winget)
+  - [Git.Git, 2.46.0]         # name + version -> winget
+  - winget:
+      - Microsoft.PowerShell
+      - id: Foo.Bar
+        version: 1.2.3
+  - chocolatey:
+      - name: nodejs
+        version: 20.11.0
+  - apt:                      # Linux manager: accepted, no-op on Windows
+      - htop
+```
+
+Bare names and `[name, version]` pairs use the default provider, **winget**.
+Manager groups (`winget`, `chocolatey`/`choco`) route to that provider; Linux
+managers (`apt`, `snap`, `yum`, …) are accepted and ignored on Windows. For
+winget `source`/`scope` or chocolatey `params`, use the dedicated `winget:` /
+`chocolatey:` blocks — they run in the same pass and combine with `packages:`.
 
 ## PowerState
 

@@ -222,6 +222,77 @@ public sealed class ChocolateyModuleTests
     }
 
     [Fact]
+    public async Task Empty_chocolatey_block_still_bootstraps()
+    {
+        // chocolatey: {} with install defaulting true is a "just install choco"
+        // request — must still bootstrap (regression guard).
+        var os = ChocoOs(installed: false);
+        var config = new CloudConfigModel { Chocolatey = new ChocolateyConfig() };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().BootstrapChocolateyAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Invalid_choco_name_is_skipped_not_run()
+    {
+        var os = ChocoOs(installed: true);
+        var config = new CloudConfigModel
+        {
+            Chocolatey = new ChocolateyConfig { Packages = [new ChocolateyPackage { Name = "--version" }] },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().RunChocoAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Umbrella_chocolatey_entries_install_without_a_chocolatey_block()
+    {
+        // packages: [{chocolatey: [nodejs]}] with no chocolatey: block — the
+        // module must still bootstrap choco and install the package.
+        var os = ChocoOs(installed: true);
+        var config = new CloudConfigModel
+        {
+            Packages =
+            [
+                new PackageEntry
+                {
+                    Managers = new Dictionary<string, IReadOnlyList<ManagerPackage>>
+                    {
+                        ["chocolatey"] = [new ManagerPackage { Name = "nodejs", Version = "20.11.0" }],
+                    },
+                },
+            ],
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().RunChocoAsync(
+            Arg.Is<IReadOnlyList<string>>(a => a.Contains("nodejs") && a.Contains("--version") && a.Contains("20.11.0")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Bare_umbrella_names_do_not_go_to_chocolatey()
+    {
+        // A bare name is the default provider (winget), so ChocolateyModule sees
+        // no work and must not touch choco.
+        var os = ChocoOs(installed: true);
+        var config = new CloudConfigModel { Packages = [new PackageEntry { Name = "7zip.7zip" }] };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().IsChocolateyInstalledAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Empty_package_name_is_a_validation_Fail_before_any_os_call()
     {
         var os = ChocoOs(installed: true);
