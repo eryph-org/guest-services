@@ -432,7 +432,22 @@ internal sealed class WindowsOs : IWindowsOs
         // the (refreshed) environment block we hand the child — so a tool
         // installed this boot would not be found by name in an argv-form runcmd.
         // Resolve it ourselves against the refreshed PATH first.
-        var psi = CreateUtf8Psi(ResolveExecutableOnRefreshedPath(argv[0]));
+        var resolved = ResolveExecutableOnRefreshedPath(argv[0]);
+
+        ProcessStartInfo psi;
+        if (IsBatchFile(resolved))
+        {
+            // A just-installed tool often resolves to a .cmd/.bat shim (e.g.
+            // npm.cmd). CreateProcess (UseShellExecute=false) cannot launch a
+            // batch file directly, so dispatch it through cmd.exe /c.
+            psi = CreateUtf8Psi("cmd.exe");
+            psi.ArgumentList.Add("/c");
+            psi.ArgumentList.Add(resolved);
+        }
+        else
+        {
+            psi = CreateUtf8Psi(resolved);
+        }
         for (var i = 1; i < argv.Count; i++)
             psi.ArgumentList.Add(argv[i]);
         ApplyRefreshedPath(psi);
@@ -440,6 +455,10 @@ internal sealed class WindowsOs : IWindowsOs
 
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
     }
+
+    private static bool IsBatchFile(string path) =>
+        path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
 
     // Resolves a bare executable name (no directory component) against the
     // CURRENT machine + user PATH and PATHEXT. Returns the original string when
@@ -1509,13 +1528,21 @@ internal sealed class WindowsOs : IWindowsOs
 
     public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
     {
-        // Refuse to bootstrap into an already-existing, untrusted install dir: a
-        // standard user can pre-create %ProgramData%\chocolatey and plant files
-        // that install.ps1 would copy over / run from (it execs choco.exe from
-        // that dir). Validate BEFORE launching, not only after.
-        if (UntrustedPathReason(ChocolateyExePath) is { } preReason)
+        // Reserve the install dir before launching install.ps1 so a standard
+        // user cannot create+own %ChocolateyInstall% during the (slow) download
+        // and plant files the installer runs as LocalSystem. %ProgramData% lets
+        // Users create directories, so we create it ourselves AS LOCALSYSTEM
+        // (owner SYSTEM) first, and reject an already-existing untrusted / reparse
+        // tree. We deliberately do NOT strip the inherited ACL here: Chocolatey's
+        // installer manages its own permissions, and a protected SYSTEM-only DACL
+        // makes it complete without placing choco.exe. SYSTEM ownership is enough
+        // to deny the create+own race; the post-install trust check then confirms
+        // the result, and RunChocoAsync refuses to execute an untrusted path.
+        var chocoRoot = Path.GetDirectoryName(Path.GetDirectoryName(ChocolateyExePath))!;
+        Directory.CreateDirectory(chocoRoot);
+        if (UntrustedPathReason(chocoRoot) is { } preReason)
             throw new InvalidOperationException(
-                $"Refusing to bootstrap Chocolatey into '{Path.GetDirectoryName(ChocolateyExePath)}': {preReason}.");
+                $"Refusing to bootstrap Chocolatey into '{chocoRoot}': {preReason}.");
 
         var psi = BuildPowerShellCommandPsi(PackageScripts.ChocolateyBootstrap());
         var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)
