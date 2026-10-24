@@ -1156,18 +1156,19 @@ internal sealed class WindowsOs : IWindowsOs
         var wrapperDir = Path.GetDirectoryName(wrapperPath)!;
 
         // Security: the agent runs as LocalSystem and then EXECUTES this wrapper.
-        // A non-admin who pre-created the directory or file could otherwise
-        // retain write access and swap the script between write and execution
-        // (local privilege escalation). Lock the directory down to SYSTEM +
-        // Administrators, refuse a reparse point (junction/symlink redirect),
-        // replace any pre-existing file with a fresh one we own, and lock that
-        // down too.
+        // A non-admin who pre-created the directory (or any ancestor below
+        // %ProgramData%) or the file could otherwise retain write access and
+        // swap the script between write and execution (local privilege
+        // escalation). Validate the whole directory chain from the trusted
+        // %ProgramData% root — no reparse point, no non-privileged write — and
+        // refuse an untrusted path rather than try to fix it. Then lock the
+        // directory and a freshly-written file down to SYSTEM + Administrators.
         Directory.CreateDirectory(wrapperDir);
-        var dirInfo = new DirectoryInfo(wrapperDir);
-        if (dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        if (!IsTrustedSystemPath(wrapperDir))
             throw new InvalidOperationException(
-                $"Refusing to use winget wrapper directory '{wrapperDir}': it is a reparse point.");
-        ApplySystemOnlyDirectoryAcl(dirInfo);
+                $"Refusing to use winget wrapper directory '{wrapperDir}': it or an ancestor is a "
+                + "reparse point or writable by a non-privileged account.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(wrapperDir));
 
         File.Delete(wrapperPath);
         // UTF-8 with BOM so Windows PowerShell 5.1 detects the encoding when it
@@ -1226,6 +1227,107 @@ internal sealed class WindowsOs : IWindowsOs
             admins, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
         security.SetOwner(system);
         info.SetAccessControl(security);
+    }
+
+    // TrustedInstaller's service SID — a legitimate owner of OS-managed paths.
+    private const string TrustedInstallerSid =
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+    // Rights that let a principal plant or replace content at a path.
+    private const FileSystemRights WriteLikeRights =
+        FileSystemRights.WriteData | FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories
+        | FileSystemRights.AppendData | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes
+        | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
+        | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    private static bool IsPrivilegedSid(SecurityIdentifier sid) =>
+        sid.IsWellKnown(WellKnownSidType.LocalSystemSid)
+        || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)
+        || sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid)
+        || string.Equals(sid.Value, TrustedInstallerSid, StringComparison.Ordinal);
+
+    // True when the ACL grants a write-like right to any non-privileged principal.
+    private static bool AllowsNonPrivilegedWrite(FileSystemSecurity security)
+    {
+        foreach (FileSystemAccessRule rule in
+                 security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow)
+                continue;
+            if ((rule.FileSystemRights & WriteLikeRights) == 0)
+                continue;
+            if (rule.IdentityReference is SecurityIdentifier sid && !IsPrivilegedSid(sid))
+                return true;
+        }
+
+        return false;
+    }
+
+    // True when <paramref name="path"/> and every ancestor up to (but not
+    // including) a system-provided root — %ProgramData%, %ProgramFiles%,
+    // %windir%, or the volume root — is neither a reparse point nor writable by
+    // a non-privileged principal. Used to refuse executing a winget wrapper or a
+    // choco.exe that a standard user could have planted or could replace
+    // (LocalSystem privilege escalation). Fails closed on any error.
+    internal static bool IsTrustedSystemPath(string path)
+    {
+        try
+        {
+            var anchors = TrustedRootAnchors();
+            var current = Path.GetFullPath(path);
+            while (!string.IsNullOrEmpty(current))
+            {
+                var trimmed = Path.TrimEndingDirectorySeparator(current);
+                if (anchors.Contains(trimmed))
+                    return true;
+
+                var root = Path.GetPathRoot(current);
+                if (root is not null
+                    && string.Equals(trimmed, Path.TrimEndingDirectorySeparator(root),
+                        StringComparison.OrdinalIgnoreCase))
+                    return true; // volume root: system-owned, trusted
+
+                if (Directory.Exists(current))
+                {
+                    var di = new DirectoryInfo(current);
+                    if (di.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+                    if (AllowsNonPrivilegedWrite(di.GetAccessControl())) return false;
+                }
+                else if (File.Exists(current))
+                {
+                    var fi = new FileInfo(current);
+                    if (fi.Attributes.HasFlag(FileAttributes.ReparsePoint)) return false;
+                    if (AllowsNonPrivilegedWrite(fi.GetAccessControl())) return false;
+                }
+
+                var parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) || parent == current)
+                    return true;
+                current = parent;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false; // fail closed — treat anything we cannot verify as untrusted
+        }
+    }
+
+    private static HashSet<string> TrustedRootAnchors()
+    {
+        var anchors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(Environment.SpecialFolder folder)
+        {
+            var p = Environment.GetFolderPath(folder);
+            if (!string.IsNullOrEmpty(p))
+                anchors.Add(Path.TrimEndingDirectorySeparator(p));
+        }
+        Add(Environment.SpecialFolder.CommonApplicationData);
+        Add(Environment.SpecialFolder.ProgramFiles);
+        Add(Environment.SpecialFolder.ProgramFilesX86);
+        Add(Environment.SpecialFolder.Windows);
+        return anchors;
     }
 
     public async Task<RunCommandResult> RunWingetAsync(
@@ -1317,7 +1419,13 @@ internal sealed class WindowsOs : IWindowsOs
     }
 
     public Task<bool> IsChocolateyInstalledAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(File.Exists(ChocolateyExePath));
+        // "Installed" only when choco.exe is present AND on a trusted path. A
+        // standard user can pre-create %ProgramData%\chocolatey\bin\choco.exe on
+        // a machine without choco; treating that as installed would run a planted
+        // binary as LocalSystem. An untrusted choco.exe reports "not installed"
+        // so the module bootstraps (and BootstrapChocolateyAsync re-verifies the
+        // result is trusted); RunChocoAsync refuses to execute an untrusted path.
+        Task.FromResult(File.Exists(ChocolateyExePath) && IsTrustedSystemPath(ChocolateyExePath));
 
     public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
     {
@@ -1341,11 +1449,15 @@ internal sealed class WindowsOs : IWindowsOs
         }
 
         // Verify choco actually landed where we will invoke it (honouring
-        // %ChocolateyInstall%). Doing the check here — not in the script — keeps
-        // one source of truth for the path (the script and C# used to disagree).
+        // %ChocolateyInstall%) AND that the path is trusted — refuse to accept a
+        // bootstrap result sitting in a non-privileged-writable / reparse path.
         if (!File.Exists(ChocolateyExePath))
             throw new InvalidOperationException(
                 $"Chocolatey bootstrap completed but choco.exe was not found at {ChocolateyExePath}.");
+        if (!IsTrustedSystemPath(ChocolateyExePath))
+            throw new InvalidOperationException(
+                $"Refusing to trust Chocolatey at '{ChocolateyExePath}': it or an ancestor is a "
+                + "reparse point or writable by a non-privileged account.");
 
         logger.LogInformation("Bootstrapped Chocolatey.");
         return new ChocolateyBootstrapResult { RebootRequired = false };
@@ -1355,6 +1467,12 @@ internal sealed class WindowsOs : IWindowsOs
         IReadOnlyList<string> argv,
         CancellationToken cancellationToken)
     {
+        // Never execute choco from an untrusted path (defence-in-depth alongside
+        // IsChocolateyInstalledAsync / BootstrapChocolateyAsync).
+        if (!IsTrustedSystemPath(ChocolateyExePath))
+            throw new InvalidOperationException(
+                $"Refusing to run Chocolatey from an untrusted path '{ChocolateyExePath}'.");
+
         var psi = CreateUtf8Psi(ChocolateyExePath);
         foreach (var arg in argv)
             psi.ArgumentList.Add(arg);
