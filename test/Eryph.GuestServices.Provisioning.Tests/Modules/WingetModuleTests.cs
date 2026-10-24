@@ -318,6 +318,30 @@ public sealed class WingetModuleTests
     }
 
     [Fact]
+    public async Task Custom_source_package_is_installed_from_that_source()
+    {
+        // A registered custom winget source works under LocalSystem (only msstore
+        // needs a user token), so a package targeting it must install from it.
+        var os = WingetOs(provisioned: true);
+        var config = new CloudConfigModel
+        {
+            Winget = new WingetConfig
+            {
+                Sources = [new WingetSource { Name = "contoso", Argument = "https://winget.contoso.example/" }],
+                Packages = [new WingetPackage { Id = "Contoso.Tool", Source = "contoso" }],
+            },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received().RunWingetAsync(
+            Arg.Is<IReadOnlyList<string>>(a =>
+                a.Contains("Contoso.Tool") && a.Contains("--source") && a.Contains("contoso")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Sources_are_registered_before_packages()
     {
         var os = WingetOs(provisioned: true);

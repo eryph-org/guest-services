@@ -172,15 +172,22 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
                 continue;
             }
 
-            // Under LocalSystem only the winget source and machine scope work;
-            // msstore / user need a logged-on user token. Reject with a clear
-            // warning rather than attempt an install that cannot succeed.
-            if (!string.IsNullOrWhiteSpace(package.Source)
-                && !string.Equals(package.Source, "winget", StringComparison.OrdinalIgnoreCase))
+            // Under LocalSystem the `winget` source and operator-registered
+            // custom sources (winget.sources) work; only `msstore` needs a
+            // logged-on user token and cannot. Default to `winget`, reject
+            // msstore, and guard the value so it can't inject a winget option.
+            var source = string.IsNullOrWhiteSpace(package.Source) ? "winget" : package.Source.Trim();
+            if (string.Equals(source, "msstore", StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning(
-                    "Skipping winget package '{Id}': source '{Source}' is unsupported under LocalSystem (only 'winget').",
-                    package.Id, package.Source);
+                    "Skipping winget package '{Id}': the 'msstore' source is unsupported under LocalSystem.",
+                    package.Id);
+                continue;
+            }
+            if (source.StartsWith('-') || source.Any(char.IsWhiteSpace))
+            {
+                logger.LogWarning(
+                    "Skipping winget package '{Id}': invalid source '{Source}'.", package.Id, source);
                 continue;
             }
 
@@ -196,7 +203,7 @@ internal sealed class WingetModule(ILogger<WingetModule> logger) : IModule
             var argv = new List<string>
             {
                 "install", "--id", package.Id, "--exact",
-                "--source", "winget", "--scope", "machine", "--silent",
+                "--source", source, "--scope", "machine", "--silent",
                 "--accept-source-agreements", "--accept-package-agreements",
                 "--disable-interactivity",
             };
