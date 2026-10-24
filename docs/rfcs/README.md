@@ -43,9 +43,9 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0027](0027-set-locale-module.md) | `locale` / `keyboard` cloud-config module on Windows | Implemented |
 | [0028](0028-linux-keys-module.md) | Acknowledged-but-no-op top-level keys — Info-log Linux / deferred keys via `CloudConfigSerializer` | Implemented |
 | [0029](0029-secure-config-bootstrap-handshake.md) | Secure config delivery via bootstrap handshake | Draft |
-| [0030](0030-eryph-remote-channel.md) | Remote access over an eryph-authorized channel | Draft |
-| [0031](0031-cloud-init-compatible-kvp-status.md) | Cloud-init-compatible provisioning status over Hyper-V KVP | Accepted |
-| [0032](0032-cloud-config-merge-model.md) | Cloud-config merge model & merge control | Accepted |
+| [0030](0030-eryph-remote-channel.md) | Remote access over an eryph-authorized channel | Implemented |
+| [0031](0031-cloud-init-compatible-kvp-status.md) | Cloud-init-compatible provisioning status over Hyper-V KVP | Implemented |
+| [0032](0032-cloud-config-merge-model.md) | Cloud-config merge model & merge control | Implemented |
 
 ## Authoring
 

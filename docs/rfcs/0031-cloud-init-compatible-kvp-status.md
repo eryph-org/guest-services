@@ -1,6 +1,9 @@
 # RFC 0031 — Cloud-init-compatible provisioning reporting over Hyper-V KVP
 
-Status: Accepted
+Status: Implemented
+
+Implemented in commit `5f18d94` (#50) — `CloudInitKvpReportingHandler`
++ `CloudInitKvpEventEncoder`.
 
 ## Problem
 

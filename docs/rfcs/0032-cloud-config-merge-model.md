@@ -1,6 +1,10 @@
 # RFC 0032 — Cloud-config merge model & merge control
 
-Status: Accepted
+Status: Implemented
+
+Implemented in commit `00b61bc` (#28, source-gen merge model) plus the
+merge-control directives (`merge_how` / `merge_type` via
+`MergeDirectiveReader`).
 
 ## Problem
 

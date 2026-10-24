@@ -1,6 +1,10 @@
 # RFC 0030 — Remote access over an eryph-authorized channel
 
-Status: Draft
+Status: Implemented
+
+Implemented in commit `3551fa0` (#63) — the reusable client library
+(`EryphChannel` / `EryphConnection` / `GuestAccessKey`) and the
+`egs-tool catlet add-ssh-config` compute-API tunnel.
 
 ## Problem
 
