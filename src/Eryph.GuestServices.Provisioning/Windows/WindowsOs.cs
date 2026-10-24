@@ -9,6 +9,8 @@
 
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -1657,6 +1659,284 @@ internal sealed class WindowsOs : IWindowsOs
         foreach (var arg in argv)
             psi.ArgumentList.Add(arg);
         return await RunWithTimeoutAsync(psi, ChocolateyRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    // ---- DSC v3 (microsoft/DSC — dsc.exe) — RFC 0025 ----
+    //
+    // Replaces gene:dbosoft/windsc minus its DSC v1 baggage: dsc.exe is a native
+    // engine (no MOF compile, no NuGet bootstrap, no self-signed cert). The agent
+    // runs as LocalSystem and then EXECUTES dsc.exe AND reads the config document
+    // it wrote, so both the executable and the document directory are
+    // trust-validated against the LocalSystem-LPE surface the package modules use.
+
+    private static readonly TimeSpan DscInstallTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan DscRunTimeout = TimeSpan.FromMinutes(30);
+
+    private static string DscProgramFilesDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dsc");
+
+    private static string DscProgramFilesExePath =>
+        Path.Combine(DscProgramFilesDirectory, "dsc.exe");
+
+    private static string DscDocumentDirectory =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "eryph", "dsc");
+
+    public Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken) =>
+        Task.Run<string?>(() =>
+        {
+            // 1. Operator-supplied explicit path (install_source: path). Must
+            //    exist and be trusted — we refuse a planted/untrusted binary.
+            if (!string.IsNullOrWhiteSpace(explicitPath))
+            {
+                var expanded = Environment.ExpandEnvironmentVariables(explicitPath);
+                if (!File.Exists(expanded))
+                {
+                    logger.LogWarning("dsc.exe was not found at the configured path '{Path}'.", expanded);
+                    return null;
+                }
+                if (UntrustedPathReason(expanded) is { } reason)
+                {
+                    logger.LogWarning("Refusing to use dsc.exe at '{Path}': {Reason}.", expanded, reason);
+                    return null;
+                }
+                return expanded;
+            }
+
+            // 2. The GitHub-release install target.
+            if (File.Exists(DscProgramFilesExePath) && IsTrustedSystemPath(DscProgramFilesExePath))
+                return DscProgramFilesExePath;
+
+            // 3. dsc.exe on the refreshed machine PATH (a winget install). Then,
+            //    as a best-effort, the machine-scope WindowsApps package dir.
+            var onPath = ResolveExecutableOnRefreshedPath("dsc.exe");
+            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal)
+                && File.Exists(onPath) && IsTrustedSystemPath(onPath))
+                return onPath;
+
+            var inWindowsApps = FindDscInWindowsApps();
+            if (inWindowsApps is not null && IsTrustedSystemPath(inWindowsApps))
+                return inWindowsApps;
+
+            return null;
+        }, cancellationToken);
+
+    // Best-effort scan of the machine-scope WindowsApps store for a winget-
+    // installed dsc.exe (Microsoft.DSC). %ProgramFiles%\WindowsApps is readable
+    // only by privileged accounts; the agent runs as LocalSystem, so this
+    // succeeds where a PATH alias (per-user) would not be visible.
+    private static string? FindDscInWindowsApps()
+    {
+        try
+        {
+            var windowsApps = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
+            if (!Directory.Exists(windowsApps))
+                return null;
+            foreach (var dir in Directory.EnumerateDirectories(windowsApps, "Microsoft.DSC*"))
+            {
+                var candidate = Path.Combine(dir, "dsc.exe");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+        catch
+        {
+            // Access denied / odd layout — fall through to "not found".
+        }
+
+        return null;
+    }
+
+    public async Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken)
+    {
+        // RESERVE the install tree before downloading (same race the Chocolatey
+        // bootstrap guards): %ProgramFiles% lets standard users create dirs, so
+        // create it ourselves, reject an already-existing untrusted / reparse
+        // tree, and lock it to SYSTEM + Administrators before extracting into it.
+        var target = DscProgramFilesDirectory;
+        Directory.CreateDirectory(target);
+        if (UntrustedPathReason(target) is { } preReason)
+            throw new InvalidOperationException(
+                $"Refusing to install DSC into '{target}': {preReason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(target));
+
+        var arch = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.Arm64 => "aarch64",
+            _ => "x86_64",
+        };
+
+        using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        using var http = new HttpClient();
+        // GitHub's REST API requires a User-Agent.
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
+
+        var apiUrl = string.IsNullOrWhiteSpace(version) || IsLatestToken(version)
+            ? "https://api.github.com/repos/PowerShell/DSC/releases/latest"
+            : $"https://api.github.com/repos/PowerShell/DSC/releases/tags/v{version!.TrimStart('v')}";
+
+        string releaseJson;
+        try
+        {
+            releaseJson = await http.GetStringAsync(apiUrl, linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException($"Failed to query the DSC release metadata: {ex.Message}", ex);
+        }
+
+        var assetUrl = DscSupport.SelectWindowsReleaseAsset(releaseJson, arch);
+
+        var tempDir = Path.Combine(
+            Path.GetTempPath(), "egs-dsc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var zipPath = Path.Combine(tempDir, "dsc.zip");
+            byte[] zipBytes;
+            try
+            {
+                zipBytes = await http.GetByteArrayAsync(assetUrl, linked.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new InvalidOperationException($"Failed to download the DSC release: {ex.Message}", ex);
+            }
+
+            await File.WriteAllBytesAsync(zipPath, zipBytes, linked.Token).ConfigureAwait(false);
+            ZipFile.ExtractToDirectory(zipPath, target, overwriteFiles: true);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+        }
+
+        // Re-harden: files extracted into the (already-locked) directory inherit
+        // its ACL, but set the owner/ACL on the executable explicitly too.
+        if (!File.Exists(DscProgramFilesExePath))
+            throw new InvalidOperationException(
+                $"DSC install completed but dsc.exe was not found at '{DscProgramFilesExePath}'.");
+        ApplySystemOnlyFileAcl(new FileInfo(DscProgramFilesExePath));
+        if (UntrustedPathReason(DscProgramFilesExePath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to trust the installed dsc.exe at '{DscProgramFilesExePath}': {reason}.");
+
+        logger.LogInformation("Installed DSC v3 to {Path}.", DscProgramFilesExePath);
+    }
+
+    private static bool IsLatestToken(string? version) =>
+        string.IsNullOrWhiteSpace(version)
+        || string.Equals(version.Trim(), "latest", StringComparison.OrdinalIgnoreCase);
+
+    public Task<bool> IsPowerShell7AvailableAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var resolved = ResolveExecutableOnRefreshedPath("pwsh.exe");
+            if (!string.Equals(resolved, "pwsh.exe", StringComparison.Ordinal) && File.Exists(resolved))
+                return true;
+            // pwsh's default per-machine install location is not always on the
+            // service PATH; check it directly as a fallback.
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            return File.Exists(Path.Combine(programFiles, "PowerShell", "7", "pwsh.exe"));
+        }, cancellationToken);
+
+    public async Task<string> WriteDscDocumentAsync(
+        string fileName,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        var path = PrepareDscDocumentPath(fileName);
+        File.Delete(path);
+        await File.WriteAllTextAsync(
+            path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken)
+            .ConfigureAwait(false);
+        ApplySystemOnlyFileAcl(new FileInfo(path));
+        return path;
+    }
+
+    public async Task<string> DownloadDscDocumentAsync(
+        string fileName,
+        string url,
+        string? checksum,
+        CancellationToken cancellationToken)
+    {
+        var path = PrepareDscDocumentPath(fileName);
+
+        using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
+
+        byte[] bytes;
+        try
+        {
+            bytes = await http.GetByteArrayAsync(url, linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                $"Failed to download the DSC document from '{url}': {ex.Message}", ex);
+        }
+
+        if (!string.IsNullOrWhiteSpace(checksum)
+            && DscSupport.Sha256Mismatch(bytes, checksum) is { } mismatch)
+            throw new InvalidOperationException($"DSC document '{url}' {mismatch}");
+
+        File.Delete(path);
+        await File.WriteAllBytesAsync(path, bytes, cancellationToken).ConfigureAwait(false);
+        ApplySystemOnlyFileAcl(new FileInfo(path));
+        return path;
+    }
+
+    // Ensures the SYSTEM-only DSC document directory exists and is trusted, and
+    // returns the full path a document with the given (sanitized) file name
+    // should be written to. The agent feeds these documents to dsc.exe as
+    // LocalSystem, so the directory is hardened like the winget wrapper dir.
+    private string PrepareDscDocumentPath(string fileName)
+    {
+        var safeName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeName))
+            throw new ArgumentException("DSC document file name is empty.", nameof(fileName));
+
+        var dir = DscDocumentDirectory;
+        Directory.CreateDirectory(dir);
+        if (UntrustedPathReason(dir) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to use the DSC document directory '{dir}': {reason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(dir));
+        return Path.Combine(dir, safeName);
+    }
+
+    public async Task<DscApplyResult> RunDscConfigAsync(
+        string dscExePath,
+        string documentPath,
+        string verb,
+        CancellationToken cancellationToken)
+    {
+        // Defence-in-depth: never execute dsc.exe from an untrusted path
+        // (ResolveDscExecutableAsync already validated it).
+        if (UntrustedPathReason(dscExePath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe from an untrusted path: {reason}.");
+
+        var psi = CreateUtf8Psi(dscExePath);
+        psi.ArgumentList.Add("config");
+        psi.ArgumentList.Add(verb);
+        psi.ArgumentList.Add("--file");
+        psi.ArgumentList.Add(documentPath);
+
+        var result = await RunWithTimeoutAsync(psi, DscRunTimeout, cancellationToken).ConfigureAwait(false);
+        // Only trust the reboot signal on a successful run; a non-zero exit is a
+        // failure the module surfaces regardless.
+        var reboot = result.ExitCode == 0 && DscSupport.RequiresReboot(result.StdOut);
+        return new DscApplyResult
+        {
+            ExitCode = result.ExitCode,
+            RebootRequested = reboot,
+            JsonOutput = result.StdOut,
+        };
     }
 
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>

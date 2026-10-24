@@ -13,6 +13,7 @@ internal static class ModuleRegistry
     [
         typeof(ApplyNetworkConfigModule),
         typeof(ChocolateyModule),
+        typeof(DscModule),
         typeof(EgsModule),
         typeof(GrowpartModule),
         typeof(LicensingModule),

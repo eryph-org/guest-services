@@ -147,6 +147,31 @@ actually running `dsc.exe`.
 `DscApplyResult` carries: `ExitCode`, `RebootRequested` (bool), and
 the JSON output of `dsc.exe` (for diagnostics).
 
+### Implementation notes (where the module diverges from this sketch)
+
+- **`RunDscConfigAsync` takes the resolved dsc.exe path.** The implemented
+  signature is `RunDscConfigAsync(string dscExePath, string documentPath,
+  string verb, CancellationToken)`. Executable resolution is centralised in a
+  separate `ResolveDscExecutableAsync(string? explicitPath, …)` that returns a
+  trust-validated path (or null), so `install_source: path` and the LocalSystem
+  trusted-path hardening have one home and the run method only executes an
+  already-validated binary.
+- **Supporting `IWindowsOs` members.** Alongside `RunDscConfigAsync`:
+  `ResolveDscExecutableAsync`, `InstallDscFromGithubReleaseAsync`,
+  `IsPowerShell7AvailableAsync`, `WriteDscDocumentAsync` (inline `document`),
+  and `DownloadDscDocumentAsync` (`document_url` + optional `sha256:` checksum).
+  Inline/downloaded documents are written to a SYSTEM-only
+  `%ProgramData%\eryph\dsc\` directory (same hardening as the winget wrapper).
+  `install_source: winget` reuses the existing winget methods (install id
+  `Microsoft.DSC`).
+- **`install_source: path`** points the module at an operator-installed
+  executable via the `path:` key.
+- **Reboot detection is best-effort.** `RebootRequested` is derived by scanning
+  the `dsc.exe` JSON output for any truthy `rebootRequired` / `reboot_required`
+  property (open question below). It is only honoured when the configuration
+  otherwise succeeded, and only when no other configuration in the document
+  failed. Needs confirmation against a real reboot-requesting resource.
+
 ## Retirement of the `dbosoft/windsc` gene
 
 Once this module lands, the `windsc` gene's two workarounds become

@@ -254,6 +254,49 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         return Task.FromResult(new RunCommandResult(0, "", ""));
     }
 
+    // ---- DSC v3 ----
+
+    public Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken) =>
+        // Read-only — pass through so dry-run reflects the real guest state.
+        inner.ResolveDscExecutableAsync(explicitPath, cancellationToken);
+
+    public Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would install DSC v3 from the GitHub release (version={Version})", version ?? "latest");
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> IsPowerShell7AvailableAsync(CancellationToken cancellationToken) =>
+        // Read-only — pass through.
+        inner.IsPowerShell7AvailableAsync(cancellationToken);
+
+    public Task<string> WriteDscDocumentAsync(string fileName, string content, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would write DSC document {File} ({Bytes} bytes)", fileName, content.Length);
+        return Task.FromResult(fileName);
+    }
+
+    public Task<string> DownloadDscDocumentAsync(
+        string fileName,
+        string url,
+        string? checksum,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would download DSC document {File} from {Url}", fileName, url);
+        return Task.FromResult(fileName);
+    }
+
+    public Task<DscApplyResult> RunDscConfigAsync(
+        string dscExePath,
+        string documentPath,
+        string verb,
+        CancellationToken cancellationToken)
+    {
+        logger.LogInformation("DRY-RUN would run dsc config {Verb} --file {Document}", verb, documentPath);
+        // Never claim a reboot in dry-run so a what-if doesn't trigger restart paths.
+        return Task.FromResult(new DscApplyResult { ExitCode = 0, RebootRequested = false, JsonOutput = "" });
+    }
+
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
         // Read-only — pass through so dry-run resolves the real RID-500 name.
         inner.ResolveBuiltinAdministratorNameAsync(cancellationToken);

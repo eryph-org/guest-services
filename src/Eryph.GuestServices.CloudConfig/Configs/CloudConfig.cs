@@ -112,6 +112,15 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Chocolatey package installation; no Linux equivalent")]
     public ChocolateyConfig? Chocolatey { get; init; }
 
+    /// <summary>
+    /// eryph <c>dsc:</c> block — applies declarative configuration with DSC v3
+    /// (<c>dsc.exe</c>), replacing the <c>gene:dbosoft/windsc</c> workarounds.
+    /// Windows-only; cloud-init has no DSC module. See <see cref="DscConfig"/>
+    /// and RFC 0025.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "DSC v3 declarative configuration; no Linux equivalent")]
+    public DscConfig? Dsc { get; init; }
+
     // ---------------------------------------------------------------------
     // Known cloud-init top-level keys that the agent ACCEPTS but does not
     // act on. CloudConfigSerializer walks these after parsing and emits one

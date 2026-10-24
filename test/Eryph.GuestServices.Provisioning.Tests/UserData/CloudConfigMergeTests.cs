@@ -385,6 +385,20 @@ public sealed class CloudConfigMergeTests
             Sources = [new ChocolateySource { Name = "chocolatey", Url = "https://community.chocolatey.org/api/v2/", Priority = 1 }],
             Packages = [new ChocolateyPackage { Name = "7zip", Version = "24.07", Params = "/x" }],
         },
+        Dsc = new DscConfig
+        {
+            Install = "auto",
+            InstallSource = "winget",
+            InstallVersion = "3.1.0",
+            Path = @"C:\tools\dsc.exe",
+            Apply = "set",
+            ContinueOnError = false,
+            Configurations =
+            [
+                new DscConfiguration { Name = "baseline", Document = "$schema: x\nresources: []" },
+                new DscConfiguration { Name = "from-url", DocumentUrl = "https://example/baseline.dsc.yaml", Checksum = "sha256:abc" },
+            ],
+        },
         Apt = new AptConfig { Proxy = "http://proxy:8080" },
         AptPipelining = "default",
         Packages =
