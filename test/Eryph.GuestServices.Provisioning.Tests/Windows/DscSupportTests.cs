@@ -53,6 +53,73 @@ public sealed class DscSupportTests
     }
 
     [Fact]
+    public void RequiresReboot_true_for_restartRequired_in_execution_information()
+    {
+        // DSC v3.2+ collects per-resource restart requests into the config
+        // result's execution information under 'restartRequired' (an array of
+        // {system|service|process} objects), emitted only when a restart is due.
+        const string json = """
+            {
+              "metadata": {
+                "Microsoft.DSC": {
+                  "version": "3.2.2",
+                  "securityContext": "elevated",
+                  "restartRequired": [
+                    { "service": "Spooler" },
+                    { "system": "A pending feature install needs a restart." }
+                  ]
+                }
+              },
+              "results": []
+            }
+            """;
+
+        DscSupport.RequiresReboot(json).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RequiresReboot_true_for_resource_restartRequired_array()
+    {
+        // The canonical per-resource property '_restartRequired'.
+        const string json = """
+            {
+              "results": [
+                {
+                  "type": "Microsoft.Windows/WindowsFeature",
+                  "name": "dns",
+                  "result": { "afterState": { "_restartRequired": [ { "process": { "name": "w3wp", "id": 1234 } } ] } }
+                }
+              ]
+            }
+            """;
+
+        DscSupport.RequiresReboot(json).Should().BeTrue();
+    }
+
+    [Fact]
+    public void RequiresReboot_false_for_empty_restartRequired_array()
+    {
+        // Present but empty must NOT trigger a reboot (DSC omits it entirely when
+        // none is required, but be robust to an empty array too).
+        DscSupport.RequiresReboot("""{ "metadata": { "Microsoft.DSC": { "restartRequired": [] } } }""")
+            .Should().BeFalse();
+    }
+
+    [Fact]
+    public void RequiresReboot_true_for_legacy_rebootRequested_boolean()
+    {
+        // '_restartRequired' replaced the legacy boolean '_rebootRequested'; honour both.
+        DscSupport.RequiresReboot("""{ "results": [ { "result": { "_rebootRequested": true } } ] }""")
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void RequiresReboot_false_for_legacy_rebootRequested_false()
+    {
+        DscSupport.RequiresReboot("""{ "_rebootRequested": false }""").Should().BeFalse();
+    }
+
+    [Fact]
     public void SelectWindowsReleaseAsset_picks_matching_arch_zip()
     {
         const string json = """

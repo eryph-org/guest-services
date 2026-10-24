@@ -341,4 +341,74 @@ public sealed class DryRunWindowsOsTests
         await sut.RestartSshdAsync(CancellationToken.None);
         await inner.DidNotReceiveWithAnyArgs().RestartSshdAsync(default);
     }
+
+    // ---- DSC v3: read passes through, but a simulated install is reflected ----
+
+    [Fact]
+    public async Task ResolveDscExecutableAsync_passes_through_when_dsc_is_present()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveDscExecutableAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns(@"C:\real\dsc.exe");
+
+        var path = await sut.ResolveDscExecutableAsync(null, CancellationToken.None);
+
+        path.Should().Be(@"C:\real\dsc.exe");
+    }
+
+    [Fact]
+    public async Task ResolveDscExecutableAsync_is_null_without_a_simulated_install()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveDscExecutableAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+
+        var path = await sut.ResolveDscExecutableAsync(null, CancellationToken.None);
+
+        path.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ResolveDscExecutableAsync_reports_a_path_after_a_simulated_github_install()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveDscExecutableAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+
+        // Dry-run would not really install, but the module's post-install probe
+        // must still succeed so it can preview staging + application.
+        await sut.InstallDscFromGithubReleaseAsync("latest", CancellationToken.None);
+        var path = await sut.ResolveDscExecutableAsync(null, CancellationToken.None);
+
+        path.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ResolveDscExecutableAsync_reports_a_path_after_a_simulated_winget_install()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveDscExecutableAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+
+        await sut.RunWingetAsync(
+            ["install", "--id", "Microsoft.DSC", "--exact"], CancellationToken.None);
+        var path = await sut.ResolveDscExecutableAsync(null, CancellationToken.None);
+
+        path.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ResolveDscExecutableAsync_never_fabricates_for_an_explicit_path()
+    {
+        var (sut, inner) = Build();
+        inner.ResolveDscExecutableAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+
+        // Even after a simulated install, an explicit install_source: path that
+        // the inner could not resolve must stay null (its install is a hard fail).
+        await sut.InstallDscFromGithubReleaseAsync("latest", CancellationToken.None);
+        var path = await sut.ResolveDscExecutableAsync(@"C:\tools\dsc.exe", CancellationToken.None);
+
+        path.Should().BeNull();
+    }
 }

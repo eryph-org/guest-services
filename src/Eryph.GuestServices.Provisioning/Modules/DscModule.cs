@@ -92,12 +92,17 @@ internal sealed class DscModule(ILogger<DscModule> logger) : IModule
                 documentPath = await ResolveDocumentPathAsync(configuration, context, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                // Genuine provisioning cancellation — abort the whole module.
                 throw;
             }
             catch (Exception ex)
             {
+                // Anything else, INCLUDING a document-download timeout (its own
+                // internal CTS surfaces as OperationCanceledException while the
+                // provisioning token is still live), is a per-configuration
+                // failure that must honour continue_on_error.
                 logger.LogError(ex, "dsc: failed to stage configuration '{Name}'.", name);
                 failed.Add(name);
                 if (!continueOnError)

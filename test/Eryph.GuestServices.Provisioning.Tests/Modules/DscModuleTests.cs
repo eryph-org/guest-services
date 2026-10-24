@@ -250,6 +250,75 @@ public sealed class DscModuleTests
     }
 
     [Fact]
+    public async Task Document_download_timeout_honours_continue_on_error()
+    {
+        var os = DscOs();
+        // The first document download times out — its internal timeout surfaces
+        // as OperationCanceledException while the provisioning token is still
+        // live. That must be a per-configuration failure, not a module abort, so
+        // the second configuration still runs.
+        var call = 0;
+        os.DownloadDscDocumentAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns<string>(ci =>
+            {
+                if (Interlocked.Increment(ref call) == 1)
+                    throw new OperationCanceledException();
+                return @"C:\ProgramData\eryph\dsc\" + ci.ArgAt<string>(0);
+            });
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig
+            {
+                ContinueOnError = true,
+                Configurations =
+                [
+                    new DscConfiguration { Name = "one", DocumentUrl = "https://example.invalid/a.yaml" },
+                    new DscConfiguration { Name = "two", DocumentUrl = "https://example.invalid/b.yaml" },
+                ],
+            },
+        };
+
+        var outcome = await Apply(CreateModule(), os, config);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>();
+        // The second configuration was staged and applied despite the first timing out.
+        await os.Received(1).RunDscConfigAsync(DscPath, Arg.Any<string>(), "set", Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Genuine_cancellation_during_staging_aborts_the_module()
+    {
+        var os = DscOs();
+        using var cts = new CancellationTokenSource();
+        os.DownloadDscDocumentAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+            .Returns<string>(_ =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            });
+        var config = new CloudConfigModel
+        {
+            Dsc = new DscConfig
+            {
+                ContinueOnError = true,
+                Configurations =
+                [
+                    new DscConfiguration { Name = "one", DocumentUrl = "https://example.invalid/a.yaml" },
+                    new DscConfiguration { Name = "two", DocumentUrl = "https://example.invalid/b.yaml" },
+                ],
+            },
+        };
+
+        var act = () => CreateModule().ApplyAsync(
+            ResolvedUserData.Empty(config), new TestModuleContext(os), cts.Token);
+
+        // A real provisioning cancel propagates — it is not swallowed by continue_on_error.
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task Reboot_request_surfaces_as_Reboot_when_all_succeed()
     {
         var os = DscOs(reboot: true);

@@ -12,20 +12,18 @@ namespace Eryph.GuestServices.Provisioning.Windows;
 internal static class DscSupport
 {
     /// <summary>
-    /// Scans <c>dsc.exe</c> JSON output for a per-resource "reboot required"
-    /// signal and returns true when any resource asked for a reboot. DSC v3
-    /// returns per-resource results; a resource surfaces a reboot via a
-    /// <c>rebootRequired</c> / <c>reboot_required</c> property (any casing,
-    /// anywhere in the result tree) set to a truthy value. Tolerant and
-    /// fail-safe: malformed or non-JSON output yields <c>false</c> (no reboot).
+    /// Scans <c>dsc.exe</c> JSON output for DSC v3's "restart required" signal
+    /// and returns true when any resource asked for a restart. A resource
+    /// surfaces this with the canonical <c>_restartRequired</c> property — an
+    /// ARRAY of <c>{system|service|process}</c> objects (DSC v3.2+). DSC also
+    /// collects these into the configuration result's execution information
+    /// under <c>restartRequired</c>, and only emits either when at least one
+    /// restart is required, so a present, non-empty array means "restart". We
+    /// also honour the legacy boolean <c>_rebootRequested</c> that it replaced.
+    /// Any casing, with or without the leading underscore, anywhere in the
+    /// result tree, counts. Tolerant and fail-safe: malformed or non-JSON
+    /// output yields <c>false</c> (no reboot).
     /// </summary>
-    /// <remarks>
-    /// Best-effort detection: DSC v3's reboot-signal shape is still settling
-    /// (RFC 0025 open question). We scan broadly rather than binding to one
-    /// field path so a resource that reports a reboot under a slightly
-    /// different key is still honoured. Needs confirmation against a real
-    /// reboot-requesting resource before we rely on it in production.
-    /// </remarks>
     public static bool RequiresReboot(string? jsonOutput)
     {
         if (string.IsNullOrWhiteSpace(jsonOutput))
@@ -110,14 +108,26 @@ internal static class DscSupport
         }
     }
 
-    private static bool IsRebootKey(string name) =>
-        name.Replace("_", "", StringComparison.Ordinal)
-            .Equals("rebootrequired", StringComparison.OrdinalIgnoreCase);
+    private static bool IsRebootKey(string name)
+    {
+        // Normalize '_restartRequired' / 'restartRequired' / '_rebootRequested'
+        // and our earlier 'rebootRequired' / 'reboot_required' guess to a common
+        // form. DSC's canonical property is '_restartRequired' (v3.2+), which
+        // replaced the legacy boolean '_rebootRequested'.
+        var normalized = name.Replace("_", "", StringComparison.Ordinal);
+        return normalized.Equals("restartrequired", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("rebootrequired", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("rebootrequested", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsTruthy(JsonElement value) =>
         value.ValueKind switch
         {
             JsonValueKind.True => true,
+            // '_restartRequired' / execution-info 'restartRequired' is an array of
+            // restart requests; DSC emits it only when a restart is required, so a
+            // non-empty array is the signal.
+            JsonValueKind.Array => value.GetArrayLength() > 0,
             JsonValueKind.String => bool.TryParse(value.GetString(), out var b) && b,
             JsonValueKind.Number => value.TryGetInt64(out var n) && n != 0,
             _ => false,

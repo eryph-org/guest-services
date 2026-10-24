@@ -230,6 +230,10 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
         CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would run winget: {Argv}", string.Join(" ", argv));
+        // A Microsoft.DSC install goes through winget; note it so the DSC
+        // module's post-install probe can succeed in a what-if.
+        if (argv.Any(a => string.Equals(a, "Microsoft.DSC", StringComparison.OrdinalIgnoreCase)))
+            _dscInstallSimulated = true;
         return Task.FromResult(new RunCommandResult(0, "", ""));
     }
 
@@ -256,13 +260,35 @@ internal sealed class DryRunWindowsOs(IWindowsOs inner, ILogger<DryRunWindowsOs>
 
     // ---- DSC v3 ----
 
-    public Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken) =>
-        // Read-only — pass through so dry-run reflects the real guest state.
-        inner.ResolveDscExecutableAsync(explicitPath, cancellationToken);
+    // Set once a DSC install has been simulated this run (via winget or the
+    // GitHub release). The post-install probe then reports a (simulated) path so
+    // the what-if can continue into document staging and application.
+    private bool _dscInstallSimulated;
+
+    // Where the real GitHub-release install lands; used only as a plausible
+    // placeholder in the dry-run probe, never touched on disk.
+    private const string SimulatedDscExePath = @"C:\Program Files\dsc\dsc.exe";
+
+    public async Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken)
+    {
+        // Read-only — reflect the real guest state first.
+        var real = await inner.ResolveDscExecutableAsync(explicitPath, cancellationToken).ConfigureAwait(false);
+        if (real is not null)
+            return real;
+
+        // After a simulated install, pretend dsc.exe is now present so the module
+        // previews staging + application instead of aborting with "could not be
+        // located after installation". An explicit install_source: path is never
+        // fabricated — its install is a hard failure, not a simulation.
+        return _dscInstallSimulated && string.IsNullOrWhiteSpace(explicitPath)
+            ? SimulatedDscExePath
+            : null;
+    }
 
     public Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken)
     {
         logger.LogInformation("DRY-RUN would install DSC v3 from the GitHub release (version={Version})", version ?? "latest");
+        _dscInstallSimulated = true;
         return Task.CompletedTask;
     }
 

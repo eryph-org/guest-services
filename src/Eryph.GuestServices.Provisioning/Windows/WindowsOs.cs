@@ -1707,13 +1707,28 @@ internal sealed class WindowsOs : IWindowsOs
             if (File.Exists(DscProgramFilesExePath) && IsTrustedSystemPath(DscProgramFilesExePath))
                 return DscProgramFilesExePath;
 
-            // 3. dsc.exe on the refreshed machine PATH (a winget install). Then,
-            //    as a best-effort, the machine-scope WindowsApps package dir.
+            // 3. dsc.exe on the refreshed machine PATH. A winget machine-scope
+            //    install of Microsoft.DSC exposes it here through a symlink in
+            //    %ProgramFiles%\WinGet\Links, which is a reparse point that
+            //    IsTrustedSystemPath rejects — so resolve the link to its real
+            //    target and trust-check THAT (the package file itself).
             var onPath = ResolveExecutableOnRefreshedPath("dsc.exe");
-            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal)
-                && File.Exists(onPath) && IsTrustedSystemPath(onPath))
-                return onPath;
+            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal) && File.Exists(onPath))
+            {
+                var real = ResolveFinalLinkTarget(onPath);
+                if (IsTrustedSystemPath(real))
+                    return real;
+            }
 
+            // 4. The winget zip/portable install tree (machine scope) under
+            //    %ProgramFiles%\WinGet\Packages\Microsoft.DSC_*.
+            var inPackages = FindDscInWingetPackages();
+            if (inPackages is not null && IsTrustedSystemPath(inPackages))
+                return inPackages;
+
+            // 5. The winget MSIX install under %ProgramFiles%\WindowsApps. The
+            //    package identity is Microsoft.DesiredStateConfiguration (the
+            //    winget id Microsoft.DSC is not the MSIX identity).
             var inWindowsApps = FindDscInWindowsApps();
             if (inWindowsApps is not null && IsTrustedSystemPath(inWindowsApps))
                 return inWindowsApps;
@@ -1721,10 +1736,57 @@ internal sealed class WindowsOs : IWindowsOs
             return null;
         }, cancellationToken);
 
+    // Resolves a path to the final target of a symlink / reparse point, so the
+    // trust check runs against the real executable rather than the link. Returns
+    // the input unchanged when it is not a link (or cannot be resolved).
+    private static string ResolveFinalLinkTarget(string path)
+    {
+        try
+        {
+            var target = File.ResolveLinkTarget(path, returnFinalTarget: true);
+            return target?.FullName ?? path;
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    // Best-effort scan of the machine-scope winget portable store for a
+    // Microsoft.DSC install: %ProgramFiles%\WinGet\Packages\Microsoft.DSC_*\dsc.exe
+    // (the zip/portable installer unpacks dsc.exe into the package dir).
+    private static string? FindDscInWingetPackages()
+    {
+        try
+        {
+            var packages = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WinGet", "Packages");
+            if (!Directory.Exists(packages))
+                return null;
+            foreach (var dir in Directory.EnumerateDirectories(packages, "Microsoft.DSC_*"))
+            {
+                // The portable zip may nest dsc.exe one level down (arch folder).
+                var candidate = Directory
+                    .EnumerateFiles(dir, "dsc.exe", SearchOption.AllDirectories)
+                    .FirstOrDefault();
+                if (candidate is not null)
+                    return candidate;
+            }
+        }
+        catch
+        {
+            // Access denied / odd layout — fall through.
+        }
+
+        return null;
+    }
+
     // Best-effort scan of the machine-scope WindowsApps store for a winget-
-    // installed dsc.exe (Microsoft.DSC). %ProgramFiles%\WindowsApps is readable
-    // only by privileged accounts; the agent runs as LocalSystem, so this
-    // succeeds where a PATH alias (per-user) would not be visible.
+    // installed (MSIX) dsc.exe. The DSC MSIX package identity is
+    // Microsoft.DesiredStateConfiguration (confirmed from its AppxManifest), not
+    // the winget id Microsoft.DSC. %ProgramFiles%\WindowsApps is readable only by
+    // privileged accounts; the agent runs as LocalSystem, so this succeeds where
+    // a per-user execution alias would not be visible.
     private static string? FindDscInWindowsApps()
     {
         try
@@ -1733,7 +1795,7 @@ internal sealed class WindowsOs : IWindowsOs
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
             if (!Directory.Exists(windowsApps))
                 return null;
-            foreach (var dir in Directory.EnumerateDirectories(windowsApps, "Microsoft.DSC*"))
+            foreach (var dir in Directory.EnumerateDirectories(windowsApps, "Microsoft.DesiredStateConfiguration*"))
             {
                 var candidate = Path.Combine(dir, "dsc.exe");
                 if (File.Exists(candidate))
@@ -1921,11 +1983,24 @@ internal sealed class WindowsOs : IWindowsOs
             throw new InvalidOperationException(
                 $"Refusing to run dsc.exe from an untrusted path: {reason}.");
 
+        // dsc.exe enforces the document's resource actions as LocalSystem, so the
+        // document is as privileged as the executable. Documents we stage land in
+        // the hardened SYSTEM-only DSC directory, but an operator-supplied
+        // document_path may sit in a standard-user-writable location where its
+        // contents could be swapped before we run it — trust-check it too.
+        if (UntrustedPathReason(documentPath) is { } documentReason)
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document from an untrusted path: {documentReason}.");
+
         var psi = CreateUtf8Psi(dscExePath);
         psi.ArgumentList.Add("config");
         psi.ArgumentList.Add(verb);
         psi.ArgumentList.Add("--file");
         psi.ArgumentList.Add(documentPath);
+        // dsc.exe (and the resources / pwsh it spawns) must see tools installed
+        // earlier this boot — the service's startup PATH is stale. The resolver
+        // already probes the refreshed PATH; the launch must use it too.
+        ApplyRefreshedPath(psi);
 
         var result = await RunWithTimeoutAsync(psi, DscRunTimeout, cancellationToken).ConfigureAwait(false);
         // Only trust the reboot signal on a successful run; a non-zero exit is a
