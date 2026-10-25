@@ -93,6 +93,7 @@ public sealed class CommandForwarder : IDisposable
         var writeLock = new SemaphoreSlim(1, 1);
         Task? stdoutTask = null;
         Task? stderrTask = null;
+        Task? stdinTask = null;
         try
         {
             _process!.Start();
@@ -101,7 +102,11 @@ public sealed class CommandForwarder : IDisposable
                 _process.StandardOutput.BaseStream, sshStream, writeLock, cancellation);
             stderrTask = PumpToChannelAsync(
                 _process.StandardError.BaseStream, sshStream, writeLock, cancellation);
-            _ = sshStream.CopyToAsync(_process.StandardInput.BaseStream, cancellation);
+            // Forward the client's input to the child and close its stdin once
+            // the client half-closes the channel, so stdin-reading commands see
+            // EOF and finish instead of hanging forever (issue #68).
+            stdinTask = PumpToProcessInputAsync(
+                sshStream, _process.StandardInput.BaseStream, cancellation);
 
             await _process.WaitForExitAsync(cancellation);
             await Task.WhenAll(stdoutTask, stderrTask);
@@ -113,15 +118,23 @@ public sealed class CommandForwarder : IDisposable
         }
         finally
         {
-            // Dispose the per-run lock, but only once both pumps have stopped
-            // touching it. On the success path they completed above; on the
-            // error/cancel path cancel so they unwind rather than block, then
-            // wait out the teardown race before disposing.
-            if (stdoutTask is not null && stderrTask is not null
-                && !(stdoutTask.IsCompleted && stderrTask.IsCompleted))
+            // Dispose the per-run lock, but only once every pump has stopped
+            // touching it. On the success path the output pumps completed above;
+            // the stdin pump can still be blocked on the channel read (a command
+            // may exit without draining its input), so cancel to unwind it too,
+            // then wait out the teardown race before disposing.
+            var pending =
+                stdoutTask is { IsCompleted: false }
+                || stderrTask is { IsCompleted: false }
+                || stdinTask is { IsCompleted: false };
+            if (pending)
             {
                 try { _cts.Cancel(); } catch (ObjectDisposedException) { }
-                try { await Task.WhenAll(stdoutTask, stderrTask); } catch { /* teardown race */ }
+                var running = new List<Task>(3);
+                if (stdoutTask is not null) running.Add(stdoutTask);
+                if (stderrTask is not null) running.Add(stderrTask);
+                if (stdinTask is not null) running.Add(stdinTask);
+                try { await Task.WhenAll(running); } catch { /* teardown race */ }
             }
             writeLock.Dispose();
         }
@@ -149,6 +162,34 @@ public sealed class CommandForwarder : IDisposable
         }
     }
 
+    // Copies the client's input to the child's stdin, then closes stdin so the
+    // child sees EOF. Without the close, a non-PTY command that reads stdin
+    // (`cat`, shell `read`, a `cmd > file` redirect fed from a pipe) blocks
+    // forever once the client half-closes the channel, because the write end of
+    // the stdin pipe stays open. Closing on every exit — EOF, cancel, or a
+    // broken-pipe fault after the child already exited — is what unblocks it.
+    internal static async Task PumpToProcessInputAsync(
+        Stream source, Stream processInput, CancellationToken cancellation)
+    {
+        try
+        {
+            await source.CopyToAsync(processInput, cancellation);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // The child already closed its stdin — it exited (or was killed)
+            // while the client was still sending — so the write hit a broken
+            // pipe. Nothing is left to forward; treat it as a normal end rather
+            // than faulting this task, which (once stdout/stderr have already
+            // completed) would surface as an unobserved task exception.
+        }
+        finally
+        {
+            try { await processInput.DisposeAsync(); }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        }
+    }
+
     public void Dispose()
     {
         // Runs on the channel.Closed event path, so it must not throw. Cancel
@@ -163,7 +204,11 @@ public sealed class CommandForwarder : IDisposable
         try { _process?.Kill(true); }
         catch (InvalidOperationException) { }
 
-        _process?.Dispose();
+        // Must not throw: the input pump may have already disposed stdin's
+        // underlying stream, and disposing the process flushes that stream on
+        // some platforms.
+        try { _process?.Dispose(); }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }
         _cts.Dispose();
     }
 }
