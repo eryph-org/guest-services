@@ -21,7 +21,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 /// evaluation editions because Azure does not extend evaluation grace
 /// periods. <c>license.force: true</c> overrides the Azure skip.
 /// </summary>
-[Stage(Stage.Config, Order = 5, Frequency = ModuleFrequency.PerInstance)]
+[Stage(Stage.Config, Order = 7, Frequency = ModuleFrequency.PerInstance)]
 internal sealed class LicensingModule(ILogger<LicensingModule> logger) : IModule
 {
     // Cloud-name marker populated by AzureDataSource on PlatformMetadata.

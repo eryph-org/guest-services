@@ -33,6 +33,9 @@ Each top-level key maps to a module:
 | `chpasswd`, `password` | SetPasswords |
 | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` | SshModule |
 | `write_files` | WriteFiles |
+| `winget` | Winget |
+| `chocolatey` | Chocolatey |
+| `packages` | Winget / Chocolatey (umbrella) |
 | `runcmd` | Runcmd |
 | `license` | Licensing |
 | `power_state` | PowerState |
@@ -48,6 +51,21 @@ sub-fields. A few things that aren't obvious on Windows:
 - `write_files` paths written as POSIX (`/etc/...`) are translated under `C:\`;
   `permissions` is mapped to an NTFS ACL.
 - A `runcmd` entry that exits `1003` reboots the guest and resumes the run.
+- Install software with `packages:` (installs before `runcmd`, so your scripts
+  can use it). A bare name uses winget; group entries pick the manager:
+
+  ```yaml
+  packages:
+    - Git.Git                 # winget (the default)
+    - chocolatey:
+        - name: nodejs
+          version: 20.11.0
+  ```
+
+  winget is provisioned for all users and Chocolatey is bootstrapped on first
+  use; both need outbound internet. Use the dedicated `winget:` / `chocolatey:`
+  keys for sources or advanced options (winget `scope`, chocolatey `params`).
+  See the [modules reference](../reference/modules.md).
 
 Network configuration is a separate document, not part of cloud-config — see
 [Configure networking](configure-networking.md). Scripts are delivered as

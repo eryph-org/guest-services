@@ -28,12 +28,15 @@ parts, and any of those gzip-wrapped.
 
 Modules, in run order: `Growpart`, `SetHostname`, `ApplyNetworkConfig`,
 `NtpClient`, `Timezone`, `SetLocale`, `UsersGroups`, `SetPasswords`,
-`SshModule`, `WriteFiles`, `Runcmd`, `Licensing`, `WriteFilesDeferred`,
-`ScriptsUser`, `PowerState`. See [Modules](../reference/modules.md).
+`SshModule`, `WriteFiles`, `Winget`, `Chocolatey`, `Runcmd`, `Licensing`,
+`WriteFilesDeferred`, `ScriptsUser`, `PowerState`. See
+[Modules](../reference/modules.md).
 
-Linux-only top-level keys (`apt`, `snap`, `packages`, `chef`, …) are
-accepted and logged at Info, so a cross-cloud cloud-config passes through
-cleanly. `egs-service validate --target windows` lists them per file.
+Linux-only top-level keys (`apt`, `snap`, `chef`, …) are accepted and
+logged at Info, so a cross-cloud cloud-config passes through cleanly.
+(`packages:` is NOT one of them — on Windows it installs via winget /
+chocolatey; see [Modules](../reference/modules.md).)
+`egs-service validate --target windows` lists them per file.
 
 The per-stage module list and the datasource list are both operator-
 configurable — see [Settings](../reference/settings.md).

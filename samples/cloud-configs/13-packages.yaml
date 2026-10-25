@@ -1,0 +1,24 @@
+#cloud-config
+# Install software via the cloud-init `packages:` umbrella (RFC 0033). On
+# Windows, bare names and [name, version] pairs use the default provider
+# (winget); manager groups route to winget / chocolatey; Linux managers
+# (apt/snap/…) are accepted and no-op. The dedicated winget: / chocolatey:
+# blocks cover sources and advanced options and combine with packages:.
+packages:
+  - Git.Git                       # bare name -> winget (default provider)
+  - [7zip.7zip, '24.08']          # name + version -> winget (quote numeric versions)
+  - winget:
+      - id: Microsoft.PowerShell
+        version: 7.4.6
+  - chocolatey:
+      - name: nodejs
+        version: 20.11.0
+  - apt:                          # Linux manager: accepted, no-op on Windows
+      - htop
+
+# Advanced winget options (source / scope) live in the dedicated block, which
+# runs in the same pass and combines with the packages: entries above.
+winget:
+  packages:
+    - id: Microsoft.VisualStudioCode
+      scope: machine

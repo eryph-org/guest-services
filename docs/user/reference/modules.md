@@ -17,8 +17,10 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | SetPasswords | Config / 1 | per-instance | `chpasswd`, `password` |
 | SshModule | Config / 2 | per-instance | `ssh_authorized_keys`, `ssh_pwauth`, `ssh_keys`, `disable_root`, `ssh` |
 | WriteFiles | Config / 3 | per-instance | `write_files` |
-| Runcmd | Config / 4 | per-instance | `runcmd` |
-| Licensing | Config / 5 | per-instance | `license` |
+| Winget | Config / 4 | per-instance | `winget`, `packages` (winget entries) (Windows only) |
+| Chocolatey | Config / 5 | per-instance | `chocolatey`, `packages` (chocolatey entries) (Windows only) |
+| Runcmd | Config / 6 | per-instance | `runcmd` |
+| Licensing | Config / 7 | per-instance | `license` |
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
 | ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
 | PowerState | Final / last | per-instance | `power_state` |
@@ -374,6 +376,99 @@ same way as in [Runcmd](#runcmd): a script can ask for one or more reboots,
 inspect `EGS_REBOOT_COUNT` / `EGS_REBOOT_LIMIT` / `EGS_ENTRY_INDEX` in its
 environment, and raise its own per-script cap (`reboot.maxPerScript`, default
 10) by emitting the directive on stdout.
+
+## Winget
+
+Installs packages with the Windows Package Manager (winget). Windows only —
+there is no Linux equivalent.
+
+```yaml
+winget:
+  install_winget: true     # provision winget for all users if missing (default true)
+  sources:                 # optional: register custom winget sources
+    - name: contoso
+      argument: https://winget.contoso.example/
+      type: Microsoft.Rest
+  packages:
+    - id: Git.Git
+    - id: 7zip.7zip
+      version: '24.07'     # optional; latest when omitted
+```
+
+The agent runs as `LocalSystem`. winget is provisioned for all users (downloaded
+from the `microsoft/winget-cli` GitHub release) and run through a wrapper written
+to `C:\ProgramData\eryph\winget\winget-system.ps1`. Because of that, only the
+`winget` source and machine scope work: a package with `source: msstore` or
+`scope: user` is skipped with a warning. An already-installed package counts as
+success; any other install failure fails the module.
+
+Requires Windows 10 1809+, Windows 11, or Windows Server 2022+ (Server 2019 is
+not supported). Set `install_winget: false` to skip the download and only use a
+winget that is already present.
+
+Winget runs in the Config stage before `runcmd`, so `runcmd` entries can use the
+packages it installs (matching cloud-init, where packages install before runcmd
+runs).
+
+## Chocolatey
+
+Installs packages with Chocolatey. Windows only — no Linux equivalent. Runs
+after Winget, so an operator who lists both gets winget first.
+
+```yaml
+chocolatey:
+  install_chocolatey: true   # bootstrap Chocolatey if missing (default true)
+  sources:                   # optional
+    - name: internal
+      url: https://nuget.example/choco
+      priority: 1            # optional; lower = higher priority, 0 = none
+  packages:
+    - name: 7zip
+    - name: git
+      version: '2.46.0'      # optional
+      params: '/GitOnlyOnPath'   # optional installer params
+```
+
+Chocolatey runs as `LocalSystem` directly (no wrapper, unlike winget). Two
+things can request a reboot and both are handled by reboot-and-continue: the
+bootstrap's .NET Framework reboot, and a package returning `1641` / `3010`.
+After the reboot the module re-runs and continues. An install failure fails the
+module; a source that can't be added logs a warning and continues.
+
+Set `install_chocolatey: false` to skip the download and use only a Chocolatey
+that is already present. Bootstrapping downloads `install.ps1` from
+community.chocolatey.org, so the guest needs outbound internet.
+
+As with Winget, Chocolatey runs before `runcmd`, so `runcmd` can use the
+packages it installs.
+
+## packages: (umbrella)
+
+The cloud-init-compatible `packages:` key is the generic way to install
+software; on Windows it routes into the Winget and Chocolatey modules above.
+Each list entry is a bare name, a `[name, version]` pair, or a manager-keyed
+mapping:
+
+```yaml
+packages:
+  - 7zip.7zip                 # bare name -> default provider (winget)
+  - [Git.Git, 2.46.0]         # name + version -> winget
+  - winget:
+      - Microsoft.PowerShell
+      - id: Foo.Bar
+        version: 1.2.3
+  - chocolatey:
+      - name: nodejs
+        version: 20.11.0
+  - apt:                      # Linux manager: accepted, no-op on Windows
+      - htop
+```
+
+Bare names and `[name, version]` pairs use the default provider, **winget**.
+Manager groups (`winget`, `chocolatey`/`choco`) route to that provider; Linux
+managers (`apt`, `snap`, `yum`, …) are accepted and ignored on Windows. For
+winget `source`/`scope` or chocolatey `params`, use the dedicated `winget:` /
+`chocolatey:` blocks — they run in the same pass and combine with `packages:`.
 
 ## PowerState
 

@@ -402,8 +402,16 @@ internal sealed class WindowsOs : IWindowsOs
         try
         {
             var psi = CreateUtf8Psi("cmd.exe");
+            // /d skips any AutoRun command configured in the Command Processor
+            // registry key, and /v:off forces delayed expansion OFF regardless of
+            // the guest's global setting, so a '!' in the command stays literal
+            // (cmd's default) instead of triggering !var! expansion. Matches the
+            // flags BuildCmdBatchArguments uses for the batch-dispatch path.
+            psi.ArgumentList.Add("/d");
+            psi.ArgumentList.Add("/v:off");
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(tempScript);
+            ApplyRefreshedPath(psi);
             ApplyEnvironment(psi, environment);
 
             return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
@@ -427,12 +435,163 @@ internal sealed class WindowsOs : IWindowsOs
         if (argv.Count == 0)
             throw new ArgumentException("argv must contain at least one element.", nameof(argv));
 
-        var psi = CreateUtf8Psi(argv[0]);
-        for (var i = 1; i < argv.Count; i++)
-            psi.ArgumentList.Add(argv[i]);
+        // CreateProcess resolves a bare argv[0] against the PARENT's PATH, not
+        // the (refreshed) environment block we hand the child — so a tool
+        // installed this boot would not be found by name in an argv-form runcmd.
+        // Resolve it ourselves against the refreshed PATH first.
+        var resolved = ResolveExecutableOnRefreshedPath(argv[0]);
+
+        ProcessStartInfo psi;
+        if (IsBatchFile(resolved))
+        {
+            // A just-installed tool often resolves to a .cmd/.bat shim (e.g.
+            // npm.cmd). CreateProcess (UseShellExecute=false) cannot launch a
+            // batch file directly, so dispatch it through cmd.exe. cmd re-parses
+            // its command line with DIFFERENT rules than the MSVCRT quoting that
+            // ArgumentList produces: an unquoted metacharacter (& | < > ^) would
+            // split or redirect the line, and cmd's default /c outer-quote
+            // heuristic can strip the quotes around a space-containing path. So
+            // hand-build the line with cmd-correct quoting and pass it verbatim.
+            psi = CreateUtf8Psi("cmd.exe");
+            psi.Arguments = BuildCmdBatchArguments(resolved, argv);
+        }
+        else
+        {
+            psi = CreateUtf8Psi(resolved);
+            for (var i = 1; i < argv.Count; i++)
+                psi.ArgumentList.Add(argv[i]);
+        }
+        ApplyRefreshedPath(psi);
         ApplyEnvironment(psi, environment);
 
         return await RunAsync(psi, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static bool IsBatchFile(string path) =>
+        path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+        || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
+
+    // Builds the raw command line for launching a batch file through cmd.exe,
+    // to be assigned verbatim to ProcessStartInfo.Arguments (NOT ArgumentList,
+    // whose MSVCRT quoting cmd would re-parse incorrectly):
+    //
+    //   /d /v:off /s /c "<batch> <arg> <arg> ..."
+    //
+    // /d skips AutoRun, /v:off forces delayed expansion OFF so a '!' in an
+    // argument stays literal even when the guest enabled delayed expansion
+    // globally (otherwise "a!PATH!b" would expand inside the quotes), and /s
+    // makes cmd strip exactly the first and last quote of the remainder
+    // (deterministic — no reliance on the fragile outer-quote heuristic).
+    // `chcp 65001>nul &` sets the cmd session to UTF-8 before the
+    // batch runs so its output (e.g. `echo %~1` with non-ASCII) is decoded by
+    // our StandardOutputEncoding=UTF8 — the batch is run directly, so unlike
+    // RunShellCommandAsync we cannot inject chcp into the script itself. The
+    // trailing exit code stays the batch's (`&`, not `&&`). Every token is
+    // wrapped in one pair of double quotes, so cmd treats embedded
+    // metacharacters (& | < > ^ ( )) as literal. cmd does NOT honour backslash
+    // as a quote escape and expands variables / breaks lines even inside quotes,
+    // so an argument containing a double quote, '%', CR or LF cannot be carried
+    // safely (an embedded quote would close the pair early and expose the rest
+    // as live cmd syntax — command injection). Such an argument is rejected
+    // rather than corrupted or mis-executed; everything else is emitted literally.
+    internal static string BuildCmdBatchArguments(string batchPath, IReadOnlyList<string> argv)
+    {
+        var sb = new StringBuilder("/d /v:off /s /c \"chcp 65001>nul & ");
+        AppendCmdQuotedArgument(sb, batchPath);
+        for (var i = 1; i < argv.Count; i++)
+        {
+            sb.Append(' ');
+            AppendCmdQuotedArgument(sb, argv[i]);
+        }
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    private static void AppendCmdQuotedArgument(StringBuilder sb, string argument)
+    {
+        if (argument.AsSpan().IndexOfAny("\"%\r\n") >= 0)
+            throw new ArgumentException(
+                "A batch-file argument may not contain a double quote, '%', CR or LF — "
+                + $"cmd.exe cannot safely escape these on a command line. Argument: '{argument}'.",
+                nameof(argument));
+
+        // One pair of double quotes, content kept literal. cmd leaves the
+        // metacharacters inside the quotes alone; backslashes pass through
+        // unchanged (cmd does not treat them as escapes, and we reject the only
+        // character — a double quote — that would make a trailing backslash
+        // ambiguous).
+        sb.Append('"');
+        sb.Append(argument);
+        sb.Append('"');
+    }
+
+    // Resolves a bare executable name (no directory component) against the
+    // CURRENT machine + user PATH and PATHEXT. Returns the original string when
+    // already rooted or not found (letting the OS do its default resolution).
+    private static string ResolveExecutableOnRefreshedPath(string exe)
+    {
+        try
+        {
+            if (Path.IsPathRooted(exe)
+                || exe.Contains(Path.DirectorySeparatorChar)
+                || exe.Contains(Path.AltDirectorySeparatorChar))
+                return exe;
+
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine) ?? "";
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
+            var dirs = (machine + ";" + user)
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var pathext = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+                .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var nameExt = Path.GetExtension(exe);
+            // Only treat the name as already carrying its executable extension when
+            // that extension is itself a PATHEXT entry. A name like "python3.11"
+            // has extension ".11" (not executable), so we must still probe
+            // "python3.11" + each PATHEXT ("python3.11.exe"), not only the literal.
+            var exts = nameExt.Length > 0 && pathext.Any(p => p.Equals(nameExt, StringComparison.OrdinalIgnoreCase))
+                ? [""]
+                : (string[])[.. pathext.Prepend("")];
+
+            foreach (var dir in dirs)
+            {
+                foreach (var ext in exts)
+                {
+                    var candidate = Path.Combine(dir, exe + ext);
+                    if (File.Exists(candidate))
+                        return candidate;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to the original name (non-Windows host / odd PATH).
+        }
+
+        return exe;
+    }
+
+    // Overrides the child's PATH with the CURRENT machine + user PATH read from
+    // the registry. The agent process inherited its PATH at service start, so a
+    // tool installed this boot (winget/chocolatey adding to the machine PATH)
+    // would otherwise be invisible to a same-boot runcmd / user script until a
+    // reboot. Caller-supplied environment overlays this (ApplyEnvironment runs
+    // after), so an explicit PATH override still wins. Best-effort: on any
+    // failure the inherited PATH is kept.
+    private static void ApplyRefreshedPath(ProcessStartInfo psi)
+    {
+        try
+        {
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine);
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+            var combined = string.Join(
+                ';', new[] { machine, user }.Where(p => !string.IsNullOrEmpty(p)));
+            if (!string.IsNullOrEmpty(combined))
+                psi.Environment["Path"] = combined;
+        }
+        catch
+        {
+            // Keep the inherited PATH (e.g. non-Windows host in a unit test).
+        }
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyEnvironment =
@@ -1074,6 +1233,431 @@ internal sealed class WindowsOs : IWindowsOs
             CimService.StartService("sshd", logger);
             logger.LogInformation("Restarted sshd to reload configuration.");
         }, cancellationToken);
+
+    // ---- Windows Package Manager (winget) — RFC 0020 ----
+    //
+    // Ported from gene:dbosoft/winget:install. The agent runs as LocalSystem,
+    // so winget is PROVISIONED for all users (Add-AppxPackage is refused under
+    // LocalSystem) and driven through a generated wrapper that puts the
+    // App Installer + dependency package dirs on PATH.
+
+    private static string WingetWrapperPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "eryph", "winget", "winget-system.ps1");
+
+    public async Task<bool> IsWingetProvisionedAsync(CancellationToken cancellationToken)
+    {
+        const string script =
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()\n"
+            + "$ErrorActionPreference = 'Stop'\n"
+            + "$p = Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq 'Microsoft.DesktopAppInstaller'\n"
+            + "if ($p) { 'provisioned' } else { 'absent' }\n";
+        var result = await RunPowerShellAsync(script, cancellationToken).ConfigureAwait(false);
+        return result.ExitCode == 0
+            && result.StdOut.Contains("provisioned", StringComparison.Ordinal);
+    }
+
+    public async Task ProvisionWingetAsync(CancellationToken cancellationToken)
+    {
+        // Mirrors the fodder gene: OS-build gate (throws on Server 2019 /
+        // pre-1809), download the latest release, provision for all users. The
+        // LocalSystem wrapper is written separately by EnsureWingetWrapperAsync
+        // so it is also refreshed when winget was already provisioned on the
+        // image. A generous timeout guards against a hung download / DISM.
+        var psi = BuildPowerShellCommandPsi(PackageScripts.WingetProvision());
+        var result = await RunWithTimeoutAsync(psi, WingetProvisionTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"winget provisioning failed (exit {result.ExitCode}): {detail}");
+        }
+
+        logger.LogInformation("Provisioned winget (App Installer) for all users.");
+    }
+
+    public async Task EnsureWingetWrapperAsync(CancellationToken cancellationToken)
+    {
+        // Idempotent: always (re)write the wrapper so it exists regardless of
+        // whether winget was provisioned by us or shipped with the image, then
+        // smoke-test that winget actually runs as LocalSystem through it.
+        var wrapperPath = WingetWrapperPath;
+        var wrapperDir = Path.GetDirectoryName(wrapperPath)!;
+
+        // Security: the agent runs as LocalSystem and then EXECUTES this wrapper.
+        // A non-admin who pre-created the directory (or any ancestor below
+        // %ProgramData%) or the file could otherwise retain write access and
+        // swap the script between write and execution (local privilege
+        // escalation). Validate the whole directory chain from the trusted
+        // %ProgramData% root — no reparse point, no non-privileged write — and
+        // refuse an untrusted path rather than try to fix it. Then lock the
+        // directory and a freshly-written file down to SYSTEM + Administrators.
+        Directory.CreateDirectory(wrapperDir);
+        if (UntrustedPathReason(wrapperDir) is { } wrapperReason)
+            throw new InvalidOperationException(
+                $"Refusing to use winget wrapper directory '{wrapperDir}': {wrapperReason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(wrapperDir));
+
+        File.Delete(wrapperPath);
+        // UTF-8 with BOM so Windows PowerShell 5.1 detects the encoding when it
+        // runs the wrapper via -File (the content is ASCII, so this is belt-and-
+        // suspenders rather than strictly required).
+        await File.WriteAllTextAsync(
+            wrapperPath,
+            PackageScripts.WingetWrapper(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            cancellationToken).ConfigureAwait(false);
+        ApplySystemOnlyFileAcl(new FileInfo(wrapperPath));
+
+        var result = await RunWingetAsync(["--version"], cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"winget does not run as LocalSystem through the wrapper (exit {result.ExitCode}): {detail}");
+        }
+
+        logger.LogInformation("winget LocalSystem wrapper ready at {Path}.", wrapperPath);
+    }
+
+    // Owner SYSTEM; SYSTEM + Administrators FullControl; inheritance disabled and
+    // all inherited/other rules stripped. Used to lock down the winget wrapper
+    // directory and file so only privileged accounts can write what the agent
+    // later executes as LocalSystem.
+    private static void ApplySystemOnlyFileAcl(FileInfo info)
+    {
+        var security = info.GetAccessControl();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+            security.RemoveAccessRuleSpecific(rule);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        security.AddAccessRule(new FileSystemAccessRule(system, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(admins, FileSystemRights.FullControl, AccessControlType.Allow));
+        security.SetOwner(system);
+        info.SetAccessControl(security);
+    }
+
+    private static void ApplySystemOnlyDirectoryAcl(DirectoryInfo info)
+    {
+        var security = info.GetAccessControl();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        foreach (FileSystemAccessRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+            security.RemoveAccessRuleSpecific(rule);
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        const InheritanceFlags inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        security.AddAccessRule(new FileSystemAccessRule(
+            system, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.AddAccessRule(new FileSystemAccessRule(
+            admins, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+        security.SetOwner(system);
+        info.SetAccessControl(security);
+    }
+
+    // TrustedInstaller's service SID — a legitimate owner of OS-managed paths.
+    private const string TrustedInstallerSid =
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+    // Directory rights that let a non-privileged principal REPLACE or take over
+    // existing content (and thus swap what the agent executes as LocalSystem).
+    // We do NOT flag CreateFiles/CreateDirectories/AppendData on a directory:
+    // %ProgramData% grants those to Users by default on every child, and they
+    // only add NEW siblings — they can't modify, delete or take over our dirs.
+    private const FileSystemRights DangerousDirectoryRights =
+        FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles
+        | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
+
+    // For a FILE, overwriting its contents in place is also dangerous. WriteData
+    // / AppendData are the same 0x2 / 0x4 bits that mean (benign) CreateFiles /
+    // CreateDirectories on a directory, so they must be checked for files only.
+    private const FileSystemRights DangerousFileRights =
+        DangerousDirectoryRights | FileSystemRights.WriteData | FileSystemRights.AppendData
+        | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes;
+
+    private static bool IsPrivilegedSid(SecurityIdentifier sid) =>
+        sid.IsWellKnown(WellKnownSidType.LocalSystemSid)
+        || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)
+        || sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid)
+        || string.Equals(sid.Value, TrustedInstallerSid, StringComparison.Ordinal);
+
+    // The non-privileged principal the ACL grants a dangerous right to, or null.
+    private static SecurityIdentifier? NonPrivilegedController(
+        FileSystemSecurity security, FileSystemRights dangerous)
+    {
+        foreach (FileSystemAccessRule rule in
+                 security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
+        {
+            if (rule.AccessControlType != AccessControlType.Allow)
+                continue;
+            // Inherit-only ACEs don't grant access to THIS node (only to its
+            // children, which are validated on their own) — e.g. the volume
+            // root's inherit-only "Authenticated Users: Modify" must not flag
+            // the root itself. Skip them here.
+            if (rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly))
+                continue;
+            if ((rule.FileSystemRights & dangerous) == 0)
+                continue;
+            if (rule.IdentityReference is SecurityIdentifier sid && !IsPrivilegedSid(sid))
+                return sid;
+        }
+
+        return null;
+    }
+
+    // Returns why <paramref name="path"/> (or an ancestor up to a system root)
+    // is not trusted for LocalSystem execution — a reparse point, a
+    // non-privileged owner, or a non-privileged principal with replace/delete/
+    // take-ownership (or, for a file, write) rights — or null when the whole
+    // chain is trusted. Fails closed (returns a reason) on any error.
+    internal static string? UntrustedPathReason(string path)
+    {
+        try
+        {
+            var anchors = TrustedRootAnchors();
+            var current = Path.GetFullPath(path);
+            while (!string.IsNullOrEmpty(current))
+            {
+                // System-provided roots (%ProgramData% / %ProgramFiles% /
+                // %windir%) are trusted; stop. The VOLUME root is NOT shortcut
+                // here — it is validated below (a data drive like D:\ may grant
+                // non-privileged delete rights), then traversal ends at its null
+                // parent.
+                if (anchors.Contains(Path.TrimEndingDirectorySeparator(current)))
+                    return null;
+
+                FileSystemSecurity? security = null;
+                var dangerous = DangerousDirectoryRights;
+                if (Directory.Exists(current))
+                {
+                    var di = new DirectoryInfo(current);
+                    if (di.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                        return $"'{current}' is a reparse point";
+                    security = di.GetAccessControl();
+                }
+                else if (File.Exists(current))
+                {
+                    var fi = new FileInfo(current);
+                    if (fi.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                        return $"'{current}' is a reparse point";
+                    security = fi.GetAccessControl();
+                    dangerous = DangerousFileRights;
+                }
+
+                if (security is not null)
+                {
+                    if (security.GetOwner(typeof(SecurityIdentifier)) is SecurityIdentifier owner
+                        && !IsPrivilegedSid(owner))
+                        return $"'{current}' is owned by a non-privileged account ({owner})";
+                    if (NonPrivilegedController(security, dangerous) is { } controller)
+                        return $"'{current}' grants modify/replace rights to a non-privileged account ({controller})";
+                }
+
+                var parent = Path.GetDirectoryName(current);
+                if (string.IsNullOrEmpty(parent) || parent == current)
+                    return null; // reached the volume root (validated above)
+                current = parent;
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return $"could not verify trust of '{path}': {ex.Message}";
+        }
+    }
+
+    // True when <paramref name="path"/> and every ancestor up to a system root is
+    // safe for LocalSystem execution (see <see cref="UntrustedPathReason"/>).
+    internal static bool IsTrustedSystemPath(string path) => UntrustedPathReason(path) is null;
+
+    private static HashSet<string> TrustedRootAnchors()
+    {
+        var anchors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(Environment.SpecialFolder folder)
+        {
+            var p = Environment.GetFolderPath(folder);
+            if (!string.IsNullOrEmpty(p))
+                anchors.Add(Path.TrimEndingDirectorySeparator(p));
+        }
+        Add(Environment.SpecialFolder.CommonApplicationData);
+        Add(Environment.SpecialFolder.ProgramFiles);
+        Add(Environment.SpecialFolder.ProgramFilesX86);
+        Add(Environment.SpecialFolder.Windows);
+        return anchors;
+    }
+
+    public async Task<RunCommandResult> RunWingetAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken)
+    {
+        // Defence-in-depth: never execute the wrapper from an untrusted path
+        // (parity with RunChocoAsync; EnsureWingetWrapperAsync also validates).
+        if (UntrustedPathReason(WingetWrapperPath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to run the winget wrapper from an untrusted path: {reason}.");
+
+        var psi = CreateUtf8Psi("powershell.exe");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(WingetWrapperPath);
+        foreach (var arg in argv)
+            psi.ArgumentList.Add(arg);
+
+        return await RunWithTimeoutAsync(psi, WingetRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Generous safety-net timeouts so a hung installer / download cannot block
+    // the Final stage forever. RunAsync kills the whole process tree on cancel.
+    private static readonly TimeSpan WingetProvisionTimeout = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan WingetRunTimeout = TimeSpan.FromMinutes(15);
+
+    // Distinct, non-success exit code reported when a winget run times out.
+    private const int WingetTimeoutExitCode = -2;
+
+    private ProcessStartInfo BuildPowerShellCommandPsi(string script)
+    {
+        var psi = CreateUtf8Psi("powershell.exe");
+        psi.ArgumentList.Add("-NoProfile");
+        psi.ArgumentList.Add("-NonInteractive");
+        psi.ArgumentList.Add("-ExecutionPolicy");
+        psi.ArgumentList.Add("Bypass");
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(script);
+        return psi;
+    }
+
+    // Runs a PowerShell script block via powershell.exe -Command with UTF-8
+    // streams. Shared by the winget probe path.
+    private Task<RunCommandResult> RunPowerShellAsync(string script, CancellationToken cancellationToken) =>
+        RunAsync(BuildPowerShellCommandPsi(script), cancellationToken);
+
+    // Runs a process with an upper time bound. An outer cancellation propagates
+    // as OperationCanceledException; a timeout is translated into a non-zero
+    // RunCommandResult (the tree is already killed by RunAsync).
+    private async Task<RunCommandResult> RunWithTimeoutAsync(
+        ProcessStartInfo psi,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        try
+        {
+            return await RunAsync(psi, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError("'{File}' timed out after {Minutes} minutes and was killed.", psi.FileName, timeout.TotalMinutes);
+            return new RunCommandResult(
+                WingetTimeoutExitCode, "", $"timed out after {timeout.TotalMinutes:0} minutes");
+        }
+    }
+
+    // ---- Chocolatey — RFC 0021 ----
+    //
+    // Ported from gene:dbosoft/chocolatey:install. choco runs cleanly as
+    // LocalSystem from C:\ProgramData\chocolatey — no wrapper, no impersonation.
+
+    private static readonly TimeSpan ChocolateyBootstrapTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan ChocolateyRunTimeout = TimeSpan.FromMinutes(15);
+
+    // Distinct exit code the bootstrap script emits when the installer reports a
+    // .NET Framework reboot is required (choco is unusable until after it).
+    private const int ChocolateyRebootExitCode = 3010;
+
+    private static string ChocolateyExePath
+    {
+        get
+        {
+            var root = Environment.GetEnvironmentVariable("ChocolateyInstall");
+            if (string.IsNullOrWhiteSpace(root))
+                root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "chocolatey");
+            return Path.Combine(root, "bin", "choco.exe");
+        }
+    }
+
+    public Task<bool> IsChocolateyInstalledAsync(CancellationToken cancellationToken) =>
+        // "Installed" only when choco.exe is present AND on a trusted path. A
+        // standard user can pre-create %ProgramData%\chocolatey\bin\choco.exe on
+        // a machine without choco; treating that as installed would run a planted
+        // binary as LocalSystem. An untrusted choco.exe reports "not installed"
+        // so the module bootstraps (and BootstrapChocolateyAsync re-verifies the
+        // result is trusted); RunChocoAsync refuses to execute an untrusted path.
+        Task.FromResult(File.Exists(ChocolateyExePath) && IsTrustedSystemPath(ChocolateyExePath));
+
+    public async Task<ChocolateyBootstrapResult> BootstrapChocolateyAsync(CancellationToken cancellationToken)
+    {
+        // Refuse to bootstrap into an ALREADY-EXISTING untrusted / reparse
+        // install dir. We do NOT pre-create or lock the tree: Chocolatey's
+        // installer self-manages %ChocolateyInstall% (creates it, copies files,
+        // sets its own ACLs), and both a protected ACL and a bare SYSTEM
+        // pre-create make install.ps1 complete without placing choco.exe
+        // (verified on a real catlet). The post-install trust check and
+        // RunChocoAsync's guard still refuse to execute an untrusted choco.exe,
+        // and the installer runs as LocalSystem and force-copies its binaries.
+        if (UntrustedPathReason(ChocolateyExePath) is { } preReason)
+            throw new InvalidOperationException(
+                $"Refusing to bootstrap Chocolatey into '{Path.GetDirectoryName(ChocolateyExePath)}': {preReason}.");
+
+        var psi = BuildPowerShellCommandPsi(PackageScripts.ChocolateyBootstrap());
+        var result = await RunWithTimeoutAsync(psi, ChocolateyBootstrapTimeout, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (result.ExitCode == ChocolateyRebootExitCode)
+        {
+            logger.LogInformation("Chocolatey bootstrap reported a .NET Framework reboot is required.");
+            return new ChocolateyBootstrapResult { RebootRequired = true };
+        }
+
+        if (result.ExitCode != 0)
+        {
+            var detail = result.StdErr.Trim();
+            if (detail.Length == 0)
+                detail = result.StdOut.Trim();
+            throw new InvalidOperationException(
+                $"Chocolatey bootstrap failed (exit {result.ExitCode}): {detail}");
+        }
+
+        // Verify choco actually landed where we will invoke it (honouring
+        // %ChocolateyInstall%) AND that the path is trusted — refuse to accept a
+        // bootstrap result sitting in a non-privileged-writable / reparse path.
+        if (!File.Exists(ChocolateyExePath))
+            throw new InvalidOperationException(
+                $"Chocolatey bootstrap completed but choco.exe was not found at {ChocolateyExePath}.");
+        if (UntrustedPathReason(ChocolateyExePath) is { } chocoReason)
+            throw new InvalidOperationException(
+                $"Refusing to trust Chocolatey at '{ChocolateyExePath}': {chocoReason}.");
+
+        logger.LogInformation("Bootstrapped Chocolatey.");
+        return new ChocolateyBootstrapResult { RebootRequired = false };
+    }
+
+    public async Task<RunCommandResult> RunChocoAsync(
+        IReadOnlyList<string> argv,
+        CancellationToken cancellationToken)
+    {
+        // Never execute choco from an untrusted path (defence-in-depth alongside
+        // IsChocolateyInstalledAsync / BootstrapChocolateyAsync).
+        if (!IsTrustedSystemPath(ChocolateyExePath))
+            throw new InvalidOperationException(
+                $"Refusing to run Chocolatey from an untrusted path '{ChocolateyExePath}'.");
+
+        var psi = CreateUtf8Psi(ChocolateyExePath);
+        foreach (var arg in argv)
+            psi.ArgumentList.Add(arg);
+        return await RunWithTimeoutAsync(psi, ChocolateyRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
 
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
         Task.Run(() =>

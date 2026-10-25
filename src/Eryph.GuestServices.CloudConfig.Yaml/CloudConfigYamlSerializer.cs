@@ -94,6 +94,10 @@ public static class CloudConfigYamlSerializer
         return builder
             .WithTypeConverter(new UserConfigYamlTypeConverter(typeInspector))
             .WithTypeConverter(new RuncmdEntryYamlTypeConverter())
+            // packages: union — each entry is a scalar / [name, version] / a
+            // manager-keyed mapping, and each manager item is a scalar / mapping.
+            .WithTypeConverter(new PackageEntryYamlTypeConverter())
+            .WithTypeConverter(new ManagerPackageYamlTypeConverter())
             // The following converters return Accepts(_) => false because they are
             // attached via WithAttributeOverride above. They must still be registered
             // here so YamlDotNet can resolve them through its TypeConverterCache when
@@ -132,6 +136,8 @@ public static class CloudConfigYamlSerializer
             // dictionaries all serialise correctly via the defaults, so the
             // read-only shorthand converters are intentionally NOT registered.
             .WithTypeConverter(new RuncmdEntryYamlTypeConverter())
+            .WithTypeConverter(new PackageEntryYamlTypeConverter())
+            .WithTypeConverter(new ManagerPackageYamlTypeConverter())
             .WithTypeConverter(new BoolOrStringYamlConverter())
             // Omit unset members so the emitted document carries only the keys
             // the cloud-config actually set. OmitDefaults (not OmitNull) also

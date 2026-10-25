@@ -1,6 +1,8 @@
 # RFC 0021 — `chocolatey` cloud-config module
 
-Status: Draft
+Status: Implemented
+
+Implemented in commit `1dce79d` (module) and `a6f754e` (Config-stage ordering).
 
 ## Problem
 
@@ -47,9 +49,30 @@ choco source add -n <name> -s <url> --priority <n>
 choco install <name> -y --version <v> --params '<params>'
 ```
 
-Exit codes: 0 = success, 1641 / 3010 = reboot required. Map the reboot
-codes to `ModuleOutcome.RebootRequested` to ride the
-[RFC 0007](0007-scripts-per-frequency-edge-cases.md) contract.
+There are **two** distinct reboot triggers, both of which the agent
+maps to `ModuleOutcome.RebootRequested` to ride the
+[RFC 0007](0007-scripts-per-frequency-edge-cases.md) contract:
+
+1. **Bootstrap .NET Framework reboot.** The community `install.ps1`
+   may pull in a .NET Framework that needs a reboot before choco is
+   usable. The existing gene detects this from the installer output
+   (`"reboot is required"`) and, under cloudbase-init, drops a marker
+   file and exits `1003` (cbi's reboot-and-run-again code). In the
+   agent this becomes `RebootRequested` with no marker file —
+   reboot-and-continue re-enters the module and the bootstrap check
+   finds choco already (or re-runs the installer, which is idempotent).
+2. **Package install reboot.** `choco install` exit codes `1641` /
+   `3010` = reboot required.
+
+## Decision
+
+Keep choco in the **LocalSystem** service context — this is correct and
+needs no change from the draft. Reconcile the reboot handling with the
+gene's reality: the agent replaces the cbi-specific `exit 1003` +
+marker-file dance with the native `RebootRequested` outcome, covering
+both triggers above. The current gene only *bootstraps* choco (no
+source/package loop); the module adds the full declarative surface
+below.
 
 ## Tentative direction
 
@@ -96,8 +119,9 @@ chocolatey:
 ### Module
 
 - `Eryph.GuestServices.Provisioning.Modules.ChocolateyModule`
-  (Stage = Final, Order after `WingetModule` so an operator who lists
-  both gets winget first. Frequency = PerInstance.)
+  (Stage = Config, Order after `WingetModule` and before `RuncmdModule`
+  so an operator who lists both gets winget first and `runcmd` can use
+  the installed packages. Frequency = PerInstance.)
 - Bootstrap: if `install_chocolatey: true` and `choco.exe` is missing,
   run the bootstrap one-liner. Skip if already present.
 - Sources: for each entry, `choco source add` (idempotent — choco's
@@ -161,3 +185,9 @@ Both are thin wrappers; everything else reuses the existing
 - Should the module check that the catlet has internet access before
   attempting bootstrap? Tentative no — failing fast with the network
   error is more useful than a silent skip.
+- **Source-add failures are warnings, not failures.** A failing
+  `choco source add` logs a Warning and continues (choco's source-add
+  is idempotent, and a package may not even need that source). A
+  package install failure, by contrast, fails the module. Revisit if a
+  missing source turns out to be a common silent cause of package
+  failures.

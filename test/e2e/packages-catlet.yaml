@@ -1,0 +1,33 @@
+name: packages-e2e
+parent: <<PARENT>>
+cpu:
+  count: 2
+memory:
+  startup: 2048
+
+# The cloud-config below IS the test input. It uses the cloud-init-compatible
+# packages: umbrella (RFC 0033) with BOTH providers in one list: a bare name
+# (default provider = winget) and a chocolatey manager group. Our embedded
+# agent routes them to WingetModule / ChocolateyModule respectively.
+
+variables:
+  - name: sshPublicKey
+    required: true
+
+fodder:
+  - name: e2e-packages
+    type: cloud-config
+    content: |
+      #cloud-config
+      hostname: egs-packages-e2e
+      ssh_authorized_keys:
+        - "{{ sshPublicKey }}"
+      packages:
+        - 7zip.7zip              # bare name -> default provider (winget)
+        - chocolatey:
+            - name: git
+      runcmd:
+        # Proves the agent refreshes PATH after installs: git (installed via the
+        # chocolatey group above, in the same Config stage) must be resolvable by
+        # name here, in runcmd, in the same boot.
+        - 'powershell -NoProfile -Command "New-Item -Force -ItemType Directory C:\ProgramData\eryph-e2e | Out-Null; $v = (git --version) 2>&1 | Out-String; Set-Content -LiteralPath C:\ProgramData\eryph-e2e\git-version.txt -Value $v"'

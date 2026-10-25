@@ -95,6 +95,23 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services agent configuration (capability switches + self-update)")]
     public EgsConfig? Egs { get; init; }
 
+    /// <summary>
+    /// eryph <c>winget:</c> block — installs packages with the Windows Package
+    /// Manager, replacing the <c>gene:dbosoft/winget:install</c> fodder.
+    /// Windows-only; no cloud-init equivalent. See <see cref="WingetConfig"/>
+    /// and RFC 0020.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Windows Package Manager (winget) package installation; no Linux equivalent")]
+    public WingetConfig? Winget { get; init; }
+
+    /// <summary>
+    /// eryph <c>chocolatey:</c> block — installs packages with Chocolatey,
+    /// replacing the <c>gene:dbosoft/chocolatey:install</c> fodder. Windows-only;
+    /// no cloud-init equivalent. See <see cref="ChocolateyConfig"/> and RFC 0021.
+    /// </summary>
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "Chocolatey package installation; no Linux equivalent")]
+    public ChocolateyConfig? Chocolatey { get; init; }
+
     // ---------------------------------------------------------------------
     // Known cloud-init top-level keys that the agent ACCEPTS but does not
     // act on. CloudConfigSerializer walks these after parsing and emits one
@@ -125,9 +142,17 @@ public sealed record CloudConfig
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux APT pipelining; no-op on Windows")]
     public object? AptPipelining { get; init; }
 
-    /// <summary>Linux package list. Future: may map to chocolatey / winget. Accepted; no-op today.</summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux package list (no Windows package-manager binding yet)")]
-    public object? Packages { get; init; }
+    /// <summary>
+    /// cloud-init <c>packages:</c> umbrella. A list whose entries are a bare
+    /// name, a <c>[name, version]</c> pair, or a manager-keyed mapping
+    /// (<c>{winget: [...], chocolatey: [...], apt: [...]}</c>). On Windows the
+    /// winget/chocolatey entries (and bare names, via the default provider
+    /// winget) route into <c>WingetModule</c> / <c>ChocolateyModule</c>; Linux
+    /// managers (apt/snap/yum/…) are accepted and no-op. Cross-platform. See
+    /// <see cref="PackageEntry"/> and RFC 0033.
+    /// </summary>
+    [CloudInitField(Description = "Package install umbrella (winget/chocolatey on Windows; apt/snap/… accepted + no-op)")]
+    public IReadOnlyList<PackageEntry>? Packages { get; init; }
 
     [CloudInitField(Platforms = CloudInitPlatforms.Linux, Description = "Linux package-manager refresh; no-op on Windows")]
     public bool? PackageUpdate { get; init; }
