@@ -190,11 +190,21 @@ internal static class CloudInitKvpEventEncoder
     private static string ChildName(string? stage, string module) =>
         string.IsNullOrEmpty(stage) ? module : $"{stage}/{module}";
 
-    // Keep the user-controlled item name within the KVP key budget, marking a
-    // cut with a trailing ellipsis (byte-aware: the key byte limit is 511, but
-    // the 255-char limit binds first for ASCII, so cap on chars).
-    private static string TruncateItem(string item) =>
-        item.Length <= MaxItemNameLength ? item : item[..(MaxItemNameLength - 1)] + "…";
+    // Keep the user-controlled item name within the KVP key budget, and neutralise
+    // the segment separator: a '|' or newline in the name would break the host
+    // decoder's 5-or-6-segment key parsing. Caps on chars (the 255-char key limit
+    // binds before the 511-byte one for ASCII) without splitting a surrogate pair.
+    private static string TruncateItem(string item)
+    {
+        var safe = item.Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ');
+        if (safe.Length <= MaxItemNameLength)
+            return safe;
+
+        var cut = MaxItemNameLength - 1;
+        if (char.IsHighSurrogate(safe[cut - 1]))
+            cut--;
+        return safe[..cut] + "...";
+    }
 
     // "exit <code>" for a bare failure, "exit <code>: <tail>" when we captured
     // output. The encoder's break-down splits an oversized tail across subkeys.

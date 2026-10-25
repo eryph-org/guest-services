@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using Eryph.GuestServices.HvDataExchange.Common;
 using Eryph.GuestServices.HvDataExchange.Guest;
 using Eryph.GuestServices.Service.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -60,17 +61,55 @@ public class CloudInitStatusWatcherTests
     }
 
     [Fact]
-    public async Task WatchAsync_reuses_cloud_inits_current_boot_incarnation_for_the_detail_event()
+    public async Task WatchAsync_reuses_cloud_inits_incarnation_not_the_computed_boot_time()
     {
-        // cloud-init's own HyperVKvpReportingHandler already wrote events under
-        // THIS boot's incarnation. egs must reuse it so the host decoder (highest
-        // incarnation wins) renders both sets, not just one.
+        // cloud-init's own HyperVKvpReportingHandler already wrote events under its
+        // boot incarnation; egs must reuse THAT (so the host keeps both sets), not
+        // its own computed boot time. The override is deliberately different from
+        // the seeded value so reuse is actually proven (not a tautology).
         var reader = new StubReader(Running("error"));
         var kvp = new RecordingDataExchange();
         kvp.Seed("CLOUD_INIT|1730000000|finish|modules-final|abc", "{}");
 
-        await Watcher(reader, kvp, bootIncarnation: 1730000000)
+        await Watcher(reader, kvp, bootIncarnation: 9999999999)
             .WatchAsync(CancellationToken.None);
+
+        kvp.Writes.SelectMany(w => w)
+            .First(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
+            .Key.Should().StartWith("CLOUD_INIT|1730000000|");
+    }
+
+    [Fact]
+    public async Task WatchAsync_ignores_its_own_stale_detail_event_when_choosing_the_incarnation()
+    {
+        // The pool holds ONLY egs's own detail event from a prior boot (cloud-init
+        // wrote no CLOUD_INIT entries this boot). Reusing it would make this boot's
+        // failure look "already present" and go unreported. egs must ignore its own
+        // detail, write under this boot's incarnation, and sweep the stale one.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+        kvp.Seed("CLOUD_INIT|1000000000|finish|modules-final/cloud-init-errors|old", "{}");
+
+        await Watcher(reader, kvp, bootIncarnation: 2000000000).WatchAsync(CancellationToken.None);
+
+        var writes = kvp.Writes.SelectMany(w => w)
+            .Where(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal)).ToList();
+        writes.Should().Contain(kv => kv.Key.StartsWith("CLOUD_INIT|2000000000|") && kv.Value != null);
+        writes.Should().Contain(kv => kv.Key == "CLOUD_INIT|1000000000|finish|modules-final/cloud-init-errors|old" && kv.Value == null);
+    }
+
+    [Fact]
+    public async Task WatchAsync_ignores_malformed_cloud_init_keys_when_choosing_the_incarnation()
+    {
+        // A malformed key (too few segments) with a huge incarnation must not be
+        // reused — the host never sees it, so writing egs's event there would hide
+        // cloud-init's real events. egs applies the host's 5/6-segment rule.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+        kvp.Seed("CLOUD_INIT|9999999999|bogus", "{}");                        // malformed (3 segments)
+        kvp.Seed("CLOUD_INIT|1730000000|finish|modules-final|abc", "{}");     // valid, current
+
+        await Watcher(reader, kvp, bootIncarnation: 1).WatchAsync(CancellationToken.None);
 
         kvp.Writes.SelectMany(w => w)
             .First(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
@@ -113,9 +152,28 @@ public class CloudInitStatusWatcherTests
 
         await Watcher(reader, kvp, bootIncarnation: 1730000000).WatchAsync(CancellationToken.None);
 
+        var chunk = kvp.Writes.SelectMany(w => w)
+            .Where(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
+            .Should().ContainSingle().Subject;
+        // And that single entry actually passes the host's KVP validator.
+        DataValidator.IsKeyValid(chunk.Key, out var keyError).Should().BeTrue(keyError);
+        DataValidator.IsValueValid(chunk.Value, out var valueError).Should().BeTrue(valueError);
+    }
+
+    [Fact]
+    public async Task WatchAsync_retries_the_detail_write_and_does_not_lose_it_on_a_transient_failure()
+    {
+        // The first detail write throws (transient KVP failure); the watcher must
+        // not swallow it and stop — it retries until the detail is on the wire.
+        var reader = new StubReader(Running("error"), Running("error"), Running("error"));
+        var kvp = new RecordingDataExchange { FailFirstEventWrite = true };
+
+        await Watcher(reader, kvp, bootIncarnation: 1730000000).WatchAsync(CancellationToken.None);
+
         kvp.Writes.SelectMany(w => w)
             .Where(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
-            .Should().ContainSingle();
+            .Should().NotBeEmpty();
+        kvp.WrittenStates.Should().Contain("failed");
     }
 
     [Fact]
@@ -301,6 +359,12 @@ public class CloudInitStatusWatcherTests
         // failure inside the detail-emit path.
         public bool ThrowOnGet { get; init; }
 
+        // When set, the first write that carries a (non-delete) CLOUD_INIT entry
+        // throws — simulates a transient failure of the detail-event write.
+        public bool FailFirstEventWrite { get; init; }
+
+        private bool _eventWriteFailed;
+
         public IEnumerable<string?> WrittenStates =>
             Writes.Select(w => w.TryGetValue("eryph.provisioning.state", out var v) ? v : null);
 
@@ -318,7 +382,24 @@ public class CloudInitStatusWatcherTests
 
         public Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
         {
+            var carriesEvent = values.Any(kv =>
+                kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null);
+            if (FailFirstEventWrite && carriesEvent && !_eventWriteFailed)
+            {
+                _eventWriteFailed = true;
+                throw new IOException("kvp write failed");
+            }
+
             Writes.Add(new Dictionary<string, string?>(values, StringComparer.Ordinal));
+            // Apply back so a later GetGuestDataAsync reflects prior writes.
+            foreach (var kv in values)
+            {
+                if (kv.Value is null)
+                    _guestData.Remove(kv.Key);
+                else
+                    _guestData[kv.Key] = kv.Value;
+            }
+
             return Task.CompletedTask;
         }
     }

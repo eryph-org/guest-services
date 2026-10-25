@@ -47,7 +47,14 @@ internal static class UserCodeOutput
         var trimmed = (text ?? string.Empty).Trim();
         if (maxChars < 1)
             maxChars = 1;
-        return trimmed.Length <= maxChars ? trimmed : trimmed[..maxChars] + "...(truncated)";
+        if (trimmed.Length <= maxChars)
+            return trimmed;
+
+        // Don't split a surrogate pair at the cut.
+        var cut = maxChars;
+        if (char.IsHighSurrogate(trimmed[cut - 1]))
+            cut--;
+        return trimmed[..cut] + "...(truncated)";
     }
 
     private static string Slice(string text, int maxChars)

@@ -166,7 +166,22 @@ public sealed class CloudInitKvpEventEncoderTests
 
         // modules-final/scripts-user/<=80 chars → well under the 255-char key limit.
         mapped!.Value.Name.Length.Should().BeLessThan(120);
-        mapped.Value.Name.Should().EndWith("…");
+        mapped.Value.Name.Should().EndWith("...");
+    }
+
+    [Fact]
+    public void Map_UserCodeFailed_neutralises_pipe_and_newline_in_the_item_name()
+    {
+        // A '|' or newline in the item would break the host's segment parsing of
+        // the KVP key, so the encoder must replace them.
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("runcmd", "a|b\nc", 1, "x")
+            {
+                Origin = "module:RuncmdModule",
+            },
+            "modules-config");
+
+        mapped!.Value.Name.Should().NotContain("|").And.NotContain("\n");
     }
 
     [Fact]
