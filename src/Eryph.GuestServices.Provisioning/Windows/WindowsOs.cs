@@ -721,16 +721,20 @@ internal sealed class WindowsOs : IWindowsOs
         }
     }
 
+    // All four manifest families DSC discovers (command_discovery.rs:
+    // DSC_RESOURCE / DSC_ADAPTED_RESOURCE / DSC_EXTENSION / DSC_MANIFEST_LIST).
     private static readonly string[] DscManifestSuffixes =
     [
         ".dsc.resource.json", ".dsc.resource.yaml", ".dsc.resource.yml",
+        ".dsc.adaptedresource.json", ".dsc.adaptedresource.yaml", ".dsc.adaptedresource.yml",
         ".dsc.extension.json", ".dsc.extension.yaml", ".dsc.extension.yml",
+        ".dsc.manifests.json", ".dsc.manifests.yaml", ".dsc.manifests.yml",
     ];
 
     // The DSC resource/extension manifest files directly in <paramref name="directory"/>
     // (DSC discovers one level deep). The OS pattern pre-filters; the suffix
     // re-check guards against legacy 8.3 / wildcard quirks.
-    private static IEnumerable<string> EnumerateDiscoveryManifests(string directory)
+    internal static IEnumerable<string> EnumerateDiscoveryManifests(string directory)
     {
         foreach (var suffix in DscManifestSuffixes)
             foreach (var file in Directory.EnumerateFiles(directory, "*" + suffix, SearchOption.TopDirectoryOnly))
@@ -2197,6 +2201,19 @@ internal sealed class WindowsOs : IWindowsOs
             throw new InvalidOperationException(
                 $"Refusing to run dsc.exe from '{dscExeDir}': its directory is scanned for DSC " +
                 "resource manifests and is not restricted to privileged accounts.");
+
+        // dsc.exe also reads dsc_default.settings.json and dsc.settings.json from
+        // its OWN directory (util.rs get_setting), which can redirect discovery.
+        // For an operator-installed dsc.exe (install_source: path) a user-writable
+        // or linked settings file could sit beside it — validate each.
+        foreach (var exeSettingsFile in new[] { "dsc_default.settings.json", "dsc.settings.json" })
+        {
+            var exeSettingsPath = Path.Combine(dscExeDir, exeSettingsFile);
+            if (File.Exists(exeSettingsPath) && UntrustedPathReason(exeSettingsPath) is { } exeSettingsReason)
+                throw new InvalidOperationException(
+                    $"Refusing to run dsc.exe: the executable-adjacent settings file '{exeSettingsPath}' is " +
+                    $"untrusted: {exeSettingsReason}.");
+        }
 
         // dsc.exe enforces the document's resource actions as LocalSystem, so the
         // document is as privileged as the executable. Documents we stage land in

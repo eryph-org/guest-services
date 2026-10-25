@@ -120,6 +120,37 @@ public sealed class WindowsOsTrustedPathTests
     }
 
     [Fact]
+    public void EnumerateDiscoveryManifests_covers_all_four_dsc_families()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // DSC discovers four manifest families (resource / adaptedresource /
+        // extension / manifests). The trust scan must see all of them, and must
+        // not treat an unrelated .json / .txt as a manifest.
+        var dir = Path.Combine(Path.GetTempPath(), "egs-manifests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var manifests = new[]
+            {
+                "a.dsc.resource.json", "b.dsc.adaptedresource.yaml",
+                "c.dsc.extension.yml", "d.dsc.manifests.json",
+            };
+            foreach (var f in manifests.Concat(["plain.json", "notes.txt"]))
+                File.WriteAllText(Path.Combine(dir, f), "{}");
+
+            var found = WindowsOs.EnumerateDiscoveryManifests(dir)
+                .Select(Path.GetFileName).ToList();
+
+            found.Should().BeEquivalentTo(manifests);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
     public void FilterTrustedPathEntries_drops_a_create_grantable_directory()
     {
         if (!OperatingSystem.IsWindows()) return;
