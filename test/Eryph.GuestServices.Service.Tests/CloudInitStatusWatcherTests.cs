@@ -29,8 +29,127 @@ public class CloudInitStatusWatcherTests
 
         await Watcher(reader, kvp).WatchAsync(CancellationToken.None);
 
-        kvp.Writes.Should().ContainSingle();
-        kvp.Writes[0]["eryph.provisioning.state"].Should().Be("failed");
+        // The state key is written to "failed" (a failure-detail event is also
+        // emitted — covered separately).
+        kvp.WrittenStates.Should().Contain("failed");
+    }
+
+    [Fact]
+    public async Task WatchAsync_emits_failure_detail_event_with_cloud_init_error_summary()
+    {
+        // On a failed run the watcher surfaces cloud-init's own error summary as a
+        // single CLOUD_INIT FAIL event, so the host log names WHAT failed without
+        // an operator entering the guest.
+        var reader = new StubReader(CloudInitProbe.Running(
+            "error",
+            errors: ["Runparts: 1 failures (001-bootstrap.sh) in 3 attempted commands"],
+            recoverableErrors: ["WARNING: deprecated key 'foo'"]));
+        var kvp = new RecordingDataExchange();
+
+        await Watcher(reader, kvp).WatchAsync(CancellationToken.None);
+
+        var failChunks = kvp.Writes
+            .SelectMany(w => w)
+            .Where(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
+            .ToList();
+        // Fits in a single KVP value (one entry), so the host cannot drop part of it.
+        failChunks.Should().ContainSingle();
+        failChunks[0].Value.Should().Contain("\"result\":\"FAIL\"");
+        failChunks[0].Value.Should().Contain("001-bootstrap.sh");
+        failChunks[0].Value.Should().Contain("WARNING: deprecated key");
+    }
+
+    [Fact]
+    public async Task WatchAsync_reuses_cloud_inits_current_boot_incarnation_for_the_detail_event()
+    {
+        // cloud-init's own HyperVKvpReportingHandler already wrote events under
+        // THIS boot's incarnation. egs must reuse it so the host decoder (highest
+        // incarnation wins) renders both sets, not just one.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+        kvp.Seed("CLOUD_INIT|1730000000|finish|modules-final|abc", "{}");
+
+        await Watcher(reader, kvp, bootIncarnation: 1730000000)
+            .WatchAsync(CancellationToken.None);
+
+        kvp.Writes.SelectMany(w => w)
+            .First(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null)
+            .Key.Should().StartWith("CLOUD_INIT|1730000000|");
+    }
+
+    [Fact]
+    public async Task WatchAsync_ignores_and_sweeps_a_prior_boot_incarnation()
+    {
+        // A persisted pool from an earlier boot must NOT be reused (it would make
+        // the host latch onto stale data) and must be swept.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+        kvp.Seed("CLOUD_INIT|1000000000|finish|modules-final/cloud-init-errors|old", "{}");
+
+        await Watcher(reader, kvp, bootIncarnation: 2000000000)
+            .WatchAsync(CancellationToken.None);
+
+        var cloudInitWrites = kvp.Writes.SelectMany(w => w)
+            .Where(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal)).ToList();
+        // New event under the current boot incarnation...
+        cloudInitWrites.Should().Contain(kv => kv.Key.StartsWith("CLOUD_INIT|2000000000|") && kv.Value != null);
+        // ...and the stale prior-boot entry deleted (null value).
+        cloudInitWrites.Should().Contain(kv => kv.Key == "CLOUD_INIT|1000000000|finish|modules-final/cloud-init-errors|old" && kv.Value == null);
+    }
+
+    [Fact]
+    public async Task WatchAsync_uses_the_boot_incarnation_when_no_cloud_init_entries_exist()
+    {
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+
+        await Watcher(reader, kvp, bootIncarnation: 1730000500)
+            .WatchAsync(CancellationToken.None);
+
+        kvp.Writes.SelectMany(w => w)
+            .First(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal))
+            .Key.Should().StartWith("CLOUD_INIT|1730000500|");
+    }
+
+    [Fact]
+    public async Task WatchAsync_does_not_re_emit_the_detail_when_already_present_for_this_boot()
+    {
+        // A restart re-enters with status still "error"; the detail must not be
+        // duplicated under the same incarnation.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange();
+        kvp.Seed("CLOUD_INIT|1730000000|finish|modules-final/cloud-init-errors|prev", "{}");
+
+        await Watcher(reader, kvp, bootIncarnation: 1730000000)
+            .WatchAsync(CancellationToken.None);
+
+        kvp.Writes.SelectMany(w => w)
+            .Should().NotContain(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal) && kv.Value != null);
+    }
+
+    [Fact]
+    public async Task WatchAsync_emits_no_detail_event_on_a_successful_run()
+    {
+        var reader = new StubReader(Running("done"));
+        var kvp = new RecordingDataExchange();
+
+        await Watcher(reader, kvp).WatchAsync(CancellationToken.None);
+
+        kvp.Writes.SelectMany(w => w)
+            .Should().NotContain(kv => kv.Key.StartsWith("CLOUD_INIT|", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task WatchAsync_still_writes_failed_when_the_detail_emit_throws()
+    {
+        // A failure while producing the detail (here: the guest-data read it does
+        // first) must not abort the watcher nor block the state write.
+        var reader = new StubReader(Running("error"));
+        var kvp = new RecordingDataExchange { ThrowOnGet = true };
+
+        await Watcher(reader, kvp).WatchAsync(CancellationToken.None);
+
+        kvp.WrittenStates.Should().Contain("failed");
     }
 
     [Fact]
@@ -121,8 +240,11 @@ public class CloudInitStatusWatcherTests
 
     private static CloudInitProbe Running(string? status) => CloudInitProbe.Running(status);
 
-    private static CloudInitStatusWatcher Watcher(ICloudInitStatusReader reader, IGuestDataExchange kvp) =>
-        new(reader, kvp, NullLogger<CloudInitStatusWatcher>.Instance, TimeSpan.Zero);
+    private static CloudInitStatusWatcher Watcher(
+        ICloudInitStatusReader reader,
+        IGuestDataExchange kvp,
+        long? bootIncarnation = null) =>
+        new(reader, kvp, NullLogger<CloudInitStatusWatcher>.Instance, TimeSpan.Zero, bootIncarnation);
 
     private sealed class StubReader(params CloudInitProbe[] probes) : ICloudInitStatusReader
     {
@@ -137,16 +259,28 @@ public class CloudInitStatusWatcherTests
 
     private sealed class RecordingDataExchange : IGuestDataExchange
     {
+        private readonly Dictionary<string, string> _guestData = new(StringComparer.Ordinal);
+
         public List<IReadOnlyDictionary<string, string?>> Writes { get; } = [];
+
+        // When set, GetGuestDataAsync throws — simulates a transient KVP read
+        // failure inside the detail-emit path.
+        public bool ThrowOnGet { get; init; }
 
         public IEnumerable<string?> WrittenStates =>
             Writes.Select(w => w.TryGetValue("eryph.provisioning.state", out var v) ? v : null);
+
+        // Pre-populate the guest pool (e.g. cloud-init's own CLOUD_INIT entries).
+        public void Seed(string key, string value) => _guestData[key] = value;
 
         public Task<IReadOnlyDictionary<string, string>> GetExternalDataAsync()
             => Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
 
         public Task<IReadOnlyDictionary<string, string>> GetGuestDataAsync()
-            => Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+            => ThrowOnGet
+                ? throw new IOException("kvp read failed")
+                : Task.FromResult<IReadOnlyDictionary<string, string>>(
+                    new Dictionary<string, string>(_guestData, StringComparer.Ordinal));
 
         public Task SetGuestValuesAsync(IReadOnlyDictionary<string, string?> values)
         {
