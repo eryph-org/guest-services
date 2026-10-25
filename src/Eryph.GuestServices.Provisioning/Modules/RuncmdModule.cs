@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using Eryph.GuestServices.Provisioning.Configuration;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Stages;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
@@ -22,6 +24,7 @@ namespace Eryph.GuestServices.Provisioning.Modules;
 internal sealed class RuncmdModule(
     ILogger<RuncmdModule> logger,
     ProvisioningSettings settings,
+    IReportingDispatcher reporter,
     IRuncmdCheckpointStore checkpointStore) : IModule
 {
     public async Task<ModuleOutcome> ApplyAsync(
@@ -76,6 +79,11 @@ internal sealed class RuncmdModule(
                         NextProgress: progress,
                         Message: $"runcmd #{ordinal} failed to launch."));
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+                await EmitUserCodeFailedAsync(
+                        ordinal, exitCode: -1,
+                        UserCodeOutput.Tail(stdout: null, stderr: $"failed to launch: {ex.Message}"),
+                        cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
 
@@ -91,6 +99,13 @@ internal sealed class RuncmdModule(
             switch (dispatch.Outcome)
             {
                 case RebootExitDispatcher.Action.Continue:
+                    // Non-fatal failure: keep going but make it visible with the
+                    // output tail so the host log shows why, not just that it ran.
+                    if (dispatch.IsFailure)
+                        await EmitUserCodeFailedAsync(
+                                ordinal, result.ExitCode,
+                                UserCodeOutput.Tail(result.StdOut, result.StdErr), cancellationToken)
+                            .ConfigureAwait(false);
                     continue;
                 case RebootExitDispatcher.Action.Reboot:
                     logger.LogInformation(
@@ -98,12 +113,29 @@ internal sealed class RuncmdModule(
                     return ModuleOutcome.RebootForUserScript(dispatch.Message);
                 case RebootExitDispatcher.Action.Fail:
                     logger.LogError(dispatch.Message);
+                    // The run aborts here. Emit ONE UserCodeFailed event with the
+                    // tail and keep the Fail reason short: StageRunner turns the
+                    // reason into both ModuleFailed and ProvisioningFailed events,
+                    // so folding the tail into it would transmit it twice.
+                    await EmitUserCodeFailedAsync(
+                            ordinal, result.ExitCode,
+                            UserCodeOutput.Tail(result.StdOut, result.StdErr), cancellationToken)
+                        .ConfigureAwait(false);
                     return ModuleOutcome.Fail(dispatch.Message);
             }
         }
 
         return ModuleOutcome.Ok();
     }
+
+    private Task EmitUserCodeFailedAsync(
+        int ordinal, int exitCode, string tail, CancellationToken cancellationToken) =>
+        reporter.EmitAsync(
+            new ReportingEvent.UserCodeFailed("runcmd", $"#{ordinal}", exitCode, tail)
+            {
+                Origin = $"module:{nameof(RuncmdModule)}",
+            },
+            cancellationToken);
 
     private static async Task<RunCommandResult> ExecuteAsync(
         RuncmdEntryModel entry,

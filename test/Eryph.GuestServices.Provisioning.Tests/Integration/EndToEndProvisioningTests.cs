@@ -114,6 +114,7 @@ public sealed class EndToEndProvisioningTests : IDisposable
             new RuncmdModule(
                 NullLogger<RuncmdModule>.Instance,
                 settings,
+                reporter,
                 new FileRuncmdCheckpointStore(NullLogger<FileRuncmdCheckpointStore>.Instance, _stateDirectory)),
         };
 

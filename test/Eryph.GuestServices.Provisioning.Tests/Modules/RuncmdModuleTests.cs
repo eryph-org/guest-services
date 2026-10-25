@@ -2,6 +2,8 @@ using AwesomeAssertions;
 using Eryph.GuestServices.CloudConfig;
 using Eryph.GuestServices.Provisioning.Configuration;
 using Eryph.GuestServices.Provisioning.Modules;
+using Eryph.GuestServices.Provisioning.Reporting;
+using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.UserData;
 using Eryph.GuestServices.Provisioning.Windows;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -489,12 +491,162 @@ public sealed class RuncmdModuleTests
         await os.Received(1).RunShellCommandAsync("version-2", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Failing_command_emits_a_user_code_failure_event_and_continues()
+    {
+        // A non-zero exit is non-fatal (cloud-init parity): the module runs the
+        // next entry and completes, but the failure is surfaced with its stderr
+        // tail so the host log shows why.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync("boom", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(3, "", "something failed badly"));
+        os.RunShellCommandAsync("after", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "", ""));
+        var reporter = Substitute.For<IReportingDispatcher>();
+
+        var module = CreateModule(reporter: reporter);
+        var outcome = await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd =
+                [
+                    new RuncmdEntry { IsShellCommand = true, Command = "boom" },
+                    new RuncmdEntry { IsShellCommand = true, Command = "after" },
+                ],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).RunShellCommandAsync("after", Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>());
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent.UserCodeFailed>(e =>
+                e.Module == "runcmd" && e.Item == "#1" && e.ExitCode == 3
+                && e.OutputTail.Contains("something failed badly")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(1001)] // reboot, item done
+    [InlineData(1003)] // reboot, re-run on resume
+    public async Task Reboot_exit_codes_emit_no_user_code_failure_event(int exitCode)
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(exitCode, "", ""));
+        var reporter = Substitute.For<IReportingDispatcher>();
+
+        await CreateModule(reporter: reporter).ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await reporter.DidNotReceive().EmitAsync(
+            Arg.Any<ReportingEvent.UserCodeFailed>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Exit_1002_is_surfaced_as_a_user_code_failure()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1002, "", "unsupported rerun"));
+        var reporter = Substitute.For<IReportingDispatcher>();
+
+        await CreateModule(reporter: reporter).ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent.UserCodeFailed>(e => e.ExitCode == 1002),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Command_that_fails_to_launch_emits_a_failure_event_with_exit_minus_one()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns<RunCommandResult>(_ => throw new InvalidOperationException("no such shell"));
+        var reporter = Substitute.For<IReportingDispatcher>();
+
+        await CreateModule(reporter: reporter).ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent.UserCodeFailed>(e =>
+                e.ExitCode == -1 && e.OutputTail.Contains("no such shell")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Fatal_reboot_limit_emits_the_tail_once_and_keeps_the_reason_short()
+    {
+        // MaxPerScript 0 makes the first 1003 fatal. The tail goes into ONE
+        // UserCodeFailed event; the Fail reason stays short so StageRunner's
+        // ModuleFailed/ProvisioningFailed pair does not transmit it twice.
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(1003, "", "boom detail"));
+        var reporter = Substitute.For<IReportingDispatcher>();
+        var settings = new ProvisioningSettings { Reboot = new RebootSettings { MaxPerScript = 0 } };
+
+        var outcome = await CreateModule(settings: settings, reporter: reporter).ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "x" }],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Failed>()
+            .Which.Reason.Should().NotContain("boom detail"); // short reason, no tail
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent.UserCodeFailed>(e => e.OutputTail.Contains("boom detail")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Succeeding_command_emits_no_user_code_failure_event()
+    {
+        var os = Substitute.For<IWindowsOs>();
+        os.RunShellCommandAsync(Arg.Any<string>(), Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "ok", ""));
+        var reporter = Substitute.For<IReportingDispatcher>();
+
+        var module = CreateModule(reporter: reporter);
+        await module.ApplyAsync(
+            ResolvedUserData.Empty(new CloudConfigModel
+            {
+                Runcmd = [new RuncmdEntry { IsShellCommand = true, Command = "echo hi" }],
+            }),
+            new TestModuleContext(os),
+            CancellationToken.None);
+
+        await reporter.DidNotReceive().EmitAsync(
+            Arg.Any<ReportingEvent.UserCodeFailed>(), Arg.Any<CancellationToken>());
+    }
+
     private static RuncmdModule CreateModule(
         ProvisioningSettings? settings = null,
-        IRuncmdCheckpointStore? checkpointStore = null) =>
+        IRuncmdCheckpointStore? checkpointStore = null,
+        IReportingDispatcher? reporter = null) =>
         new(
             NullLogger<RuncmdModule>.Instance,
             settings ?? new ProvisioningSettings(),
+            reporter ?? Substitute.For<IReportingDispatcher>(),
             checkpointStore ?? new InMemoryRuncmdCheckpointStore());
 
     private sealed class InMemoryRuncmdCheckpointStore : IRuncmdCheckpointStore
