@@ -257,6 +257,76 @@ public interface IWindowsOs
         IReadOnlyList<string> argv,
         CancellationToken cancellationToken);
 
+    // DSC v3 (microsoft/DSC — dsc.exe) — used by DscModule. RFC 0025. The agent
+    // runs as LocalSystem and then EXECUTES dsc.exe, so every resolved path is
+    // trust-validated. winget-sourced installs reuse the winget methods above.
+
+    /// <summary>
+    /// Resolves a trusted <c>dsc.exe</c> for execution and returns its full
+    /// path, or null when none is found. Resolution order:
+    /// <paramref name="explicitPath"/> (for <c>install_source: path</c>), then
+    /// <c>%ProgramFiles%\dsc\dsc.exe</c> (the GitHub-release target), then
+    /// <c>dsc.exe</c> on the refreshed machine PATH (a winget install). A
+    /// candidate on an untrusted path (non-privileged-writable / reparse) is
+    /// rejected so the agent never runs a planted binary as LocalSystem.
+    /// </summary>
+    Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Installs <c>dsc.exe</c> from the <c>PowerShell/DSC</c> GitHub releases:
+    /// downloads the architecture-matched signed asset, extracts it to
+    /// <c>%ProgramFiles%\dsc\</c> and locks the directory down to
+    /// SYSTEM + Administrators. <paramref name="version"/> pins a release tag
+    /// (e.g. <c>3.1.0</c>); null installs the latest. Throws
+    /// <see cref="InvalidOperationException"/> on a failed download / extraction.
+    /// </summary>
+    Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// True when PowerShell 7 (<c>pwsh.exe</c>) is available. The native
+    /// <c>dsc.exe</c> config engine does not need it, but PowerShell-based
+    /// resources and the <c>PSDesiredStateConfiguration</c> (DSC v1) adapter
+    /// require pwsh 7.2+; the module warns when it is missing.
+    /// </summary>
+    Task<bool> IsPowerShell7AvailableAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes an inline DSC configuration document to a SYSTEM-only-writable
+    /// directory under <c>%ProgramData%\eryph\dsc\</c> and returns its full
+    /// path. The directory and file are hardened (owner SYSTEM;
+    /// SYSTEM + Administrators FullControl) because the agent feeds the document
+    /// to <c>dsc.exe</c> as LocalSystem. <paramref name="fileName"/> is a plain
+    /// file name (no directory component).
+    /// </summary>
+    Task<string> WriteDscDocumentAsync(string fileName, string content, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Downloads a DSC configuration document from <paramref name="url"/> into
+    /// the hardened <c>%ProgramData%\eryph\dsc\</c> directory and returns its
+    /// full path. When <paramref name="checksum"/> is a <c>sha256:&lt;hex&gt;</c>
+    /// string the content is verified before the file is accepted. Throws
+    /// <see cref="InvalidOperationException"/> on a download or checksum failure.
+    /// </summary>
+    Task<string> DownloadDscDocumentAsync(
+        string fileName,
+        string url,
+        string? checksum,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs <c>dsc.exe config &lt;verb&gt; --file &lt;documentPath&gt;</c> using
+    /// the already-resolved, trusted <paramref name="dscExePath"/>. Returns the
+    /// engine's exit code, its raw JSON output, and whether any resource asked
+    /// for a reboot (aggregated across the document). The decorator
+    /// (<c>DryRunWindowsOs</c>) intercepts this to print what would be applied
+    /// without running <c>dsc.exe</c>.
+    /// </summary>
+    Task<DscApplyResult> RunDscConfigAsync(
+        string dscExePath,
+        string documentPath,
+        string verb,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Resolves the on-disk name of the built-in Administrator account
     /// (RID 500) via its SID so the lookup survives a rename. Falls back to

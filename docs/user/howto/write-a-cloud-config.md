@@ -37,6 +37,7 @@ Each top-level key maps to a module:
 | `chocolatey` | Chocolatey |
 | `packages` | Winget / Chocolatey (umbrella) |
 | `runcmd` | Runcmd |
+| `dsc` | DSC (Windows, declarative config via DSC v3) |
 | `license` | Licensing |
 | `power_state` | PowerState |
 

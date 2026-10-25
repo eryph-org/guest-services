@@ -23,6 +23,7 @@ per-once). Which modules run in a stage is configurable; their order is not.
 | Licensing | Config / 7 | per-instance | `license` |
 | WriteFilesDeferred | Final / before scripts | per-instance | `write_files` entries with `defer: true` |
 | ScriptsUser | Final | per-instance | script payloads from MIME / shebang |
+| DSC | Final / 1 | per-instance | `dsc` (Windows only) |
 | PowerState | Final / last | per-instance | `power_state` |
 
 To run a different set of modules in a stage, use the `stages` block in
@@ -469,6 +470,66 @@ Manager groups (`winget`, `chocolatey`/`choco`) route to that provider; Linux
 managers (`apt`, `snap`, `yum`, …) are accepted and ignored on Windows. For
 winget `source`/`scope` or chocolatey `params`, use the dedicated `winget:` /
 `chocolatey:` blocks — they run in the same pass and combine with `packages:`.
+
+## DSC
+
+Applies declarative configuration with [Microsoft DSC v3](https://learn.microsoft.com/powershell/dsc/)
+(the native `dsc.exe` engine). Windows only — cloud-init has no DSC module. Runs
+in the Final stage after `runcmd` and the user scripts, so earlier modules (and
+`write_files` / `runcmd`) can stage documents first.
+
+```yaml
+dsc:
+  install: auto             # 'auto' (default) installs dsc.exe if missing; 'skip' fails if absent
+  install_source: winget    # 'winget' (default), 'github_release', or 'path'
+  install_version: '3.1.0'  # optional version pin; latest when omitted
+  # path: C:\tools\dsc.exe  # only with install_source: path
+  apply: set                # 'set' (default, converge), 'test' (report drift), or 'get' (inspect)
+  continue_on_error: false  # stop at the first failed configuration (default)
+  configurations:
+    - name: registry-key      # label used in the log
+      document: |             # inline DSC v3 document
+        $schema: https://aka.ms/dsc/schemas/v3/bundled/config/document.json
+        resources:
+          - name: Example registry key
+            type: Microsoft.Windows/Registry
+            properties:
+              keyPath: HKLM\Software\Contoso
+              _exist: true
+    - name: from-url
+      document_url: https://config.example/app.dsc.yaml
+      checksum: 'sha256:...'  # optional integrity check for document_url
+    - name: staged
+      document_path: /var/lib/eryph/app.dsc.yaml   # a document already on the guest
+```
+
+Each configuration supplies **exactly one** of `document` (inline),
+`document_url` (fetched at apply time, optionally verified with `checksum`) or
+`document_path` (a file already on the guest, e.g. written by `write_files`).
+Configurations apply in order; `name` labels them in the provisioning log.
+
+`apply` chooses the `dsc.exe config` verb: `set` converges the guest to the
+document and, when DSC reports a required restart, reboots and continues
+afterwards; `test` (report drift) and `get` (inspect state) only report and
+never reboot. With `continue_on_error: true` a failed configuration is logged
+and the rest still run; by default the module stops at the first failure.
+
+### Requirements
+
+The agent runs as `LocalSystem` and obtains `dsc.exe` per `install_source`:
+
+- `winget` (default) — installs the `Microsoft.DSC` winget package (needs winget;
+  see the Winget module requirements above).
+- `github_release` — downloads the signed asset from the `PowerShell/DSC`
+  releases (needs outbound internet).
+- `path` — uses an operator-installed `dsc.exe` given by `path`; nothing is
+  downloaded, so this works offline. The executable must live where only
+  administrators can write (the agent runs it as `LocalSystem`).
+
+The native engine itself needs no PowerShell, but PowerShell-based resources and
+the `PSDesiredStateConfiguration` (DSC v1) adapter need PowerShell 7.2+ (which
+Windows Server does not ship by default); the module warns when it is missing.
+Set `install: skip` to fail fast instead of installing when `dsc.exe` is absent.
 
 ## PowerState
 

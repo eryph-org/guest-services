@@ -55,7 +55,8 @@ These are skipped, with a warning where noted:
 | Boothook execution | Captured but not executed. |
 | Vendor-data merge | Parsed and discarded with an Info log. |
 | Random passwords (`type: RANDOM`, `chpasswd.list` `R`/`RANDOM`, password-less entries) | **Rejected** by `validate`, warn-skipped at runtime. No `/dev/console` analogue on Windows to deliver the generated value. |
-| `windows_update`, `winget`, `chocolatey`, `chef`, `dsc` modules | Not implemented. |
+| `windows_update`, `chef` modules | Not implemented. |
+| `winget`, `chocolatey`, `dsc` modules | Implemented as eryph modules — see the [module reference](../reference/modules.md). |
 | Webhook / cloud-native reporting backends | Not shipped (Log + Hyper-V KVP only). |
 | WinRM listener configuration | Not implemented. |
 | Secure-bootstrap config handshake | Not implemented. |

@@ -38,7 +38,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0022](0022-chef-module.md) | `chef` cloud-config module (orchestrator bootstrap) | Draft |
 | [0023](0023-extend-volumes-module.md) | `growpart` cloud-config module on Windows | Implemented |
 | [0024](0024-power-state-module.md) | `power_state` cloud-config module | Implemented |
-| [0025](0025-dsc-module.md) | `dsc` cloud-config module (DSCv3, retires the `windsc` gene workarounds) | Draft |
+| [0025](0025-dsc-module.md) | `dsc` cloud-config module (DSCv3, retires the `windsc` gene workarounds) | Implemented |
 | [0026](0026-winrm-listener-deferred.md) | WinRM listener / certificate auth (deferred) | Draft |
 | [0027](0027-set-locale-module.md) | `locale` / `keyboard` cloud-config module on Windows | Implemented |
 | [0028](0028-linux-keys-module.md) | Acknowledged-but-no-op top-level keys — Info-log Linux / deferred keys via `CloudConfigSerializer` | Implemented |

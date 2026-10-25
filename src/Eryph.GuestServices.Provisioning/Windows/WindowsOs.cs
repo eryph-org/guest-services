@@ -9,6 +9,8 @@
 
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO.Compression;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
@@ -591,6 +593,170 @@ internal sealed class WindowsOs : IWindowsOs
         catch
         {
             // Keep the inherited PATH (e.g. non-Windows host in a unit test).
+        }
+    }
+
+    // Builds the child environment for dsc.exe so that BOTH its executable search
+    // and its resource/extension manifest discovery are confined to trusted
+    // directories. dsc discovers resources by scanning PATH (and, if set,
+    // DSC_RESOURCE_PATH) for *.dsc.resource.json manifests and then invoking the
+    // commands they declare — so a user-writable directory on either search path
+    // would let a planted manifest execute code as LocalSystem, bypassing the
+    // executable and document trust checks. We therefore pass a refreshed PATH
+    // filtered to SYSTEM-protected entries only (keeping tools installed this
+    // boot under %ProgramFiles% etc.) and filter any inherited DSC_RESOURCE_PATH
+    // the same way, dropping it when nothing trusted remains.
+    private static void ApplyTrustedDscDiscoveryEnvironment(ProcessStartInfo psi)
+    {
+        try
+        {
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine);
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+            var combined = string.Join(';', new[] { machine, user }.Where(p => !string.IsNullOrEmpty(p)));
+            // Replace outright — never fall back to the inherited, unfiltered PATH.
+            psi.Environment["Path"] = FilterTrustedPathEntries(combined);
+
+            if (psi.Environment.TryGetValue("DSC_RESOURCE_PATH", out var resourcePath)
+                && !string.IsNullOrEmpty(resourcePath))
+            {
+                var trusted = FilterTrustedPathEntries(resourcePath);
+                if (string.IsNullOrEmpty(trusted))
+                    psi.Environment.Remove("DSC_RESOURCE_PATH");
+                else
+                    psi.Environment["DSC_RESOURCE_PATH"] = trusted;
+            }
+
+            // The PowerShell adapter (and any pwsh-based resource) loads modules
+            // from PSModulePath, so an untrusted entry there is another path to
+            // LocalSystem code execution. Filter it to trusted directories too,
+            // dropping it when nothing trusted remains.
+            if (psi.Environment.TryGetValue("PSModulePath", out var psModulePath)
+                && !string.IsNullOrEmpty(psModulePath))
+            {
+                var trusted = FilterTrustedPathEntries(psModulePath);
+                if (string.IsNullOrEmpty(trusted))
+                    psi.Environment.Remove("PSModulePath");
+                else
+                    psi.Environment["PSModulePath"] = trusted;
+            }
+        }
+        catch
+        {
+            // Fail closed: an empty discovery path is safer than an unfiltered
+            // one for LocalSystem execution.
+            psi.Environment["Path"] = "";
+            try { psi.Environment.Remove("DSC_RESOURCE_PATH"); }
+            catch { /* ignore */ }
+            try { psi.Environment.Remove("PSModulePath"); }
+            catch { /* ignore */ }
+        }
+    }
+
+    // Keeps only the directories of a ';'-separated search path that exist and
+    // are trusted for DSC manifest DISCOVERY (see IsTrustedDiscoveryDirectory).
+    internal static string FilterTrustedPathEntries(string pathList)
+    {
+        var trusted = pathList
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(SafeIsTrustedDirectory);
+        return string.Join(';', trusted);
+    }
+
+    private static bool SafeIsTrustedDirectory(string directory)
+    {
+        try
+        {
+            return Directory.Exists(directory) && IsTrustedDiscoveryDirectory(directory);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // On a directory DSC SCANS for resource/extension manifests, planting a NEW
+    // file is itself the attack: a user-dropped *.dsc.resource.json is executed
+    // as LocalSystem. That is weaker than the replace/delete threat the
+    // execution-path check guards — IsTrustedSystemPath deliberately permits the
+    // non-privileged CreateFiles/CreateDirectories that %ProgramData% grants by
+    // default, because adding a sibling can't alter what we execute. A discovery
+    // directory must additionally deny those create rights.
+    private const FileSystemRights DangerousDiscoveryCreateRights =
+        FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories;
+
+    // True when <paramref name="directory"/> is safe for DSC to scan as a
+    // discovery directory: trusted for execution (owner / reparse / replace up
+    // the chain) AND it grants no non-privileged principal the right to create
+    // a new file or subdirectory in it.
+    internal static bool IsTrustedDiscoveryDirectory(string directory)
+    {
+        // A UNC path or a non-fixed (network / removable) volume is never a
+        // trusted discovery location: a remote or remountable ACL says nothing
+        // about what the other end can change before dsc reads from it.
+        if (!IsOnFixedLocalVolume(directory))
+            return false;
+        if (UntrustedPathReason(directory) is not null)
+            return false;
+        try
+        {
+            var security = new DirectoryInfo(directory).GetAccessControl();
+            if (NonPrivilegedController(security, DangerousDiscoveryCreateRights) is not null)
+                return false;
+
+            // A protected directory can still CONTAIN a manifest that is a reparse
+            // point to a user-controlled file or carries an explicit non-privileged
+            // write ACE. DSC reads those manifests and runs the commands they name,
+            // so each existing discovery manifest must itself be trusted (owner /
+            // reparse / non-privileged write). DSC scans one level only (read_dir),
+            // so this does not recurse.
+            foreach (var manifest in EnumerateDiscoveryManifests(directory))
+                if (UntrustedPathReason(manifest) is not null)
+                    return false;
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // All four manifest families DSC discovers (command_discovery.rs:
+    // DSC_RESOURCE / DSC_ADAPTED_RESOURCE / DSC_EXTENSION / DSC_MANIFEST_LIST).
+    private static readonly string[] DscManifestSuffixes =
+    [
+        ".dsc.resource.json", ".dsc.resource.yaml", ".dsc.resource.yml",
+        ".dsc.adaptedresource.json", ".dsc.adaptedresource.yaml", ".dsc.adaptedresource.yml",
+        ".dsc.extension.json", ".dsc.extension.yaml", ".dsc.extension.yml",
+        ".dsc.manifests.json", ".dsc.manifests.yaml", ".dsc.manifests.yml",
+    ];
+
+    // The DSC resource/extension manifest files directly in <paramref name="directory"/>
+    // (DSC discovers one level deep). The OS pattern pre-filters; the suffix
+    // re-check guards against legacy 8.3 / wildcard quirks.
+    internal static IEnumerable<string> EnumerateDiscoveryManifests(string directory)
+    {
+        foreach (var suffix in DscManifestSuffixes)
+            foreach (var file in Directory.EnumerateFiles(directory, "*" + suffix, SearchOption.TopDirectoryOnly))
+                if (file.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    yield return file;
+    }
+
+    private static bool IsOnFixedLocalVolume(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal))
+                return false; // UNC
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root))
+                return false;
+            return new DriveInfo(root).DriveType == DriveType.Fixed;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -1657,6 +1823,485 @@ internal sealed class WindowsOs : IWindowsOs
         foreach (var arg in argv)
             psi.ArgumentList.Add(arg);
         return await RunWithTimeoutAsync(psi, ChocolateyRunTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    // ---- DSC v3 (microsoft/DSC — dsc.exe) — RFC 0025 ----
+    //
+    // Replaces gene:dbosoft/windsc minus its DSC v1 baggage: dsc.exe is a native
+    // engine (no MOF compile, no NuGet bootstrap, no self-signed cert). The agent
+    // runs as LocalSystem and then EXECUTES dsc.exe AND reads the config document
+    // it wrote, so both the executable and the document directory are
+    // trust-validated against the LocalSystem-LPE surface the package modules use.
+
+    private static readonly TimeSpan DscInstallTimeout = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan DscRunTimeout = TimeSpan.FromMinutes(30);
+
+    private static string DscProgramFilesDirectory =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dsc");
+
+    private static string DscProgramFilesExePath =>
+        Path.Combine(DscProgramFilesDirectory, "dsc.exe");
+
+    // Written only after a GitHub-release install extracts and verifies fully.
+    // Resolution requires it so a half-written install (interrupted extract /
+    // service stop after dsc.exe landed) is not accepted and silently used.
+    private static string DscInstallMarkerPath =>
+        Path.Combine(DscProgramFilesDirectory, ".egs-dsc-install.complete");
+
+    private static string DscDocumentDirectory =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "eryph", "dsc");
+
+    public Task<string?> ResolveDscExecutableAsync(string? explicitPath, CancellationToken cancellationToken) =>
+        Task.Run<string?>(() =>
+        {
+            // 1. Operator-supplied explicit path (install_source: path). Must
+            //    exist and be trusted — we refuse a planted/untrusted binary.
+            if (!string.IsNullOrWhiteSpace(explicitPath))
+            {
+                var expanded = Environment.ExpandEnvironmentVariables(explicitPath);
+                if (!File.Exists(expanded))
+                {
+                    logger.LogWarning("dsc.exe was not found at the configured path '{Path}'.", expanded);
+                    return null;
+                }
+                if (UntrustedPathReason(expanded) is { } reason)
+                {
+                    logger.LogWarning("Refusing to use dsc.exe at '{Path}': {Reason}.", expanded, reason);
+                    return null;
+                }
+                return expanded;
+            }
+
+            // 2. The GitHub-release install target — only when the completion
+            //    marker proves the install finished (a partial install is ignored
+            //    so the module reinstalls rather than running a broken dsc).
+            if (File.Exists(DscProgramFilesExePath)
+                && File.Exists(DscInstallMarkerPath)
+                && IsTrustedSystemPath(DscProgramFilesExePath))
+                return DscProgramFilesExePath;
+
+            // 3. A non-symlink dsc.exe on the refreshed machine PATH in a trusted
+            //    directory. We deliberately do NOT follow a PATH symlink to its
+            //    target: a standard user who can write to any PATH directory
+            //    could plant a `dsc.exe` link repointing at a different trusted
+            //    binary and have us run it as LocalSystem (a confused-deputy LPE).
+            //    IsTrustedSystemPath rejects reparse points, so a planted link is
+            //    refused here; the winget install locations are resolved directly
+            //    below instead of via their PATH alias.
+            var onPath = ResolveExecutableOnRefreshedPath("dsc.exe");
+            if (!string.Equals(onPath, "dsc.exe", StringComparison.Ordinal)
+                && File.Exists(onPath) && IsTrustedSystemPath(onPath)
+                // The managed install target is resolved ONLY by branch 2, which
+                // also requires the completion marker. Never resurrect it here
+                // (where the marker isn't checked) just because it is on PATH.
+                && !string.Equals(
+                    Path.GetFullPath(onPath), Path.GetFullPath(DscProgramFilesExePath),
+                    StringComparison.OrdinalIgnoreCase))
+                return onPath;
+
+            // 4. The winget zip/portable install tree (machine scope) under
+            //    %ProgramFiles%\WinGet\Packages\Microsoft.DSC_* — the real
+            //    executable, not the Links symlink that points at it.
+            var inPackages = FindDscInWingetPackages();
+            if (inPackages is not null && IsTrustedSystemPath(inPackages))
+                return inPackages;
+
+            // 5. The winget MSIX install under %ProgramFiles%\WindowsApps. The
+            //    package identity is Microsoft.DesiredStateConfiguration (the
+            //    winget id Microsoft.DSC is not the MSIX identity).
+            var inWindowsApps = FindDscInWindowsApps();
+            if (inWindowsApps is not null && IsTrustedSystemPath(inWindowsApps))
+                return inWindowsApps;
+
+            return null;
+        }, cancellationToken);
+
+    // Best-effort scan of the machine-scope winget portable store for a
+    // Microsoft.DSC install: %ProgramFiles%\WinGet\Packages\Microsoft.DSC_*\dsc.exe
+    // (the zip/portable installer unpacks dsc.exe into the package dir).
+    private static string? FindDscInWingetPackages()
+    {
+        try
+        {
+            var packages = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WinGet", "Packages");
+            if (!Directory.Exists(packages))
+                return null;
+            foreach (var dir in Directory.EnumerateDirectories(packages, "Microsoft.DSC_*"))
+            {
+                // The portable zip may nest dsc.exe one level down (arch folder).
+                var candidate = Directory
+                    .EnumerateFiles(dir, "dsc.exe", SearchOption.AllDirectories)
+                    .FirstOrDefault();
+                if (candidate is not null)
+                    return candidate;
+            }
+        }
+        catch
+        {
+            // Access denied / odd layout — fall through.
+        }
+
+        return null;
+    }
+
+    // Best-effort scan of the machine-scope WindowsApps store for a winget-
+    // installed (MSIX) dsc.exe. The DSC MSIX package identity is
+    // Microsoft.DesiredStateConfiguration (confirmed from its AppxManifest), not
+    // the winget id Microsoft.DSC. %ProgramFiles%\WindowsApps is readable only by
+    // privileged accounts; the agent runs as LocalSystem, so this succeeds where
+    // a per-user execution alias would not be visible.
+    private static string? FindDscInWindowsApps()
+    {
+        try
+        {
+            var windowsApps = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WindowsApps");
+            if (!Directory.Exists(windowsApps))
+                return null;
+            foreach (var dir in Directory.EnumerateDirectories(windowsApps, "Microsoft.DesiredStateConfiguration*"))
+            {
+                var candidate = Path.Combine(dir, "dsc.exe");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+        catch
+        {
+            // Access denied / odd layout — fall through to "not found".
+        }
+
+        return null;
+    }
+
+    public async Task InstallDscFromGithubReleaseAsync(string? version, CancellationToken cancellationToken)
+    {
+        // RESERVE the install tree before downloading (same race the Chocolatey
+        // bootstrap guards): create it ourselves and reject an already-existing
+        // untrusted / reparse tree BEFORE touching its contents.
+        var target = DscProgramFilesDirectory;
+        Directory.CreateDirectory(target);
+        if (UntrustedPathReason(target) is { } preReason)
+            throw new InvalidOperationException(
+                $"Refusing to install DSC into '{target}': {preReason}.");
+        // Extract into a CLEAN, locked tree: wipe any pre-existing contents (a
+        // stray/planted manifest, or a half-written install from an interrupted
+        // prior run) so discovery can't pick up a stray file and the completion
+        // marker written at the end is the sole proof of a finished install.
+        try { Directory.Delete(target, recursive: true); }
+        catch (DirectoryNotFoundException) { /* already gone */ }
+        Directory.CreateDirectory(target);
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(target));
+
+        var arch = RuntimeInformation.OSArchitecture switch
+        {
+            Architecture.Arm64 => "aarch64",
+            _ => "x86_64",
+        };
+
+        using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        using var http = new HttpClient();
+        // GitHub's REST API requires a User-Agent.
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
+
+        var useLatest = string.IsNullOrWhiteSpace(version) || IsLatestToken(version);
+        if (!useLatest && !DscSupport.IsValidReleaseVersion(version))
+            throw new InvalidOperationException(
+                $"Refusing to install DSC: '{version}' is not a valid release version.");
+        var apiUrl = useLatest
+            ? "https://api.github.com/repos/PowerShell/DSC/releases/latest"
+            : $"https://api.github.com/repos/PowerShell/DSC/releases/tags/v{version!.TrimStart('v')}";
+
+        string releaseJson;
+        try
+        {
+            releaseJson = await http.GetStringAsync(apiUrl, linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException($"Failed to query the DSC release metadata: {ex.Message}", ex);
+        }
+
+        var assetUrl = DscSupport.SelectWindowsReleaseAsset(releaseJson, arch);
+        if (!DscSupport.IsTrustedGitHubAssetUrl(assetUrl))
+            throw new InvalidOperationException(
+                $"Refusing to download the DSC release asset from an untrusted URL: {assetUrl}");
+
+        byte[] zipBytes;
+        try
+        {
+            zipBytes = await http.GetByteArrayAsync(assetUrl, linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException($"Failed to download the DSC release: {ex.Message}", ex);
+        }
+
+        // Extract straight from the in-memory bytes — never stage the archive in a
+        // world-writable temp directory (e.g. C:\Windows\Temp under LocalSystem),
+        // where a local user could race to substitute it before extraction.
+        using (var zipStream = new MemoryStream(zipBytes))
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Read))
+            archive.ExtractToDirectory(target, overwriteFiles: true);
+
+        // Re-harden: files extracted into the (already-locked) directory inherit
+        // its ACL, but set the owner/ACL on the executable explicitly too.
+        if (!File.Exists(DscProgramFilesExePath))
+            throw new InvalidOperationException(
+                $"DSC install completed but dsc.exe was not found at '{DscProgramFilesExePath}'.");
+        ApplySystemOnlyFileAcl(new FileInfo(DscProgramFilesExePath));
+        if (UntrustedPathReason(DscProgramFilesExePath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to trust the installed dsc.exe at '{DscProgramFilesExePath}': {reason}.");
+
+        // Publish the install only now that dsc.exe is present, trusted and the
+        // tree is complete. Resolution requires this marker, so an install that
+        // failed before this point is not picked up on the next run.
+        await File.WriteAllTextAsync(
+            DscInstallMarkerPath, DateTimeOffset.UtcNow.ToString("o"), cancellationToken).ConfigureAwait(false);
+
+        logger.LogInformation("Installed DSC v3 to {Path}.", DscProgramFilesExePath);
+    }
+
+    private static bool IsLatestToken(string? version) =>
+        string.IsNullOrWhiteSpace(version)
+        || string.Equals(version.Trim(), "latest", StringComparison.OrdinalIgnoreCase);
+
+    public Task<bool> IsPowerShell7AvailableAsync(CancellationToken cancellationToken) =>
+        Task.Run(() =>
+        {
+            var resolved = ResolveExecutableOnRefreshedPath("pwsh.exe");
+            if (!string.Equals(resolved, "pwsh.exe", StringComparison.Ordinal) && File.Exists(resolved))
+                return true;
+            // pwsh's default per-machine install location is not always on the
+            // service PATH; check it directly as a fallback.
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            return File.Exists(Path.Combine(programFiles, "PowerShell", "7", "pwsh.exe"));
+        }, cancellationToken);
+
+    public async Task<string> WriteDscDocumentAsync(
+        string fileName,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        var path = PrepareDscDocumentPath(fileName);
+        File.Delete(path);
+        await File.WriteAllTextAsync(
+            path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken)
+            .ConfigureAwait(false);
+        ApplySystemOnlyFileAcl(new FileInfo(path));
+        return path;
+    }
+
+    public async Task<string> DownloadDscDocumentAsync(
+        string fileName,
+        string url,
+        string? checksum,
+        CancellationToken cancellationToken)
+    {
+        // The downloaded document is staged into the trusted directory and its
+        // resource actions run as LocalSystem, so its authenticity matters. TLS
+        // gives it over https; plain http is only acceptable when a checksum pins
+        // the content. Reject anything else (and non-http(s) schemes such as
+        // file:// that could point at a user-controlled path).
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            throw new InvalidOperationException(
+                $"Refusing to download a DSC document from '{url}': only http/https URLs are supported.");
+        if (uri.Scheme == Uri.UriSchemeHttp && string.IsNullOrWhiteSpace(checksum))
+            throw new InvalidOperationException(
+                $"Refusing to download a DSC document over plain HTTP without integrity protection: '{url}'. "
+                + "Use https, or provide a 'sha256:...' checksum.");
+
+        var path = PrepareDscDocumentPath(fileName);
+
+        using var timeoutCts = new CancellationTokenSource(DscInstallTimeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        // Without a checksum the only authenticity guarantee is TLS to the named
+        // host, so forbid redirects — a 30x could otherwise move the download to
+        // a downgraded (http) or off-origin location the scheme check never saw.
+        // With a checksum the content is verified regardless of hops, so redirects
+        // are fine.
+        using var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = !string.IsNullOrWhiteSpace(checksum),
+        };
+        using var http = new HttpClient(handler);
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("eryph-guest-services");
+
+        byte[] bytes;
+        try
+        {
+            using var response = await http.GetAsync(url, linked.Token).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            bytes = await response.Content.ReadAsByteArrayAsync(linked.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                $"Failed to download the DSC document from '{url}': {ex.Message}", ex);
+        }
+
+        if (!string.IsNullOrWhiteSpace(checksum)
+            && DscSupport.Sha256Mismatch(bytes, checksum) is { } mismatch)
+            throw new InvalidOperationException($"DSC document '{url}' {mismatch}");
+
+        File.Delete(path);
+        await File.WriteAllBytesAsync(path, bytes, cancellationToken).ConfigureAwait(false);
+        ApplySystemOnlyFileAcl(new FileInfo(path));
+        return path;
+    }
+
+    // Ensures the SYSTEM-only DSC document directory exists and is trusted, and
+    // returns the full path a document with the given (sanitized) file name
+    // should be written to. The agent feeds these documents to dsc.exe as
+    // LocalSystem, so the directory is hardened like the winget wrapper dir.
+    private string PrepareDscDocumentPath(string fileName)
+    {
+        var safeName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(safeName))
+            throw new ArgumentException("DSC document file name is empty.", nameof(fileName));
+
+        var dir = DscDocumentDirectory;
+        Directory.CreateDirectory(dir);
+        if (UntrustedPathReason(dir) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to use the DSC document directory '{dir}': {reason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(dir));
+        return Path.Combine(dir, safeName);
+    }
+
+    public async Task<DscApplyResult> RunDscConfigAsync(
+        string dscExePath,
+        string documentPath,
+        string verb,
+        CancellationToken cancellationToken)
+    {
+        // Validate and launch the SAME fully-rooted string: a relative dscExePath
+        // would be re-resolved by CreateProcess against the agent dir / cwd / PATH
+        // and could differ from what we trust-checked here.
+        dscExePath = Path.GetFullPath(dscExePath);
+
+        // Defence-in-depth: never execute dsc.exe from an untrusted path
+        // (ResolveDscExecutableAsync already validated it).
+        if (UntrustedPathReason(dscExePath) is { } reason)
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe from an untrusted path: {reason}.");
+
+        // With DSC_RESOURCE_PATH unset, dsc.exe always adds its OWN directory to
+        // the manifest discovery set (for its bundled resources). Filtering PATH
+        // alone would leave that directory unchecked, so an operator-supplied
+        // dsc.exe in a create-grantable directory (e.g. %ProgramData% root) would
+        // let a standard user plant a manifest beside it. Hold the executable's
+        // directory to the same discovery-directory standard.
+        var dscExeDir = Path.GetDirectoryName(dscExePath);
+        if (string.IsNullOrEmpty(dscExeDir) || !IsTrustedDiscoveryDirectory(dscExeDir))
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe from '{dscExeDir}': its directory is scanned for DSC " +
+                "resource manifests and is not restricted to privileged accounts.");
+
+        // dsc.exe also reads dsc_default.settings.json and dsc.settings.json from
+        // its OWN directory (util.rs get_setting), which can redirect discovery.
+        // For an operator-installed dsc.exe (install_source: path) a user-writable
+        // or linked settings file could sit beside it — validate each.
+        foreach (var exeSettingsFile in new[] { "dsc_default.settings.json", "dsc.settings.json" })
+        {
+            var exeSettingsPath = Path.Combine(dscExeDir, exeSettingsFile);
+            if (File.Exists(exeSettingsPath) && UntrustedPathReason(exeSettingsPath) is { } exeSettingsReason)
+                throw new InvalidOperationException(
+                    $"Refusing to run dsc.exe: the executable-adjacent settings file '{exeSettingsPath}' is " +
+                    $"untrusted: {exeSettingsReason}.");
+        }
+
+        // dsc.exe enforces the document's resource actions as LocalSystem, so the
+        // document is as privileged as the executable. Documents we stage land in
+        // the hardened SYSTEM-only DSC directory, but an operator-supplied
+        // document_path may sit in a standard-user-writable location where its
+        // contents could be swapped before we run it — trust-check it too. The
+        // document must already EXIST: UntrustedPathReason treats a missing
+        // descendant of a trusted root (e.g. %ProgramData%) as trusted, so a
+        // not-yet-created path there would pass and a standard user could create
+        // the file before dsc opens it. Requiring existence means we validate the
+        // real file's ownership and rights (our staged inline/downloaded
+        // documents already exist in the SYSTEM-only directory).
+        if (!File.Exists(documentPath))
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document that does not exist: '{documentPath}'.");
+        if (!IsOnFixedLocalVolume(documentPath))
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document from a UNC or non-fixed volume: '{documentPath}'. "
+                + "Its trust cannot be established — stage it on the guest or use an https document_url.");
+        if (UntrustedPathReason(documentPath) is { } documentReason)
+            throw new InvalidOperationException(
+                $"Refusing to apply a DSC document from an untrusted path: {documentReason}.");
+
+        // dsc.exe also takes discovery directories from its settings files, which
+        // outrank (and can disable, via allowEnvOverride:false) the environment we
+        // filter below. The machine/policy settings live in %ProgramData%\dsc.
+        // %ProgramData% grants standard users create rights, so on a stock machine
+        // (no dsc dir yet) a user could plant dsc\dsc.settings.json at any time —
+        // a validate-only check would fail open when the directory is absent and
+        // lose a check-then-use race. RESERVE it instead: create it and lock it to
+        // SYSTEM + Administrators (same pattern as the install/wrapper dirs), then
+        // verify, so no settings file a standard user controls can exist. (The
+        // per-user settings dir is under SYSTEM's own profile, and the workspace
+        // settings file is handled by the working directory set on the process.)
+        var dscSettingsDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "dsc");
+        Directory.CreateDirectory(dscSettingsDir);
+        if (UntrustedPathReason(dscSettingsDir) is { } settingsReason)
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' is untrusted: {settingsReason}.");
+        ApplySystemOnlyDirectoryAcl(new DirectoryInfo(dscSettingsDir));
+        if (!IsTrustedDiscoveryDirectory(dscSettingsDir))
+            throw new InvalidOperationException(
+                $"Refusing to run dsc.exe: the DSC settings directory '{dscSettingsDir}' could not be " +
+                "restricted to privileged accounts and could inject manifest discovery paths.");
+        // Locking the directory stops FUTURE writes but leaves any file a user
+        // planted before the lock. The settings/policy files DSC reads from here
+        // control discovery, so validate each one that exists: an attacker-authored
+        // file is owned by (or writable by) a non-privileged account and is
+        // rejected; an admin-authored file is SYSTEM/Administrators-owned and
+        // passes.
+        foreach (var settingsFile in new[] { "dsc.settings.json", "dsc.policy.json" })
+        {
+            var settingsPath = Path.Combine(dscSettingsDir, settingsFile);
+            if (File.Exists(settingsPath) && UntrustedPathReason(settingsPath) is { } fileReason)
+                throw new InvalidOperationException(
+                    $"Refusing to run dsc.exe: the DSC settings file '{settingsPath}' is untrusted: {fileReason}.");
+        }
+
+        var psi = CreateUtf8Psi(dscExePath);
+        // DSC reads a workspace settings file from the current working directory
+        // ({CWD}\dsc.settings.json). Run from a SYSTEM-protected directory so a
+        // standard user cannot plant one beside the process.
+        psi.WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        psi.ArgumentList.Add("config");
+        psi.ArgumentList.Add(verb);
+        psi.ArgumentList.Add("--file");
+        psi.ArgumentList.Add(documentPath);
+        // dsc.exe (and the resources / pwsh it spawns) must see tools installed
+        // earlier this boot — the service's startup PATH is stale. But dsc also
+        // DISCOVERS resource/extension manifests by scanning PATH (and
+        // DSC_RESOURCE_PATH) and then runs the commands they name, so an
+        // unrestricted search would let a planted manifest in a user-writable
+        // directory run code as LocalSystem. Hand dsc a refreshed PATH filtered
+        // down to trusted (SYSTEM-protected) directories only.
+        ApplyTrustedDscDiscoveryEnvironment(psi);
+
+        var result = await RunWithTimeoutAsync(psi, DscRunTimeout, cancellationToken).ConfigureAwait(false);
+        // Only trust the reboot signal on a successful run; a non-zero exit is a
+        // failure the module surfaces regardless.
+        var reboot = result.ExitCode == 0 && DscSupport.RequiresReboot(result.StdOut);
+        return new DscApplyResult
+        {
+            ExitCode = result.ExitCode,
+            RebootRequested = reboot,
+            JsonOutput = result.StdOut,
+            StdErr = result.StdErr,
+        };
     }
 
     public Task<string> ResolveBuiltinAdministratorNameAsync(CancellationToken cancellationToken) =>
