@@ -18,7 +18,13 @@ internal static class RebootExitDispatcher
         Action Outcome,
         bool MarkCompleted,
         EntryProgress NextProgress,
-        string Message);
+        string Message)
+    {
+        // True when the item exited in error (non-zero, non-reboot). The caller
+        // surfaces these as a visible UserCodeFailed report even when the run
+        // continues; reboot and clean-exit results leave it false.
+        public bool IsFailure { get; init; }
+    }
 
     /// <summary>
     /// Folds the dispatch result into a checkpoint: either appends the item
@@ -90,7 +96,10 @@ internal static class RebootExitDispatcher
                     Action.Continue,
                     MarkCompleted: true,
                     NextProgress: current,
-                    Message: $"{label} #{ordinal} returned 1002 (unsupported).");
+                    Message: $"{label} #{ordinal} returned 1002 (unsupported).")
+                {
+                    IsFailure = true,
+                };
 
             case 1003:
             {
@@ -107,7 +116,10 @@ internal static class RebootExitDispatcher
                         Action.Fail,
                         MarkCompleted: false,
                         NextProgress: current,
-                        Message: $"{label} #{ordinal} exceeded per-script reboot limit ({nextAttempts}/{resolvedLimit}).");
+                        Message: $"{label} #{ordinal} exceeded per-script reboot limit ({nextAttempts}/{resolvedLimit}).")
+                    {
+                        IsFailure = true,
+                    };
                 }
 
                 // 1003 means "re-run me on resume" (cbi parity: the plugin
@@ -139,7 +151,10 @@ internal static class RebootExitDispatcher
                     Action.Continue,
                     MarkCompleted: true,
                     NextProgress: current,
-                    Message: $"{label} #{ordinal} exited with code {exitCode}.");
+                    Message: $"{label} #{ordinal} exited with code {exitCode}.")
+                {
+                    IsFailure = true,
+                };
         }
     }
 }

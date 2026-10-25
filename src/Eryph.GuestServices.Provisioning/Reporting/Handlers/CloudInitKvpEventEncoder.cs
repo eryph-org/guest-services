@@ -34,10 +34,22 @@ internal static class CloudInitKvpEventEncoder
     public const string ResultSuccess = "SUCCESS";
     public const string ResultFail = "FAIL";
 
-    // cloud-init's HyperVKvpReportingHandler size constants. A value over the
-    // (smaller, self-imposed) Azure limit is broken down across `…|<index>`
-    // subkeys; see _break_down in cloudinit/reporting/handlers.py.
-    private const int ChunkValueSize = 1024;     // HV_KVP_AZURE_MAX_VALUE_SIZE
+    // Max serialized value per KVP entry. A larger value is broken down across
+    // `…|<index>` subkeys (cloud-init _break_down in reporting/handlers.py).
+    // cloud-init uses 1024 (HV_KVP_AZURE_MAX_VALUE_SIZE), but DataValidator caps
+    // a KVP value at 1023 CHARACTERS; since a string's UTF-8 byte count is always
+    // >= its char count, keeping each serialized chunk <= 1023 bytes guarantees
+    // <= 1023 chars too, so the host reader never rejects (and silently drops) a
+    // chunk. Staying one byte under cloud-init's limit does not affect the host
+    // decoder, which just reassembles by msg_i.
+    private const int ChunkValueSize = 1023;
+
+    // Longest user-controlled item name allowed in an event name. The KVP key
+    // (CLOUD_INIT|<inc>|<type>|<name>|<uuid>[|<idx>]) must stay within
+    // DataValidator's 255-char limit; capping the item well under that keeps the
+    // whole key valid even for a pathologically long user script filename
+    // (otherwise SetGuestValues rejects the key and the event is dropped).
+    private const int MaxItemNameLength = 80;
     private const string MsgKey = "msg";
     private const string DescIndexKey = "msg_i"; // cloud-init DESC_IDX_KEY
 
@@ -70,6 +82,13 @@ internal static class CloudInitKvpEventEncoder
                 new CloudInitEvent(ChildName(currentStage, m.ModuleName), FinishType, ResultSuccess, m.Outcome, m.Timestamp),
             ReportingEvent.ModuleFailed m =>
                 new CloudInitEvent(ChildName(currentStage, m.ModuleName), FinishType, ResultFail, m.Reason, m.Timestamp),
+            // A single non-fatal user-code failure: a FAIL event nested one level
+            // deeper (<stage>/<module>/<item>) carrying the exit code and output
+            // tail, so it shows in the host log without marking the run failed.
+            ReportingEvent.UserCodeFailed u =>
+                new CloudInitEvent(
+                    ChildName(currentStage, $"{u.Module}/{TruncateItem(u.Item)}"),
+                    FinishType, ResultFail, FormatUserCodeFailure(u), u.Timestamp),
             // On failure StageFinished never fires, so emit the stage-level FAIL
             // here (falling back to init-local when we failed before any stage).
             ReportingEvent.ProvisioningFailed f =>
@@ -170,6 +189,29 @@ internal static class CloudInitKvpEventEncoder
 
     private static string ChildName(string? stage, string module) =>
         string.IsNullOrEmpty(stage) ? module : $"{stage}/{module}";
+
+    // Keep the user-controlled item name within the KVP key budget, and neutralise
+    // the segment separator: a '|' or newline in the name would break the host
+    // decoder's 5-or-6-segment key parsing. Caps on chars (the 255-char key limit
+    // binds before the 511-byte one for ASCII) without splitting a surrogate pair.
+    private static string TruncateItem(string item)
+    {
+        var safe = item.Replace('|', '/').Replace('\r', ' ').Replace('\n', ' ');
+        if (safe.Length <= MaxItemNameLength)
+            return safe;
+
+        var cut = MaxItemNameLength - 1;
+        if (char.IsHighSurrogate(safe[cut - 1]))
+            cut--;
+        return safe[..cut] + "...";
+    }
+
+    // "exit <code>" for a bare failure, "exit <code>: <tail>" when we captured
+    // output. The encoder's break-down splits an oversized tail across subkeys.
+    private static string FormatUserCodeFailure(ReportingEvent.UserCodeFailed u) =>
+        string.IsNullOrEmpty(u.OutputTail)
+            ? $"exit {u.ExitCode}"
+            : $"exit {u.ExitCode}: {u.OutputTail}";
 
     // Hand-written with Utf8JsonWriter (compact, trim-safe) rather than the
     // reflection-based serializer. Field order mirrors cloud-init's value JSON:

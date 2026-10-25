@@ -57,6 +57,16 @@ internal sealed class LogReportingHandler(ILogger<LogReportingHandler> logger) :
                     moduleFailed.Reason);
                 break;
 
+            case ReportingEvent.UserCodeFailed userCodeFailed:
+                logger.LogError(
+                    "[{Origin}] {Module} item {Item} failed (exit {ExitCode}): {OutputTail}",
+                    userCodeFailed.Origin,
+                    userCodeFailed.Module,
+                    userCodeFailed.Item,
+                    userCodeFailed.ExitCode,
+                    userCodeFailed.OutputTail);
+                break;
+
             case ReportingEvent.RebootRequested reboot:
                 logger.LogInformation(
                     "[{Origin}] reboot requested: {Reason}",

@@ -12,9 +12,24 @@ internal readonly record struct CloudInitProbe(bool Installed, string? Status)
 {
     public static readonly CloudInitProbe NotInstalled = new(false, null);
 
+    // Fatal module errors aggregated by `cloud-init status` (the `errors` list),
+    // and recoverable ones (`recoverable_errors`, flattened to "LEVEL: message").
+    // These carry cloud-init's own failure text so egs can surface it host-side
+    // without an operator SSHing into the guest.
+    public IReadOnlyList<string> Errors { get; init; } = [];
+    public IReadOnlyList<string> RecoverableErrors { get; init; } = [];
+
     // Installed; Status is the cloud-init value (done/running/error/...) or null
     // when no parseable status was produced yet.
-    public static CloudInitProbe Running(string? status) => new(true, status);
+    public static CloudInitProbe Running(
+        string? status,
+        IReadOnlyList<string>? errors = null,
+        IReadOnlyList<string>? recoverableErrors = null) =>
+        new(true, status)
+        {
+            Errors = errors ?? [],
+            RecoverableErrors = recoverableErrors ?? [],
+        };
 }
 
 internal interface ICloudInitStatusReader
@@ -64,11 +79,7 @@ internal sealed class CloudInitStatusReader(ILogger<CloudInitStatusReader> logge
             if (string.IsNullOrWhiteSpace(stdout))
                 return CloudInitProbe.Running(null);
 
-            using var document = JsonDocument.Parse(stdout);
-            return CloudInitProbe.Running(
-                document.RootElement.TryGetProperty("status", out var status)
-                    ? status.GetString()
-                    : null);
+            return ParseStatus(stdout);
         }
         catch (Win32Exception)
         {
@@ -105,5 +116,63 @@ internal sealed class CloudInitStatusReader(ILogger<CloudInitStatusReader> logge
 
             process?.Dispose();
         }
+    }
+
+    // Parses one `cloud-init status --format json` document into a probe:
+    // the simplified status plus the aggregated error lists. internal for
+    // direct unit testing without launching a process.
+    internal static CloudInitProbe ParseStatus(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            return CloudInitProbe.Running(null);
+
+        var status = root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String
+            ? s.GetString()
+            : null;
+        return CloudInitProbe.Running(status, ParseErrors(root), ParseRecoverableErrors(root));
+    }
+
+    // Top-level `errors`: a flat JSON array of strings (cloud-init aggregates the
+    // failed modules' messages here, e.g. the cc_scripts_user "Runparts: N
+    // failures (...)" text). Non-string entries are ignored defensively.
+    private static IReadOnlyList<string> ParseErrors(JsonElement root)
+    {
+        if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var result = new List<string>();
+        foreach (var item in errors.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } message)
+                result.Add(message);
+        }
+
+        return result;
+    }
+
+    // `recoverable_errors`: an object mapping a level (WARNING/ERROR/...) to a
+    // JSON array of messages. Flattened to "LEVEL: message" so a single list
+    // carries the level alongside the text.
+    private static IReadOnlyList<string> ParseRecoverableErrors(JsonElement root)
+    {
+        if (!root.TryGetProperty("recoverable_errors", out var recoverable)
+            || recoverable.ValueKind != JsonValueKind.Object)
+            return [];
+
+        var result = new List<string>();
+        foreach (var level in recoverable.EnumerateObject())
+        {
+            if (level.Value.ValueKind != JsonValueKind.Array)
+                continue;
+            foreach (var item in level.Value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String && item.GetString() is { Length: > 0 } message)
+                    result.Add($"{level.Name}: {message}");
+            }
+        }
+
+        return result;
     }
 }

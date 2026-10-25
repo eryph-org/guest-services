@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using AwesomeAssertions;
+using Eryph.GuestServices.HvDataExchange.Common;
 using Eryph.GuestServices.Provisioning.Reporting.Events;
 using Eryph.GuestServices.Provisioning.Reporting.Handlers;
 using Eryph.GuestServices.Provisioning.Stages;
@@ -75,6 +76,112 @@ public sealed class CloudInitKvpEventEncoderTests
         mapped!.Value.Type.Should().Be("finish");
         mapped.Value.Result.Should().Be("FAIL");
         mapped.Value.Description.Should().Be("boom");
+    }
+
+    [Fact]
+    public void Map_UserCodeFailed_is_a_finish_fail_nested_under_module_and_item()
+    {
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("runcmd", "#2", 7, "boom on stderr")
+            {
+                Origin = "module:RuncmdModule",
+            },
+            "modules-config");
+
+        mapped!.Value.Name.Should().Be("modules-config/runcmd/#2");
+        mapped.Value.Type.Should().Be("finish");
+        mapped.Value.Result.Should().Be("FAIL");
+        mapped.Value.Description.Should().Be("exit 7: boom on stderr");
+    }
+
+    [Fact]
+    public void Map_UserCodeFailed_without_output_is_just_the_exit_code()
+    {
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("scripts-user", "003-x.ps1", 1, "")
+            {
+                Origin = "module:ScriptsUserModule",
+            },
+            "modules-final");
+
+        mapped!.Value.Description.Should().Be("exit 1");
+    }
+
+    [Fact]
+    public void Encode_breaks_down_a_large_user_code_tail_across_subkeys()
+    {
+        // A multi-KB stderr tail must survive transport: the encoder splits it
+        // into …|<index> subkeys that the host decoder reassembles.
+        var tail = new string('x', 4000);
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("runcmd", "#1", 2, tail) { Origin = "module:RuncmdModule" },
+            "modules-config");
+
+        var entries = CloudInitKvpEventEncoder.Encode(mapped!.Value, incarnation: 123, Guid.NewGuid());
+
+        entries.Count.Should().BeGreaterThan(1);
+        entries.Should().OnlyContain(e => e.Key.Contains("|"));
+        var reassembled = string.Concat(entries
+            .Select(e => JsonDocument.Parse(e.Value).RootElement)
+            .OrderBy(r => r.GetProperty("msg_i").GetInt32())
+            .Select(r => r.GetProperty("msg").GetString()));
+        reassembled.Should().Contain(tail);
+    }
+
+    [Fact]
+    public void Encode_output_always_passes_the_KVP_DataValidator()
+    {
+        // The host rejects (and silently drops) any key > 255 chars or value
+        // > 1023 chars. A large stderr tail AND a pathologically long user script
+        // filename must still produce only valid entries.
+        var tail = new string('x', 5000);
+        var longItem = new string('f', 200) + ".ps1";
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("scripts-user", longItem, 9, tail)
+            {
+                Origin = "module:ScriptsUserModule",
+            },
+            "modules-final");
+
+        var entries = CloudInitKvpEventEncoder.Encode(mapped!.Value, incarnation: 1730000000, Guid.NewGuid());
+
+        entries.Should().NotBeEmpty();
+        foreach (var entry in entries)
+        {
+            DataValidator.IsKeyValid(entry.Key, out var keyError).Should().BeTrue(keyError);
+            DataValidator.IsValueValid(entry.Value, out var valueError).Should().BeTrue(valueError);
+        }
+    }
+
+    [Fact]
+    public void Map_UserCodeFailed_truncates_a_long_item_name()
+    {
+        var longItem = new string('f', 300);
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("scripts-user", longItem, 1, "x")
+            {
+                Origin = "module:ScriptsUserModule",
+            },
+            "modules-final");
+
+        // modules-final/scripts-user/<=80 chars → well under the 255-char key limit.
+        mapped!.Value.Name.Length.Should().BeLessThan(120);
+        mapped.Value.Name.Should().EndWith("...");
+    }
+
+    [Fact]
+    public void Map_UserCodeFailed_neutralises_pipe_and_newline_in_the_item_name()
+    {
+        // A '|' or newline in the item would break the host's segment parsing of
+        // the KVP key, so the encoder must replace them.
+        var mapped = CloudInitKvpEventEncoder.Map(
+            new ReportingEvent.UserCodeFailed("runcmd", "a|b\nc", 1, "x")
+            {
+                Origin = "module:RuncmdModule",
+            },
+            "modules-config");
+
+        mapped!.Value.Name.Should().NotContain("|").And.NotContain("\n");
     }
 
     [Fact]

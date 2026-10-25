@@ -124,6 +124,8 @@ internal sealed class ScriptsUserModule(
                         NextProgress: progress,
                         Message: $"script #{ordinal} failed to stage."));
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+                await ReportUserCodeFailureAsync(scriptName, $"failed to stage: {ex.Message}", cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
 
@@ -144,7 +146,11 @@ internal sealed class ScriptsUserModule(
             {
                 // Unsupported kind is a static property of the payload (not a
                 // transient failure), so persist completion so we don't try
-                // again next boot.
+                // again next boot. No UserCodeFailed event here (unlike the
+                // stage/launch catches): the ScriptKindDetector already resolves
+                // unrunnable payloads to ScriptKind.Other and they are skipped
+                // earlier with a warning, so this branch is defensive and should
+                // not be reachable for real user input.
                 logger.LogWarning(ex, "Script #{Index} ({Path}) has unsupported kind {Kind}; skipping.",
                     ordinal, scriptPath, script.Kind);
                 checkpoint = RebootExitDispatcher.Apply(
@@ -170,6 +176,8 @@ internal sealed class ScriptsUserModule(
                         NextProgress: progress,
                         Message: $"script #{ordinal} failed to launch."));
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
+                await ReportUserCodeFailureAsync(scriptName, $"failed to launch: {ex.Message}", cancellationToken)
+                    .ConfigureAwait(false);
                 continue;
             }
 
@@ -188,6 +196,11 @@ internal sealed class ScriptsUserModule(
             switch (dispatch.Outcome)
             {
                 case RebootExitDispatcher.Action.Continue:
+                    // Non-fatal failure (non-zero exit, 1002): keep going but make
+                    // it visible with the output tail, so the host log shows why.
+                    if (dispatch.IsFailure)
+                        await ReportUserCodeFailureAsync(scriptName, result, cancellationToken)
+                            .ConfigureAwait(false);
                     continue;
                 case RebootExitDispatcher.Action.Reboot:
                     logger.LogInformation(
@@ -195,6 +208,12 @@ internal sealed class ScriptsUserModule(
                     return ModuleOutcome.RebootForUserScript(dispatch.Message);
                 case RebootExitDispatcher.Action.Fail:
                     logger.LogError(dispatch.Message);
+                    // The run aborts here. Emit ONE UserCodeFailed event with the
+                    // tail and keep the Fail reason short: StageRunner turns the
+                    // reason into both ModuleFailed and ProvisioningFailed events,
+                    // so folding the tail in would transmit it twice.
+                    await ReportUserCodeFailureAsync(scriptName, result, cancellationToken)
+                        .ConfigureAwait(false);
                     return ModuleOutcome.Fail(dispatch.Message);
             }
         }
@@ -309,6 +328,36 @@ internal sealed class ScriptsUserModule(
             logger.LogWarning(ex, "Failed to write script log to '{Path}'.", logPath);
         }
     }
+
+    // Surface a non-fatal script failure (the script ran and exited non-zero, or
+    // never started) as a FAIL event carrying the output tail, without aborting
+    // the run. ExitCode -1 marks a script that could not be launched/staged.
+    private Task ReportUserCodeFailureAsync(
+        string scriptName,
+        RunCommandResult result,
+        CancellationToken cancellationToken) =>
+        EmitUserCodeFailedAsync(
+            scriptName, result.ExitCode,
+            UserCodeOutput.Tail(result.StdOut, result.StdErr), cancellationToken);
+
+    private Task ReportUserCodeFailureAsync(
+        string scriptName,
+        string message,
+        CancellationToken cancellationToken) =>
+        // Nothing ran (stage/launch failure), so pass the message unlabelled —
+        // a "stderr:" label would misstate the source.
+        EmitUserCodeFailedAsync(
+            scriptName, exitCode: -1,
+            UserCodeOutput.Truncate(message), cancellationToken);
+
+    private Task EmitUserCodeFailedAsync(
+        string scriptName, int exitCode, string tail, CancellationToken cancellationToken) =>
+        reporter.EmitAsync(
+            new ReportingEvent.UserCodeFailed("scripts-user", scriptName, exitCode, tail)
+            {
+                Origin = $"module:{nameof(ScriptsUserModule)}",
+            },
+            cancellationToken);
 
     private async Task ReportProgressAsync(
         string scriptName,

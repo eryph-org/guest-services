@@ -92,6 +92,43 @@ public sealed class ScriptsUserModuleTests
     }
 
     [Fact]
+    public async Task ApplyAsync_FailingScript_EmitsUserCodeFailureWithTailAndContinues()
+    {
+        // A non-zero exit is non-fatal: the next script still runs and the module
+        // completes, but the failure is surfaced with its stderr tail.
+        var os = CreateOs();
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(a => a.Contains("001-bad.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(5, "", "Set-Content : access denied"));
+        os.RunArgvCommandAsync(
+                Arg.Is<IReadOnlyList<string>>(argv => argv.Any(a => a.Contains("002-good.ps1"))),
+                Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<CancellationToken>())
+            .Returns(new RunCommandResult(0, "ok", ""));
+        var reporter = Substitute.For<IReportingDispatcher>();
+        var module = CreateModule(reporter: reporter);
+
+        var resolved = ResolvedUserData.Empty(new global::Eryph.GuestServices.CloudConfig.CloudConfig())
+            with
+            {
+                Scripts =
+                [
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("bad"), "bad.ps1"),
+                    new ScriptPayload(ScriptKind.PowerShell, Encoding.UTF8.GetBytes("good"), "good.ps1"),
+                ],
+            };
+
+        var outcome = await module.ApplyAsync(resolved, new TestModuleContext(os), CancellationToken.None);
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await reporter.Received(1).EmitAsync(
+            Arg.Is<ReportingEvent.UserCodeFailed>(e =>
+                e.Module == "scripts-user" && e.Item == "001-bad.ps1" && e.ExitCode == 5
+                && e.OutputTail.Contains("access denied")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ApplyAsync_ScriptExitCode1003_ReturnsRebootRequested()
     {
         var os = CreateOs();

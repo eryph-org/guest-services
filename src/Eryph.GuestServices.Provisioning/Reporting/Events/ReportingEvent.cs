@@ -15,6 +15,17 @@ public abstract record ReportingEvent
     public sealed record Progress(string Message) : ReportingEvent;
 
     /// <summary>
+    /// A single user-supplied command (a <c>runcmd</c> entry or a user script)
+    /// exited non-zero while the module continues with the remaining items
+    /// (cloud-init parity — a failing script does not abort the run). Unlike
+    /// <see cref="ReportingEvent.ModuleFailed"/> this does NOT flip the overall provisioning
+    /// state to failed; it surfaces the failed item, its exit code and an output
+    /// tail as a FAIL event in the cloud-init stream so the host-rendered
+    /// provisioning log shows <em>why</em> without an operator entering the VM.
+    /// </summary>
+    public sealed record UserCodeFailed(string Module, string Item, int ExitCode, string OutputTail) : ReportingEvent;
+
+    /// <summary>
     /// Carries the ssh host-key fingerprints produced by the SshModule so an
     /// operator console can display them (RFC 0018). Gated by the cloud-config
     /// <c>ssh.emit_keys_to_console</c> flag at the producing site.

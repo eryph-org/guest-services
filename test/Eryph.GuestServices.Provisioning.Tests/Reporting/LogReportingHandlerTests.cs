@@ -101,6 +101,23 @@ public sealed class LogReportingHandlerTests
     }
 
     [Fact]
+    public async Task UserCodeFailed_logs_Error_with_item_exit_code_and_tail()
+    {
+        var (handler, log) = Build();
+
+        await handler.PublishAsync(
+            new ReportingEvent.UserCodeFailed("runcmd", "#2", 7, "the stderr tail")
+            {
+                Origin = "module:RuncmdModule",
+            },
+            CancellationToken.None);
+
+        var entry = log.Entries.Should().ContainSingle().Subject;
+        entry.Level.Should().Be(LogLevel.Error);
+        entry.Message.Should().Contain("#2").And.Contain("7").And.Contain("the stderr tail");
+    }
+
+    [Fact]
     public async Task RebootRequested_logs_Information_with_reason()
     {
         var (handler, log) = Build();
