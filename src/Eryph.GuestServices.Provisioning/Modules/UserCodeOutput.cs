@@ -16,7 +16,7 @@ internal static class UserCodeOutput
     // survives without flooding the pool.
     public const int DefaultMaxChars = 1500;
 
-    private const string TruncationMarker = "…(truncated)\n";
+    private const string TruncationMarker = "...(truncated)\n";
 
     public static string Tail(string? stdout, string? stderr, int maxChars = DefaultMaxChars)
     {
@@ -40,11 +40,14 @@ internal static class UserCodeOutput
         return string.Join("\n", parts);
     }
 
-    // Appends the output tail to a failure reason, if any output was captured.
-    public static string AppendTail(string reason, string? stdout, string? stderr)
+    // Bounds a plain message (e.g. a launch/stage exception text) with no stream
+    // label — nothing ran, so "stderr:"/"stdout:" would misstate the source.
+    public static string Truncate(string? text, int maxChars = DefaultMaxChars)
     {
-        var tail = Tail(stdout, stderr);
-        return tail.Length == 0 ? reason : $"{reason}\n{tail}";
+        var trimmed = (text ?? string.Empty).Trim();
+        if (maxChars < 1)
+            maxChars = 1;
+        return trimmed.Length <= maxChars ? trimmed : trimmed[..maxChars] + "...(truncated)";
     }
 
     private static string Slice(string text, int maxChars)

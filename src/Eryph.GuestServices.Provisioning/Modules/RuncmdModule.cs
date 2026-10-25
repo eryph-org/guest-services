@@ -81,7 +81,7 @@ internal sealed class RuncmdModule(
                 await checkpointStore.SaveAsync(instanceId, checkpoint, cancellationToken).ConfigureAwait(false);
                 await EmitUserCodeFailedAsync(
                         ordinal, exitCode: -1,
-                        UserCodeOutput.Tail(stdout: null, stderr: $"failed to launch: {ex.Message}"),
+                        UserCodeOutput.Truncate($"failed to launch: {ex.Message}"),
                         cancellationToken)
                     .ConfigureAwait(false);
                 continue;

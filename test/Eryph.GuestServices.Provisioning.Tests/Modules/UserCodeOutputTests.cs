@@ -37,9 +37,18 @@ public sealed class UserCodeOutputTests
 
         var tail = UserCodeOutput.Tail(stdout: null, stderr: text, maxChars: 20);
 
-        tail.Should().StartWith("stderr: …(truncated)");
+        tail.Should().StartWith("stderr: ...(truncated)");
         tail.Should().EndWith("THE REAL ERROR");
         tail.Should().NotContain("aaaaaaaaaa"); // the head was dropped
+    }
+
+    [Fact]
+    public void Truncate_bounds_a_plain_message_without_a_stream_label()
+    {
+        UserCodeOutput.Truncate("  failed to launch: no such file  ")
+            .Should().Be("failed to launch: no such file");
+        UserCodeOutput.Truncate(new string('x', 50), maxChars: 10)
+            .Should().Be(new string('x', 10) + "...(truncated)");
     }
 
     [Fact]
@@ -64,12 +73,4 @@ public sealed class UserCodeOutputTests
         act().Should().Contain("stderr:");
     }
 
-    [Fact]
-    public void AppendTail_appends_output_to_the_reason_or_leaves_it_alone()
-    {
-        UserCodeOutput.AppendTail("boom", stdout: null, stderr: "detail")
-            .Should().Be("boom\nstderr: detail");
-        UserCodeOutput.AppendTail("boom", stdout: "", stderr: "   ")
-            .Should().Be("boom");
-    }
 }

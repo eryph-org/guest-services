@@ -344,9 +344,11 @@ internal sealed class ScriptsUserModule(
         string scriptName,
         string message,
         CancellationToken cancellationToken) =>
+        // Nothing ran (stage/launch failure), so pass the message unlabelled —
+        // a "stderr:" label would misstate the source.
         EmitUserCodeFailedAsync(
             scriptName, exitCode: -1,
-            UserCodeOutput.Tail(stdout: null, stderr: message), cancellationToken);
+            UserCodeOutput.Truncate(message), cancellationToken);
 
     private Task EmitUserCodeFailedAsync(
         string scriptName, int exitCode, string tail, CancellationToken cancellationToken) =>

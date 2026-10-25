@@ -35,11 +35,6 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
     // it never approaches the KVP key-length limit).
     private const string DetailEventName = "modules-final/cloud-init-errors";
 
-    // Slack (seconds) when deciding whether an existing incarnation belongs to
-    // THIS boot: cloud-init and egs derive the boot-time incarnation
-    // independently (time.time()-uptime) and can differ by a second or two.
-    private const long IncarnationSlackSeconds = 5;
-
     private readonly ICloudInitStatusReader _reader;
     private readonly IGuestDataExchange _kvp;
     private readonly ILogger<CloudInitStatusWatcher> _logger;
@@ -150,7 +145,7 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
     }
 
     // Emits one cloud-init-format FAIL event carrying the failure detail, under
-    // THIS boot's incarnation, and sweeps stale prior-boot CLOUD_INIT entries in
+    // the current incarnation, and sweeps strictly-older CLOUD_INIT entries in
     // the same write. Idempotent: re-entering with cloud-init still in "error"
     // (e.g. after an egs restart) does not duplicate the event. Best-effort — a
     // failure here is logged and swallowed.
@@ -159,38 +154,24 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
         try
         {
             var guestData = await _kvp.GetGuestDataAsync().ConfigureAwait(false);
-            var bootIncarnation = _bootIncarnationOverride ?? ComputeBootIncarnation();
-            var incarnation = ResolveCurrentBootIncarnation(guestData, bootIncarnation);
+            var incarnation = ResolveIncarnation(guestData);
 
             var values = new Dictionary<string, string?>(StringComparer.Ordinal);
 
-            // Sweep prior-boot CLOUD_INIT entries (incarnation below this boot) so
-            // the guest pool does not grow unbounded across reboots and the host's
-            // highest-incarnation filter cannot latch onto a stale boot.
+            // Sweep CLOUD_INIT entries strictly older than the current incarnation
+            // (prior boots) so the pool does not grow unbounded across reboots.
+            // Relative comparison only — never a wall-clock one — so a clock that
+            // is stepped after cloud-init wrote its entries cannot delete them.
             foreach (var key in guestData.Keys)
             {
-                if (TryGetIncarnation(key, out var keyIncarnation)
-                    && keyIncarnation < bootIncarnation - IncarnationSlackSeconds)
-                {
+                if (TryGetIncarnation(key, out var keyIncarnation) && keyIncarnation < incarnation)
                     values[key] = null;
-                }
             }
 
             // Only emit the detail if it is not already on the wire for this boot.
             if (!DetailAlreadyPresent(guestData, incarnation))
             {
-                var message = ComposeFailureMessage(probe);
-
-                // name/type/result mirror a cloud-init module FAIL finish so the
-                // host renders it like any other failure line.
-                var cloudInitEvent = new CloudInitEvent(
-                    Name: DetailEventName,
-                    Type: CloudInitKvpEventEncoder.FinishType,
-                    Result: CloudInitKvpEventEncoder.ResultFail,
-                    Description: message,
-                    Timestamp: DateTimeOffset.UtcNow);
-
-                foreach (var entry in CloudInitKvpEventEncoder.Encode(cloudInitEvent, incarnation, Guid.NewGuid()))
+                foreach (var entry in EncodeSingleEntry(ComposeFailureMessage(probe), incarnation))
                     values[entry.Key] = entry.Value;
             }
 
@@ -207,10 +188,37 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
         }
     }
 
+    // Encodes the FAIL event and guarantees a SINGLE KVP entry: the host can drop
+    // trailing break-down chunks under KVP pressure, so a multi-entry event would
+    // arrive truncated. Budgeting by characters is not enough — the encoder caps
+    // the serialized UTF-8 size, and JSON escaping (quotes, newlines, non-ASCII)
+    // can push an under-char-limit message over — so we trim and re-encode until
+    // it fits one entry.
+    private static IReadOnlyList<KeyValuePair<string, string>> EncodeSingleEntry(string message, long incarnation)
+    {
+        var eventId = Guid.NewGuid();
+        while (true)
+        {
+            var cloudInitEvent = new CloudInitEvent(
+                Name: DetailEventName,
+                Type: CloudInitKvpEventEncoder.FinishType,
+                Result: CloudInitKvpEventEncoder.ResultFail,
+                Description: message,
+                Timestamp: DateTimeOffset.UtcNow);
+            var entries = CloudInitKvpEventEncoder.Encode(cloudInitEvent, incarnation, eventId);
+            if (entries.Count <= 1 || message.Length == 0)
+                return entries;
+
+            var cut = Math.Max(0, message.Length * 3 / 4);
+            message = cut == 0 ? string.Empty : message[..cut] + "...(truncated)";
+        }
+    }
+
     // cloud-init's own error summary: its status `errors` (which names the failed
-    // module/script) followed by `recoverable_errors`. Capped to a single KVP
-    // value so the whole event is one entry and is not partially dropped by the
-    // KVP budget. Falls back to a generic line when cloud-init reported no detail.
+    // module/script) followed by `recoverable_errors`. Capped so the whole event
+    // fits one KVP value; the final single-entry guarantee is enforced by
+    // EncodeSingleEntry. Falls back to a generic line when cloud-init reported no
+    // detail.
     private static string ComposeFailureMessage(CloudInitProbe probe)
     {
         var builder = new StringBuilder();
@@ -230,28 +238,26 @@ internal sealed class CloudInitStatusWatcher : BackgroundService
 
         return builder.Length <= MaxMessageChars
             ? builder.ToString()
-            : builder.ToString(0, MaxMessageChars) + "…(truncated; see the guest's cloud-init logs)";
+            : builder.ToString(0, MaxMessageChars) + "...(truncated; see the guest's cloud-init logs)";
     }
 
-    // The incarnation to write under: an existing CLOUD_INIT incarnation from
-    // THIS boot (cloud-init's own, so the host keeps both sets), or this boot's
-    // incarnation when egs is the sole writer. Deliberately ignores prior-boot
-    // incarnations so a persisted pool cannot make us write under a stale boot.
-    private static long ResolveCurrentBootIncarnation(
-        IReadOnlyDictionary<string, string> guestData, long bootIncarnation)
+    // The incarnation to write under: the highest already present on CLOUD_INIT
+    // entries (cloud-init's own current-boot entries are the newest, so reusing it
+    // keeps both sets under the host's highest-incarnation rule), or this boot's
+    // computed incarnation only when the pool holds no CLOUD_INIT entries at all.
+    private long ResolveIncarnation(IReadOnlyDictionary<string, string> guestData)
     {
-        long? currentBootMax = null;
+        long? highest = null;
         foreach (var key in guestData.Keys)
         {
             if (TryGetIncarnation(key, out var keyIncarnation)
-                && keyIncarnation >= bootIncarnation - IncarnationSlackSeconds
-                && (currentBootMax is null || keyIncarnation > currentBootMax))
+                && (highest is null || keyIncarnation > highest))
             {
-                currentBootMax = keyIncarnation;
+                highest = keyIncarnation;
             }
         }
 
-        return currentBootMax ?? bootIncarnation;
+        return highest ?? _bootIncarnationOverride ?? ComputeBootIncarnation();
     }
 
     private static bool DetailAlreadyPresent(IReadOnlyDictionary<string, string> guestData, long incarnation)
