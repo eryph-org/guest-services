@@ -84,6 +84,8 @@ internal sealed class EgsModule(ILogger<EgsModule> logger, IEgsUpdater updater) 
             .ConfigureAwait(false);
         await WriteFlagIfSetAsync(ServiceControlFlag.PortForwarding, settings.PortForwarding, context, cancellationToken)
             .ConfigureAwait(false);
+        await WriteFlagIfSetAsync(ServiceControlFlag.GatewayPorts, settings.GatewayPorts, context, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task WriteFlagIfSetAsync(

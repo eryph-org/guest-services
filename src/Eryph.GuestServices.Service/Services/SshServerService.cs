@@ -10,6 +10,7 @@ using Eryph.GuestServices.Sockets;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Events;
+using Microsoft.DevTunnels.Ssh.Messages;
 using Microsoft.DevTunnels.Ssh.Tcp;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,7 @@ internal sealed class SshServerService(
     private Task? _listenTask;
     private bool _started;
     private bool _portForwardingEnabled;
+    private bool _gatewayPortsEnabled;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -44,6 +46,7 @@ internal sealed class SshServerService(
 
         _started = true;
         _portForwardingEnabled = controlFlags.IsPortForwardingEnabled();
+        _gatewayPortsEnabled = controlFlags.IsGatewayPortsEnabled();
 
         var hostKey = await keyStorage.GetHostKeyAsync();
         if (hostKey is null)
@@ -56,11 +59,16 @@ internal sealed class SshServerService(
         var config = BuildConfiguration(shellSelector, _portForwardingEnabled);
         if (_portForwardingEnabled)
             logger.LogInformation(
-                "Port forwarding enabled (PortForwardingEnabled); SSH tunneling (-L/-R) is available.");
+                "Port forwarding enabled (PortForwardingEnabled); SSH tunneling (-L/-R) is available. "
+                + "Reverse-forward (-R) listeners bind {BindScope}.",
+                _gatewayPortsEnabled
+                    ? "the client-requested address (GatewayPorts enabled)"
+                    : "loopback only — 127.0.0.1 / ::1 (GatewayPorts disabled)");
 
         _server = new SocketSshServer(config, new TraceSource("SshServer"));
         _server.Credentials = new SshServerCredentials(hostKey);
         _server.SessionAuthenticating += SessionAuthenticating;
+        _server.SessionRequest += SessionRequesting;
         _server.ExceptionRaised += ExceptionRaised;
 
         _socket = await SocketFactory.CreateServerSocket(ListenMode.Parent, Constants.ServiceId, 1);
@@ -92,6 +100,88 @@ internal sealed class SshServerService(
     {
         logger.LogWarning(e, "Unhandled exception in the SSH server.");
     }
+
+    private void SessionRequesting(object? sender, SshRequestEventArgs<SessionRequestMessage> e) =>
+        ApplySessionRequestPolicy(
+            e,
+            _portForwardingEnabled,
+            _gatewayPortsEnabled,
+            () => (sender as SshSession)?.GetService<PortForwardingService>(),
+            logger);
+
+    /// <summary>
+    /// The reverse-forward (<c>ssh -R</c>) session-request policy. Unlike the
+    /// <c>direct-tcpip</c> channel of <c>ssh -L</c> — which the registered
+    /// <see cref="PortForwardingService"/> authorizes on its own — a
+    /// <c>tcpip-forward</c> session request is refused unless it is explicitly
+    /// authorized here (its <c>IsAuthorized</c> defaults to false).
+    /// </summary>
+    /// <remarks>
+    /// For <c>tcpip-forward</c> with <c>GatewayPorts</c> off (the default), the
+    /// listener must be pinned to loopback. The client's requested bind address is
+    /// already resolved by the <see cref="PortForwardingService"/> before this
+    /// runs, and the request message is backed by an immutable wire buffer, so the
+    /// address cannot be rewritten; instead a loopback-forcing
+    /// <see cref="PortForwardingService.TcpListenerFactory"/> is installed, which
+    /// the library reads later when it binds the listener. The pin is applied
+    /// <b>before</b> authorizing and the request is refused (fail <b>closed</b>) if
+    /// the factory cannot be installed — never authorized-but-unpinned, which would
+    /// let the library bind <see cref="System.Net.IPAddress.Any"/> and expose the
+    /// guest on every interface. <paramref name="resolvePortForwarding"/> is only
+    /// invoked for a <c>tcpip-forward</c> that needs pinning.
+    /// </remarks>
+    internal static void ApplySessionRequestPolicy(
+        SshRequestEventArgs<SessionRequestMessage> e,
+        bool portForwardingEnabled,
+        bool gatewayPortsEnabled,
+        Func<PortForwardingService?> resolvePortForwarding,
+        ILogger logger)
+    {
+        if (!ShouldAuthorizeSessionRequest(portForwardingEnabled, e.RequestType))
+            return;
+
+        // cancel-tcpip-forward only releases a previously requested listener;
+        // there is nothing to bind, so no loopback pin is needed.
+        if (e.RequestType == Constants.CancelTcpipForwardRequestType)
+        {
+            e.IsAuthorized = true;
+            return;
+        }
+
+        // tcpip-forward with GatewayPorts opted in: honor the client-requested
+        // bind address (the library's default factory), accepting the exposure.
+        if (gatewayPortsEnabled)
+        {
+            e.IsAuthorized = true;
+            return;
+        }
+
+        // tcpip-forward, GatewayPorts off (default): pin the listener to loopback
+        // BEFORE authorizing, and fail CLOSED — refuse the forward if the guard
+        // cannot be installed, rather than let the library bind IPAddress.Any.
+        var portForwarding = resolvePortForwarding();
+        if (portForwarding is null)
+        {
+            logger.LogWarning(
+                "Refusing ssh -R (tcpip-forward): the PortForwardingService could not be resolved, "
+                + "so the loopback bind guard could not be installed. Enable GatewayPorts to allow "
+                + "non-loopback reverse forwards.");
+            return;
+        }
+
+        portForwarding.TcpListenerFactory = LoopbackTcpListenerFactory.Instance;
+        e.IsAuthorized = true;
+    }
+
+    /// <summary>
+    /// Decides whether a session-level global request may be authorized at all:
+    /// the reverse-forward requests (<c>tcpip-forward</c> / <c>cancel-tcpip-forward</c>
+    /// for <c>ssh -R</c>) when, and only when, port forwarding is enabled.
+    /// </summary>
+    internal static bool ShouldAuthorizeSessionRequest(bool portForwardingEnabled, string? requestType) =>
+        portForwardingEnabled
+        && (requestType == Constants.TcpipForwardRequestType
+            || requestType == Constants.CancelTcpipForwardRequestType);
 
     private void SessionAuthenticating(object? _, SshAuthenticatingEventArgs e)
     {

@@ -23,6 +23,15 @@ public sealed class SocketSshServer(SshSessionConfiguration config, TraceSource 
 
     public event EventHandler<SshRequestEventArgs<ChannelRequestMessage>>? ChannelRequest;
 
+    /// <summary>
+    /// Raised for session-level global requests (e.g. <c>tcpip-forward</c> for
+    /// <c>ssh -R</c>). A subscriber authorizes a request by setting
+    /// <see cref="SshRequestEventArgs{T}.IsAuthorized"/>; unauthorized requests
+    /// are refused. This is the session-request counterpart to
+    /// <see cref="ChannelRequest"/>, which covers per-channel requests only.
+    /// </summary>
+    public event EventHandler<SshRequestEventArgs<SessionRequestMessage>>? SessionRequest;
+
     public event EventHandler<Exception>? ExceptionRaised;
 
     public async Task AcceptSessionsAsync(Socket serverSocket)
@@ -53,6 +62,11 @@ public sealed class SocketSshServer(SshSessionConfiguration config, TraceSource 
             session.Authenticating += (s, e) =>
             {
                 SessionAuthenticating?.Invoke(s, e);
+            };
+
+            session.Request += (s, e) =>
+            {
+                SessionRequest?.Invoke(s, e);
             };
 
             session.ChannelOpening += (s, e) =>

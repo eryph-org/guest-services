@@ -5,6 +5,10 @@ using Eryph.GuestServices.Provisioning.Cli;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Cli;
 
+// Redirects the static Spectre AnsiConsole (see below); join the serialized
+// collection so disposing it never races a parallel CLI command test writing to
+// the same static console.
+[Collection(nameof(ProvisioningPathsCollection))]
 [SupportedOSPlatform("windows")]
 [RequiresUnreferencedCode("Tests ValidateCommand which uses ProvisioningContainerBuilder.")]
 public sealed class ValidateCommandTests : IDisposable

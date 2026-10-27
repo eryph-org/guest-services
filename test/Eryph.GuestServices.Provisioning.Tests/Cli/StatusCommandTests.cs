@@ -5,6 +5,12 @@ using NSubstitute;
 
 namespace Eryph.GuestServices.Provisioning.Tests.Cli;
 
+// StatusCommand writes to the static Spectre AnsiConsole and reads
+// ProvisioningPaths.RootOverride; both are process-wide. Join the serialized
+// collection so it never runs in parallel with the other CLI command tests that
+// redirect / dispose the static console (a parallel dispose surfaced as an
+// intermittent "Cannot write to a closed TextWriter" on CI).
+[Collection(nameof(ProvisioningPathsCollection))]
 public sealed class StatusCommandTests
 {
     [Fact]

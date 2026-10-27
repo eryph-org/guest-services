@@ -51,6 +51,23 @@ public static class Constants
     /// </summary>
     public static readonly string PortForwardingFeature = "port-forwarding";
 
+    /// <summary>
+    /// SSH session-level global request by which a client asks the server to
+    /// listen on a port and forward incoming connections back over the session
+    /// (<c>ssh -R</c>). The DevTunnels <c>PortForwardingService</c> only honors
+    /// it when the session request is authorized; the server authorizes it (and
+    /// its cancel counterpart) only while port forwarding is enabled. Unlike the
+    /// <c>direct-tcpip</c> channel of <c>-L</c> — which the registered service
+    /// authorizes on its own — a session request is refused by default.
+    /// </summary>
+    public static readonly string TcpipForwardRequestType = "tcpip-forward";
+
+    /// <summary>
+    /// The counterpart to <see cref="TcpipForwardRequestType"/> that releases a
+    /// previously requested reverse-forward listener.
+    /// </summary>
+    public static readonly string CancelTcpipForwardRequestType = "cancel-tcpip-forward";
+
     public static readonly string ClientAuthKey = "eryph:guest-services:client-public-key";
 
     /// <summary>

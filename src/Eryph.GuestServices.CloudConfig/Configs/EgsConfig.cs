@@ -15,7 +15,7 @@ public sealed record EgsConfig
     /// surface the service reads at start (Windows registry
     /// <c>HKLM\SOFTWARE\eryph\guest-services</c>).
     /// </summary>
-    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services capability switches (remote access / provisioning / kvp auth / port forwarding)")]
+    [CloudInitField(Platforms = CloudInitPlatforms.Windows, Description = "eryph guest-services capability switches (remote access / provisioning / kvp auth / port forwarding / gateway ports)")]
     public EgsSettingsConfig? Settings { get; init; }
 
     /// <summary>
@@ -61,4 +61,14 @@ public sealed record EgsSettingsConfig
     /// <c>true</c>, so leaving this unset keeps tunneling closed.
     /// </summary>
     public bool? PortForwarding { get; init; }
+
+    /// <summary>
+    /// Gates whether a reverse-forward (<c>ssh -R</c>) listener may bind a
+    /// non-loopback interface (OpenSSH <c>GatewayPorts</c>). <b>Opt-in</b>: off
+    /// unless set to <c>true</c>. Only meaningful alongside
+    /// <see cref="PortForwarding"/>; with it unset, reverse-forward listeners stay
+    /// pinned to loopback, so leaving this unset never exposes the guest on its
+    /// network.
+    /// </summary>
+    public bool? GatewayPorts { get; init; }
 }

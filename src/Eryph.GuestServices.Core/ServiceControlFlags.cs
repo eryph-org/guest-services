@@ -25,17 +25,24 @@ public enum ServiceControlFlag
 
     /// <summary>SSH port forwarding / tunneling (<c>PortForwardingEnabled</c>).</summary>
     PortForwarding,
+
+    /// <summary>
+    /// Whether reverse-forward (<c>ssh -R</c>) listeners may bind non-loopback
+    /// interfaces (<c>GatewayPorts</c>). Only meaningful when
+    /// <see cref="PortForwarding"/> is on.
+    /// </summary>
+    GatewayPorts,
 }
 
 /// <summary>
 /// Operator on/off switches for the top-level guest-services capabilities.
 /// Most flags are <b>opt-out</b>: a capability is ON unless an operator has
-/// explicitly turned it off. The exception is <see cref="IsPortForwardingEnabled"/>,
-/// which is <b>opt-in</b> (OFF unless explicitly turned on) because tunneling
-/// widens the guest's exposure and should never be open by default. This is an
-/// injectable seam so the gated services (provisioning agent, remote-access
-/// transport, KVP-auth honoring, port forwarding) can be unit-tested without
-/// touching the real config sources.
+/// explicitly turned it off. The exceptions are <see cref="IsPortForwardingEnabled"/>
+/// and <see cref="IsGatewayPortsEnabled"/>, which are <b>opt-in</b> (OFF unless
+/// explicitly turned on) because each widens the guest's exposure and should never
+/// be open by default. This is an injectable seam so the gated services
+/// (provisioning agent, remote-access transport, KVP-auth honoring, port
+/// forwarding) can be unit-tested without touching the real config sources.
 /// </summary>
 public interface IServiceControlFlags
 {
@@ -84,6 +91,20 @@ public interface IServiceControlFlags
     /// act as a jump host.
     /// </summary>
     bool IsPortForwardingEnabled();
+
+    /// <summary>
+    /// Gates whether a reverse-forward (<c>ssh -R</c>) listener may bind a
+    /// non-loopback interface, i.e. OpenSSH's <c>GatewayPorts</c> semantics.
+    /// Like <see cref="IsPortForwardingEnabled"/> this is <b>opt-in</b>:
+    /// <c>false</c> unless an operator turned it on. When <c>false</c> (the
+    /// default) every reverse-forward listener is pinned to loopback regardless
+    /// of the bind address the client requested — a bare <c>ssh -R 8080:…</c>
+    /// sends an empty bind address which would otherwise expose the guest on all
+    /// interfaces. When <c>true</c> the client-requested bind address is honored,
+    /// letting the guest relay inbound connections from its network. Only
+    /// consulted when <see cref="IsPortForwardingEnabled"/> is also on.
+    /// </summary>
+    bool IsGatewayPortsEnabled();
 }
 
 /// <summary>
@@ -125,6 +146,8 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
     internal const string AutoUpdateEnabledValue = "AutoUpdateEnabled";
     internal const string PortForwardingEnabledValue = "PortForwardingEnabled";
+    // No "Enabled" suffix: the flag mirrors OpenSSH's sshd_config GatewayPorts name.
+    internal const string GatewayPortsValue = "GatewayPorts";
 
     /// <summary>
     /// Persisted value name for a flag — the REG_DWORD value name on Windows
@@ -138,6 +161,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
         ServiceControlFlag.AutoUpdate => AutoUpdateEnabledValue,
         ServiceControlFlag.PortForwarding => PortForwardingEnabledValue,
+        ServiceControlFlag.GatewayPorts => GatewayPortsValue,
         _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
     };
 
@@ -153,6 +177,12 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     // explicitly turns it on. A missing value / read error therefore yields
     // false, so an unreadable config can never silently open tunneling.
     public bool IsPortForwardingEnabled() => ReadFlag(PortForwardingEnabledValue, defaultWhenUnset: false);
+
+    // Opt-in (default OFF): reverse-forward listeners stay pinned to loopback
+    // unless an operator explicitly opens the gateway. A missing value / read
+    // error therefore yields false, so an unreadable config can never silently
+    // expose a reverse-forward on a non-loopback interface.
+    public bool IsGatewayPortsEnabled() => ReadFlag(GatewayPortsValue, defaultWhenUnset: false);
 
     /// <summary>
     /// Pure value→bool interpretation for a Windows REG_DWORD flag.
@@ -197,8 +227,9 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         {
             // Fail to the flag's default: any I/O / permission error must leave a
             // capability at its safe default. Opt-out flags default ON (only an
-            // explicit "0" / "false" turns them off); the opt-in port-forwarding
-            // flag defaults OFF, so a read error never silently opens tunneling.
+            // explicit "0" / "false" turns them off); the opt-in flags
+            // (port forwarding, gateway ports) default OFF, so a read error never
+            // silently opens tunneling or network exposure.
             return defaultWhenUnset;
         }
     }

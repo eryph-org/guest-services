@@ -292,4 +292,61 @@ Describe 'Remote-access client auth (Linux)' {
         -KeepAliveCommand 'sleep 30') | Should -BeFalse
     }
   }
+
+  Context 'Reverse port forwarding (-R) gate (Linux service-control.conf)' {
+
+    # Mirror of the -L gate, reversed, exercising the tcpip-forward session
+    # request that -L (a direct-tcpip channel) never touches. A host-side
+    # loopback listener answers a token; the host opens
+    # `ssh -R 127.0.0.1:<guestPort>:127.0.0.1:<hostPort>`, so the egs server
+    # binds a listener inside the guest; a reader inside the guest reads the
+    # host token back over the tunnel. Same PortForwardingEnabled switch gates
+    # both directions.
+
+    BeforeAll {
+      $script:RevGuestPortLinux = 28082
+      $script:RevTokenLinux = "egs-revfwd-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+      $script:RevHostProbeLinux = Start-HostLoopbackTcpProbe -Token $script:RevTokenLinux
+    }
+
+    AfterAll {
+      try {
+        Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+          -Name 'PortForwardingEnabled' -Value $null
+      } catch { }
+      try {
+        if ($script:RevHostProbeLinux) { Stop-HostLoopbackTcpProbe -Probe $script:RevHostProbeLinux }
+      } catch { }
+    }
+
+    It 'refuses -R when PortForwardingEnabled is unset (default OFF)' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value $null
+
+      (Test-CatletReversePortForwardLinux -VmId $catlet.VmId -Catlet $catlet `
+        -AdminUsername $adminUsername -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPortLinux -HostPort $script:RevHostProbeLinux.Port `
+        -ExpectedToken $script:RevTokenLinux) | Should -BeFalse
+    }
+
+    It 'forwards -R when PortForwardingEnabled=1' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value 1
+
+      (Test-CatletReversePortForwardLinux -VmId $catlet.VmId -Catlet $catlet `
+        -AdminUsername $adminUsername -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPortLinux -HostPort $script:RevHostProbeLinux.Port `
+        -ExpectedToken $script:RevTokenLinux) | Should -BeTrue
+    }
+
+    It 'refuses -R again when set back to 0' {
+      Set-CatletServiceControlFlagLinux -Catlet $catlet -Username $adminUsername `
+        -Name 'PortForwardingEnabled' -Value 0
+
+      (Test-CatletReversePortForwardLinux -VmId $catlet.VmId -Catlet $catlet `
+        -AdminUsername $adminUsername -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPortLinux -HostPort $script:RevHostProbeLinux.Port `
+        -ExpectedToken $script:RevTokenLinux) | Should -BeFalse
+    }
+  }
 }

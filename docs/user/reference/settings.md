@@ -131,17 +131,39 @@ provisioning tunables above.
 | `KvpAuthEnabled` | Honoring of authorized client keys delivered via Hyper-V data exchange. When off, only the locally provisioned key in `id_egs.pub` authorizes — pushes via `egs-tool add-ssh-config` and other KVP writers are ignored. | on |
 | `AutoUpdateEnabled` | The background auto-patch loop that keeps the agent updated over the machine's lifetime (Windows). When off, the agent never self-updates on its own. | on |
 | `PortForwardingEnabled` | SSH port forwarding / tunneling (`ssh -L` / `-R`) over the remote-access transport. **Opt-in** — see below. | off |
+| `GatewayPorts` | Whether reverse-forward (`ssh -R`) listeners may bind non-loopback interfaces. **Opt-in**; only consulted when `PortForwardingEnabled` is on. | off (loopback only) |
 
-All but `PortForwardingEnabled` are opt-out: a capability is on unless the value
-is set to `0`. A missing value, a read error, or an unknown OS all leave it on.
+All but `PortForwardingEnabled` and `GatewayPorts` are opt-out: a capability is
+on unless the value is set to `0`. A missing value, a read error, or an unknown
+OS all leave it on.
 
-`PortForwardingEnabled` is the lone **opt-in** switch: it is off unless the value
-is explicitly set (`1` on Windows, `1`/`true` on Linux). A missing value or a
-read error leaves it **off**, so tunneling is never silently open. Turn it on
-where the guest is meant to act as a jump host — when on, a connected client can
-reach arbitrary `host:port` endpoints through the guest, so leave it off
-otherwise. The service advertises a `port-forwarding` entry in its feature list
-(`eryph:guest-services:features`) when forwarding is enabled.
+`PortForwardingEnabled` and `GatewayPorts` are the two **opt-in** switches: each
+is off unless the value is explicitly set (`1` on Windows, `1`/`true` on Linux),
+and a missing value or a read error leaves it **off**, so neither tunneling nor
+network exposure is ever silently open.
+
+Turn `PortForwardingEnabled` on where the guest is meant to act as a jump host —
+when on, a connected client can reach arbitrary `host:port` endpoints through the
+guest, so leave it off otherwise. The service advertises a `port-forwarding`
+entry in its feature list (`eryph:guest-services:features`) when forwarding is
+enabled.
+
+`GatewayPorts` controls **where a reverse-forward (`ssh -R`) listener binds**
+inside the guest. Off by default, every `-R` listener is pinned to loopback
+(`127.0.0.1`) regardless of the bind address the client requested — matching
+OpenSSH's `GatewayPorts no`. This matters because the common `ssh -R 8080:host:port`
+form sends an *empty* bind address, which would otherwise listen on **all**
+interfaces; with `GatewayPorts` off it stays on loopback, so the forwarded port
+is reachable only from within the guest. Turn it on **only** when the guest must
+accept inbound connections from its network and relay them to the client — this
+exposes the forwarded port on the guest's network interfaces.
+
+On Linux, enable it with `GatewayPorts=1` or `GatewayPorts=true` — the OpenSSH
+spelling `GatewayPorts=yes` is **not** recognized and leaves it off. With
+`GatewayPorts` off, a client that requests an explicit hostname as the `-R` bind
+address (e.g. `ssh -R myhost:8080:…`, rather than an IP or an empty/loopback
+address) has its session closed by the SSH layer before the forward is set up;
+use an empty bind (`ssh -R 8080:…`) or `127.0.0.1` instead.
 
 The flags are read at service start, so restart `eryph-guest-services` after
 changing them.
@@ -169,6 +191,9 @@ Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'KvpAuthEnabl
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'AutoUpdateEnabled' -Type DWord -Value 0
 # Opt-in: set to 1 to allow SSH tunneling (ssh -L / -R) through the guest.
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'PortForwardingEnabled' -Type DWord -Value 1
+# Opt-in: set to 1 ONLY to let -R listeners bind non-loopback interfaces
+# (exposes the forwarded port on the guest's network). Off = loopback-only.
+# Set-ItemProperty -Path 'HKLM:\SOFTWARE\eryph\guest-services' -Name 'GatewayPorts' -Type DWord -Value 1
 Restart-Service -Name eryph-guest-services
 ```
 
@@ -185,10 +210,13 @@ ProvisioningEnabled=0
 RemoteAccessEnabled=0
 KvpAuthEnabled=0
 PortForwardingEnabled=1
+# GatewayPorts=1   # opt-in: let -R listeners bind non-loopback (network exposure)
 EOF
 sudo systemctl restart eryph-guest-services
 ```
 
 `PortForwardingEnabled` is opt-in, so the line above *enables* tunneling; omit it
-(or set it to `0`) to keep forwarding closed. For the opt-out flags, set values
-back to `1` (or delete the value / file) and restart to re-enable.
+(or set it to `0`) to keep forwarding closed. `GatewayPorts` is likewise opt-in
+and left off here, so `-R` listeners stay on loopback — add `GatewayPorts=1` only
+to expose forwarded ports on the guest's network. For the opt-out flags, set
+values back to `1` (or delete the value / file) and restart to re-enable.
