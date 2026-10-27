@@ -1892,3 +1892,244 @@ function Test-CatletPortForward {
     Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
   }
 }
+
+# The reverse-forward (`ssh -R`) gate is the mirror of the `-L` probe above and
+# exercises a path `-L` never touches: the `tcpip-forward` session-level global
+# request (vs. the `direct-tcpip` channel of `-L`). A loopback listener on the
+# HOST answers a fixed token; the host opens
+#   ssh -R 127.0.0.1:<guestPort>:127.0.0.1:<hostPort>
+# so the egs SSH server binds a listener inside the guest, and a reader *inside
+# the guest* connects to 127.0.0.1:<guestPort> and must read the host token back
+# over the tunnel. With PortForwardingEnabled off the server refuses the
+# tcpip-forward request (ExitOnForwardFailure makes ssh exit), so the guest
+# listener never binds and the read never succeeds.
+
+function Start-HostLoopbackTcpProbe {
+  <#
+  .SYNOPSIS
+    Starts a loopback TCP listener on the HOST (a background job) that writes a
+    fixed token to every client and closes. Returns an object with the chosen
+    Port and the Job (pass it to Stop-HostLoopbackTcpProbe to tear down). This is
+    the reverse-forward counterpart to the in-guest Start-CatletLoopbackTcpProbe*
+    listeners: for `ssh -R` the token source lives on the host.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $Token
+  )
+
+  $port = Get-FreeLocalTcpPort
+  $job = Start-Job -ScriptBlock {
+    param($p, $tok)
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $p)
+    $listener.Start()
+    try {
+      while ($true) {
+        $client = $listener.AcceptTcpClient()
+        try {
+          $stream = $client.GetStream()
+          $bytes = [System.Text.Encoding]::ASCII.GetBytes($tok)
+          $stream.Write($bytes, 0, $bytes.Length)
+          $stream.Flush()
+          Start-Sleep -Milliseconds 150
+        } finally { $client.Close() }
+      }
+    } finally { $listener.Stop() }
+  } -ArgumentList $port, $Token
+
+  # Give the listener a moment to bind before the first reverse-forward attempt.
+  Start-Sleep -Milliseconds 400
+  return [pscustomobject]@{ Port = $port; Job = $job }
+}
+
+function Stop-HostLoopbackTcpProbe {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Probe
+  )
+  if ($Probe -and $Probe.Job) {
+    Stop-Job $Probe.Job -ErrorAction SilentlyContinue
+    Remove-Job $Probe.Job -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Test-CatletReversePortForwardLinux {
+  <#
+  .SYNOPSIS
+    Opens `ssh -R 127.0.0.1:<GuestPort>:127.0.0.1:<HostPort>` through the egs
+    proxy (keeping an exec channel alive with `sleep`), then — from inside the
+    guest over the direct-sshd admin channel — connects to the guest-side
+    reverse listener and returns $true iff the HOST token came back over the
+    tunnel. $false means the tcpip-forward request was refused (ssh exits under
+    ExitOnForwardFailure) or no data round-tripped before timeout.
+
+    The data round-trip, not "did ssh connect", is the verdict: only a token
+    read proves the reverse channel is honored end to end.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $AdminUsername,
+    [Parameter(Mandatory = $true)] [string] $IdentityFile,
+    [Parameter(Mandatory = $true)] [int] $GuestPort,
+    [Parameter(Mandatory = $true)] [int] $HostPort,
+    [Parameter(Mandatory = $true)] [string] $ExpectedToken,
+    [Parameter()] [int] $TimeoutSeconds = 20
+  )
+
+  $proxy = "egs-tool.exe proxy $VmId"
+  $knownHosts = "$env:TEMP\egs-revfwd-known_hosts-$([guid]::NewGuid().ToString('N')).tmp"
+
+  $sshArgs = @(
+    '-F', 'NUL',
+    '-i', $IdentityFile,
+    '-o', 'IdentitiesOnly=yes',
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', "UserKnownHostsFile=$knownHosts",
+    '-o', 'BatchMode=yes',
+    '-o', "ConnectTimeout=$TimeoutSeconds",
+    # Make a refused reverse forward fail fast and visibly: ssh exits instead of
+    # running the keep-alive, so the job leaves 'Running' and the verdict is a
+    # crisp $false rather than a timeout.
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', "ProxyCommand=$proxy",
+    '-R', "127.0.0.1:${GuestPort}:127.0.0.1:${HostPort}",
+    "egs@$($VmId).hyper-v.alt",
+    'sleep 30'
+  )
+
+  # Same background-job rationale as Test-CatletPortForward: a Start-Process
+  # child has no console, so the egs-tool ProxyCommand it spawns dies at once.
+  $job = Start-Job -ScriptBlock {
+    param($sshExe, $sshArgs)
+    & $sshExe @sshArgs 2>&1
+  } -ArgumentList $script:WinSshExe, $sshArgs
+
+  # Guest-side reader: connect to the reverse listener and print whatever comes
+  # back. python3 is present on the Ubuntu starter (same as the -L probe).
+  $reader = @"
+import socket, sys
+try:
+    s = socket.socket(); s.settimeout(5)
+    s.connect(('127.0.0.1', $GuestPort))
+    sys.stdout.write(s.recv(256).decode('ascii', 'replace'))
+    s.close()
+except Exception as e:
+    sys.stdout.write('ERR:' + str(e))
+"@
+  $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($reader))
+  $readerCmd = "echo $b64 | base64 -d > /tmp/egs-revread.py && python3 /tmp/egs-revread.py"
+
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+      if ($job.State -ne 'Running') {
+        # ExitOnForwardFailure => ssh exited: the reverse forward was refused.
+        Write-Host "reverse-forward probe: ssh job state=$($job.State). ssh output:"
+        Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 5 |
+          ForEach-Object { Write-Host "  ssh: $_" }
+        return $false
+      }
+      $out = (Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $AdminUsername `
+        -Command $readerCmd 2>&1 | Out-String).Trim()
+      if ($out -eq $ExpectedToken) { return $true }
+      Start-Sleep -Milliseconds 500
+    }
+    return $false
+  }
+  finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
+    try {
+      Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $AdminUsername `
+        -Command 'rm -f /tmp/egs-revread.py' 2>&1 | Out-Null
+    } catch { }
+  }
+}
+
+function Test-CatletReversePortForwardWindows {
+  <#
+  .SYNOPSIS
+    Windows mirror of Test-CatletReversePortForwardLinux: opens
+    `ssh -R 127.0.0.1:<GuestPort>:127.0.0.1:<HostPort>` through the egs proxy,
+    then — from inside the guest over PowerShell Direct — connects to the
+    guest-side reverse listener and returns $true iff the HOST token came back
+    over the tunnel. The guest reader uses PSDirect (not sshd) because the
+    Windows admin channel is VMBus, mirroring the -L probe's use of PSDirect.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [Guid] $VmId,
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [pscredential] $Credential,
+    [Parameter(Mandatory = $true)] [string] $IdentityFile,
+    [Parameter(Mandatory = $true)] [int] $GuestPort,
+    [Parameter(Mandatory = $true)] [int] $HostPort,
+    [Parameter(Mandatory = $true)] [string] $ExpectedToken,
+    [Parameter()] [int] $TimeoutSeconds = 20
+  )
+
+  $proxy = "egs-tool.exe proxy $VmId"
+  $knownHosts = "$env:TEMP\egs-revfwd-known_hosts-$([guid]::NewGuid().ToString('N')).tmp"
+
+  $sshArgs = @(
+    '-F', 'NUL',
+    '-i', $IdentityFile,
+    '-o', 'IdentitiesOnly=yes',
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', "UserKnownHostsFile=$knownHosts",
+    '-o', 'BatchMode=yes',
+    '-o', "ConnectTimeout=$TimeoutSeconds",
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', "ProxyCommand=$proxy",
+    '-R', "127.0.0.1:${GuestPort}:127.0.0.1:${HostPort}",
+    "egs@$($VmId).hyper-v.alt",
+    'powershell -NoProfile -Command "Start-Sleep -Seconds 30"'
+  )
+
+  $job = Start-Job -ScriptBlock {
+    param($sshExe, $sshArgs)
+    & $sshExe @sshArgs 2>&1
+  } -ArgumentList $script:WinSshExe, $sshArgs
+
+  $readerSb = {
+    param($gp)
+    try {
+      $c = [System.Net.Sockets.TcpClient]::new()
+      $c.Connect('127.0.0.1', $gp)
+      $c.ReceiveTimeout = 5000
+      $s = $c.GetStream()
+      $buf = [byte[]]::new(256)
+      $n = $s.Read($buf, 0, $buf.Length)
+      $c.Close()
+      if ($n -gt 0) { [System.Text.Encoding]::ASCII.GetString($buf, 0, $n) } else { '' }
+    } catch { 'ERR:' + $_.Exception.Message }
+  }
+
+  try {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+      if ($job.State -ne 'Running') {
+        Write-Host "reverse-forward probe: ssh job state=$($job.State). ssh output:"
+        Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 5 |
+          ForEach-Object { Write-Host "  ssh: $_" }
+        return $false
+      }
+      $out = (Invoke-Command -VMId $Catlet.VmId -Credential $Credential `
+        -ScriptBlock $readerSb -ArgumentList $GuestPort | Out-String).Trim()
+      if ($out -eq $ExpectedToken) { return $true }
+      Start-Sleep -Milliseconds 500
+    }
+    return $false
+  }
+  finally {
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
+  }
+}

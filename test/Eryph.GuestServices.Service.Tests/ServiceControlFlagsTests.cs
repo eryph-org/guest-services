@@ -149,10 +149,17 @@ public class ServiceControlFlagsTests
             .Should().Be("PortForwardingEnabled");
     }
 
+    [Fact]
+    public void GatewayPorts_GetValueName_MapsToGatewayPorts()
+    {
+        PlatformServiceControlFlags.GetValueName(ServiceControlFlag.GatewayPorts)
+            .Should().Be("GatewayPorts");
+    }
+
     // ---- Opt-in (default OFF) flag interpretation ----
-    // Port forwarding is the lone opt-in switch: with no value present it must
-    // read OFF, and only an explicit truthy value opens it. The interpreters
-    // take the flag's default; passing false models the opt-in path.
+    // Port forwarding and GatewayPorts are the opt-in switches: with no value
+    // present each must read OFF, and only an explicit truthy value opens it. The
+    // interpreters take the flag's default; passing false models the opt-in path.
 
     [Fact]
     public void InterpretWindowsRegistryValue_OptIn_NullValue_IsOff()

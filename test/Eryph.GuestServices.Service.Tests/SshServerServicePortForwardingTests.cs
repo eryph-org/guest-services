@@ -48,6 +48,45 @@ public class SshServerServicePortForwardingTests
         features.Should().Contain(Constants.PortForwardingFeature);
     }
 
+    // The reverse-forward (ssh -R) session-request authorization gate. ssh -L
+    // rides a direct-tcpip channel the registered service authorizes on its own,
+    // but tcpip-forward is a session request refused unless explicitly authorized
+    // — and only while port forwarding is enabled, else an unregistered service
+    // would leave a falsely acknowledged forward with no listener behind it.
+
+    [Theory]
+    [InlineData("tcpip-forward")]
+    [InlineData("cancel-tcpip-forward")]
+    public void ShouldAuthorizeSessionRequest_Enabled_AuthorizesReverseForward(string requestType)
+    {
+        SshServerService.ShouldAuthorizeSessionRequest(portForwardingEnabled: true, requestType)
+            .Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("tcpip-forward")]
+    [InlineData("cancel-tcpip-forward")]
+    public void ShouldAuthorizeSessionRequest_Disabled_RefusesReverseForward(string requestType)
+    {
+        SshServerService.ShouldAuthorizeSessionRequest(portForwardingEnabled: false, requestType)
+            .Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("env")]
+    [InlineData("keepalive@openssh.com")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ShouldAuthorizeSessionRequest_UnrelatedRequest_IsNotAuthorizedEvenWhenEnabled(string? requestType)
+    {
+        SshServerService.ShouldAuthorizeSessionRequest(portForwardingEnabled: true, requestType)
+            .Should().BeFalse();
+    }
+
+    // The theories above feed the literal wire-protocol strings, so a typo that
+    // drifted Constants.TcpipForwardRequestType away from "tcpip-forward" would
+    // already fail them — no separate constant-value assertion is needed.
+
     private sealed class StubShellSelector : IShellSelector
     {
         public Task<ShellSelection> SelectAsync(ShellOverride sshOverride, CancellationToken cancellation)

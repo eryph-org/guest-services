@@ -296,4 +296,61 @@ Describe 'Remote-access client auth' {
         -GuestPort $script:FwdGuestPort -ExpectedToken $script:FwdToken) | Should -BeFalse
     }
   }
+
+  Context 'Reverse port forwarding (-R) gate' {
+
+    # Mirror of the -L gate, reversed, exercising the tcpip-forward session
+    # request that -L (a direct-tcpip channel) never touches. A host-side
+    # loopback listener answers a token; the host opens
+    # `ssh -R 127.0.0.1:<guestPort>:127.0.0.1:<hostPort>`, so the egs server
+    # binds a listener inside the guest; a reader inside the guest (PowerShell
+    # Direct) reads the host token back over the tunnel. Same PortForwardingEnabled
+    # switch gates both directions.
+
+    BeforeAll {
+      $script:RevGuestPort = 28083
+      $script:RevToken = "egs-revfwd-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+      $script:RevHostProbe = Start-HostLoopbackTcpProbe -Token $script:RevToken
+    }
+
+    AfterAll {
+      try {
+        Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+          -Value $null -Credential $script:CatletAdminCredential
+      } catch { }
+      try {
+        if ($script:RevHostProbe) { Stop-HostLoopbackTcpProbe -Probe $script:RevHostProbe }
+      } catch { }
+    }
+
+    It 'refuses -R when PortForwardingEnabled is unset (default OFF)' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value $null -Credential $script:CatletAdminCredential
+
+      (Test-CatletReversePortForwardWindows -VmId $catlet.VmId -Catlet $catlet `
+        -Credential $script:CatletAdminCredential -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPort -HostPort $script:RevHostProbe.Port `
+        -ExpectedToken $script:RevToken) | Should -BeFalse
+    }
+
+    It 'forwards -R when PortForwardingEnabled=1' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value 1 -Credential $script:CatletAdminCredential
+
+      (Test-CatletReversePortForwardWindows -VmId $catlet.VmId -Catlet $catlet `
+        -Credential $script:CatletAdminCredential -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPort -HostPort $script:RevHostProbe.Port `
+        -ExpectedToken $script:RevToken) | Should -BeTrue
+    }
+
+    It 'refuses -R again when set back to 0' {
+      Set-CatletServiceControlFlag -Catlet $catlet -Name 'PortForwardingEnabled' `
+        -Value 0 -Credential $script:CatletAdminCredential
+
+      (Test-CatletReversePortForwardWindows -VmId $catlet.VmId -Catlet $catlet `
+        -Credential $script:CatletAdminCredential -IdentityFile $provisionedKey `
+        -GuestPort $script:RevGuestPort -HostPort $script:RevHostProbe.Port `
+        -ExpectedToken $script:RevToken) | Should -BeFalse
+    }
+  }
 }

@@ -98,5 +98,6 @@ public class SshServerServiceAuthWiringTests
         public bool IsKvpAuthEnabled() => true;
         public bool IsAutoUpdateEnabled() => false;
         public bool IsPortForwardingEnabled() => false;
+        public bool IsGatewayPortsEnabled() => false;
     }
 }

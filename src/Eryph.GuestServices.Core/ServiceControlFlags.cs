@@ -25,6 +25,13 @@ public enum ServiceControlFlag
 
     /// <summary>SSH port forwarding / tunneling (<c>PortForwardingEnabled</c>).</summary>
     PortForwarding,
+
+    /// <summary>
+    /// Whether reverse-forward (<c>ssh -R</c>) listeners may bind non-loopback
+    /// interfaces (<c>GatewayPorts</c>). Only meaningful when
+    /// <see cref="PortForwarding"/> is on.
+    /// </summary>
+    GatewayPorts,
 }
 
 /// <summary>
@@ -84,6 +91,20 @@ public interface IServiceControlFlags
     /// act as a jump host.
     /// </summary>
     bool IsPortForwardingEnabled();
+
+    /// <summary>
+    /// Gates whether a reverse-forward (<c>ssh -R</c>) listener may bind a
+    /// non-loopback interface, i.e. OpenSSH's <c>GatewayPorts</c> semantics.
+    /// Like <see cref="IsPortForwardingEnabled"/> this is <b>opt-in</b>:
+    /// <c>false</c> unless an operator turned it on. When <c>false</c> (the
+    /// default) every reverse-forward listener is pinned to loopback regardless
+    /// of the bind address the client requested — a bare <c>ssh -R 8080:…</c>
+    /// sends an empty bind address which would otherwise expose the guest on all
+    /// interfaces. When <c>true</c> the client-requested bind address is honored,
+    /// letting the guest relay inbound connections from its network. Only
+    /// consulted when <see cref="IsPortForwardingEnabled"/> is also on.
+    /// </summary>
+    bool IsGatewayPortsEnabled();
 }
 
 /// <summary>
@@ -125,6 +146,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
     internal const string AutoUpdateEnabledValue = "AutoUpdateEnabled";
     internal const string PortForwardingEnabledValue = "PortForwardingEnabled";
+    internal const string GatewayPortsEnabledValue = "GatewayPorts";
 
     /// <summary>
     /// Persisted value name for a flag — the REG_DWORD value name on Windows
@@ -138,6 +160,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
         ServiceControlFlag.AutoUpdate => AutoUpdateEnabledValue,
         ServiceControlFlag.PortForwarding => PortForwardingEnabledValue,
+        ServiceControlFlag.GatewayPorts => GatewayPortsEnabledValue,
         _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
     };
 
@@ -153,6 +176,12 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     // explicitly turns it on. A missing value / read error therefore yields
     // false, so an unreadable config can never silently open tunneling.
     public bool IsPortForwardingEnabled() => ReadFlag(PortForwardingEnabledValue, defaultWhenUnset: false);
+
+    // Opt-in (default OFF): reverse-forward listeners stay pinned to loopback
+    // unless an operator explicitly opens the gateway. A missing value / read
+    // error therefore yields false, so an unreadable config can never silently
+    // expose a reverse-forward on a non-loopback interface.
+    public bool IsGatewayPortsEnabled() => ReadFlag(GatewayPortsEnabledValue, defaultWhenUnset: false);
 
     /// <summary>
     /// Pure value→bool interpretation for a Windows REG_DWORD flag.
