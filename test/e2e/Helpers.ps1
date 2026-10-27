@@ -1897,7 +1897,7 @@ function Test-CatletPortForward {
 # exercises a path `-L` never touches: the `tcpip-forward` session-level global
 # request (vs. the `direct-tcpip` channel of `-L`). A loopback listener on the
 # HOST answers a fixed token; the host opens
-#   ssh -R 127.0.0.1:<guestPort>:127.0.0.1:<hostPort>
+#   ssh -R <guestPort>:127.0.0.1:<hostPort>
 # so the egs SSH server binds a listener inside the guest, and a reader *inside
 # the guest* connects to 127.0.0.1:<guestPort> and must read the host token back
 # over the tunnel. With PortForwardingEnabled off the server refuses the
@@ -1956,7 +1956,7 @@ function Stop-HostLoopbackTcpProbe {
 function Test-CatletReversePortForwardLinux {
   <#
   .SYNOPSIS
-    Opens `ssh -R 127.0.0.1:<GuestPort>:127.0.0.1:<HostPort>` through the egs
+    Opens `ssh -R <GuestPort>:127.0.0.1:<HostPort>` (bare bind) through the egs
     proxy (keeping an exec channel alive with `sleep`), then — from inside the
     guest over the direct-sshd admin channel — connects to the guest-side
     reverse listener and returns $true iff the HOST token came back over the
@@ -1994,7 +1994,9 @@ function Test-CatletReversePortForwardLinux {
     # crisp $false rather than a timeout.
     '-o', 'ExitOnForwardFailure=yes',
     '-o', "ProxyCommand=$proxy",
-    '-R', "127.0.0.1:${GuestPort}:127.0.0.1:${HostPort}",
+    # Bare bind (no address) — the common `ssh -R <port>:…` form. OpenSSH sends an
+    # empty bind address, which the guest must pin to loopback (GatewayPorts off).
+    '-R', "${GuestPort}:127.0.0.1:${HostPort}",
     "egs@$($VmId).hyper-v.alt",
     'sleep 30'
   )
@@ -2056,7 +2058,7 @@ function Test-CatletReversePortForwardWindows {
   <#
   .SYNOPSIS
     Windows mirror of Test-CatletReversePortForwardLinux: opens
-    `ssh -R 127.0.0.1:<GuestPort>:127.0.0.1:<HostPort>` through the egs proxy,
+    `ssh -R <GuestPort>:127.0.0.1:<HostPort>` (bare bind) through the egs proxy,
     then — from inside the guest over PowerShell Direct — connects to the
     guest-side reverse listener and returns $true iff the HOST token came back
     over the tunnel. The guest reader uses PSDirect (not sshd) because the
@@ -2087,7 +2089,9 @@ function Test-CatletReversePortForwardWindows {
     '-o', "ConnectTimeout=$TimeoutSeconds",
     '-o', 'ExitOnForwardFailure=yes',
     '-o', "ProxyCommand=$proxy",
-    '-R', "127.0.0.1:${GuestPort}:127.0.0.1:${HostPort}",
+    # Bare bind (no address) — the common `ssh -R <port>:…` form. OpenSSH sends an
+    # empty bind address, which the guest must pin to loopback (GatewayPorts off).
+    '-R', "${GuestPort}:127.0.0.1:${HostPort}",
     "egs@$($VmId).hyper-v.alt",
     'powershell -NoProfile -Command "Start-Sleep -Seconds 30"'
   )

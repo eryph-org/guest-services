@@ -17,9 +17,20 @@ namespace Eryph.GuestServices.Service.Services;
 /// requested bind address instead.
 /// </summary>
 /// <remarks>
-/// The requested bind address is deliberately ignored — that is the whole point.
-/// The requested port is honored. Mirrors the library's
-/// <c>DefaultTcpListenerFactory</c> otherwise (create, start, return).
+/// <para>
+/// The requested bind <em>interface</em> is deliberately overridden to loopback —
+/// that is the whole point. The requested port, and the requested address
+/// <em>family</em>, are honored.
+/// </para>
+/// <para>
+/// Honoring the family matters: for a loopback/any request the library's
+/// <c>LocalPortForwarder.StartForwardingAsync</c> calls this factory twice — once
+/// for IPv4, then again for IPv6 on the <b>same</b> port — and only tolerates
+/// <c>AddressNotAvailable</c> on the second call. Returning an IPv4 loopback for
+/// both would make the second bind fail with <c>AddressAlreadyInUse</c> and the
+/// whole reverse forward be refused. Binding the loopback of the requested family
+/// (<c>127.0.0.1</c> then <c>::1</c>) lets both calls succeed, loopback-only.
+/// </para>
 /// </remarks>
 internal sealed class LoopbackTcpListenerFactory : ITcpListenerFactory
 {
@@ -33,7 +44,10 @@ internal sealed class LoopbackTcpListenerFactory : ITcpListenerFactory
         TraceSource trace,
         CancellationToken cancellation)
     {
-        var listener = new TcpListener(IPAddress.Loopback, localPort);
+        var loopback = localIPAddress.AddressFamily == AddressFamily.InterNetworkV6
+            ? IPAddress.IPv6Loopback
+            : IPAddress.Loopback;
+        var listener = new TcpListener(loopback, localPort);
         listener.Start();
         return Task.FromResult(listener);
     }

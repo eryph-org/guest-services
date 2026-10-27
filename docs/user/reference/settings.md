@@ -158,6 +158,13 @@ is reachable only from within the guest. Turn it on **only** when the guest must
 accept inbound connections from its network and relay them to the client — this
 exposes the forwarded port on the guest's network interfaces.
 
+On Linux, enable it with `GatewayPorts=1` or `GatewayPorts=true` — the OpenSSH
+spelling `GatewayPorts=yes` is **not** recognized and leaves it off. With
+`GatewayPorts` off, a client that requests an explicit hostname as the `-R` bind
+address (e.g. `ssh -R myhost:8080:…`, rather than an IP or an empty/loopback
+address) has its session closed by the SSH layer before the forward is set up;
+use an empty bind (`ssh -R 8080:…`) or `127.0.0.1` instead.
+
 The flags are read at service start, so restart `eryph-guest-services` after
 changing them.
 

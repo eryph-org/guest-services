@@ -37,12 +37,12 @@ public enum ServiceControlFlag
 /// <summary>
 /// Operator on/off switches for the top-level guest-services capabilities.
 /// Most flags are <b>opt-out</b>: a capability is ON unless an operator has
-/// explicitly turned it off. The exception is <see cref="IsPortForwardingEnabled"/>,
-/// which is <b>opt-in</b> (OFF unless explicitly turned on) because tunneling
-/// widens the guest's exposure and should never be open by default. This is an
-/// injectable seam so the gated services (provisioning agent, remote-access
-/// transport, KVP-auth honoring, port forwarding) can be unit-tested without
-/// touching the real config sources.
+/// explicitly turned it off. The exceptions are <see cref="IsPortForwardingEnabled"/>
+/// and <see cref="IsGatewayPortsEnabled"/>, which are <b>opt-in</b> (OFF unless
+/// explicitly turned on) because each widens the guest's exposure and should never
+/// be open by default. This is an injectable seam so the gated services
+/// (provisioning agent, remote-access transport, KVP-auth honoring, port
+/// forwarding) can be unit-tested without touching the real config sources.
 /// </summary>
 public interface IServiceControlFlags
 {
@@ -146,7 +146,8 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     internal const string KvpAuthEnabledValue = "KvpAuthEnabled";
     internal const string AutoUpdateEnabledValue = "AutoUpdateEnabled";
     internal const string PortForwardingEnabledValue = "PortForwardingEnabled";
-    internal const string GatewayPortsEnabledValue = "GatewayPorts";
+    // No "Enabled" suffix: the flag mirrors OpenSSH's sshd_config GatewayPorts name.
+    internal const string GatewayPortsValue = "GatewayPorts";
 
     /// <summary>
     /// Persisted value name for a flag — the REG_DWORD value name on Windows
@@ -160,7 +161,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         ServiceControlFlag.KvpAuth => KvpAuthEnabledValue,
         ServiceControlFlag.AutoUpdate => AutoUpdateEnabledValue,
         ServiceControlFlag.PortForwarding => PortForwardingEnabledValue,
-        ServiceControlFlag.GatewayPorts => GatewayPortsEnabledValue,
+        ServiceControlFlag.GatewayPorts => GatewayPortsValue,
         _ => throw new ArgumentOutOfRangeException(nameof(flag), flag, "Unknown service-control flag."),
     };
 
@@ -181,7 +182,7 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
     // unless an operator explicitly opens the gateway. A missing value / read
     // error therefore yields false, so an unreadable config can never silently
     // expose a reverse-forward on a non-loopback interface.
-    public bool IsGatewayPortsEnabled() => ReadFlag(GatewayPortsEnabledValue, defaultWhenUnset: false);
+    public bool IsGatewayPortsEnabled() => ReadFlag(GatewayPortsValue, defaultWhenUnset: false);
 
     /// <summary>
     /// Pure value→bool interpretation for a Windows REG_DWORD flag.
@@ -226,8 +227,9 @@ public sealed class PlatformServiceControlFlags : IServiceControlFlags
         {
             // Fail to the flag's default: any I/O / permission error must leave a
             // capability at its safe default. Opt-out flags default ON (only an
-            // explicit "0" / "false" turns them off); the opt-in port-forwarding
-            // flag defaults OFF, so a read error never silently opens tunneling.
+            // explicit "0" / "false" turns them off); the opt-in flags
+            // (port forwarding, gateway ports) default OFF, so a read error never
+            // silently opens tunneling or network exposure.
             return defaultWhenUnset;
         }
     }
