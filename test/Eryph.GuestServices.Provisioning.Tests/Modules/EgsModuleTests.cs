@@ -140,6 +140,40 @@ public sealed class EgsModuleTests
     }
 
     [Fact]
+    public async Task Writes_gateway_ports_switch_when_set()
+    {
+        // GatewayPorts is the second opt-in switch; provisioning must be able to
+        // open it, and only when explicitly set.
+        var (os, outcome) = await RunAsync(new EgsConfig
+        {
+            Settings = new EgsSettingsConfig { GatewayPorts = true },
+        });
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.Received(1).SetServiceControlFlagAsync(
+            ServiceControlFlag.GatewayPorts, true, Arg.Any<CancellationToken>());
+        // Nothing else was in the block, so no other switch may be written — in
+        // particular not PortForwarding (opening it unasked would be a regression).
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.PortForwarding, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Does_not_write_gateway_ports_when_omitted()
+    {
+        // Three-state: an omitted GatewayPorts must leave the flag untouched, so a
+        // read error on the guest keeps it at its safe default (loopback only).
+        var (os, outcome) = await RunAsync(new EgsConfig
+        {
+            Settings = new EgsSettingsConfig { PortForwarding = true },
+        });
+
+        outcome.Should().BeOfType<ModuleOutcome.Completed>();
+        await os.DidNotReceive().SetServiceControlFlagAsync(
+            ServiceControlFlag.GatewayPorts, Arg.Any<bool>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Settings_write_failure_surfaces_as_module_failure()
     {
         var os = Substitute.For<IWindowsOs>();
