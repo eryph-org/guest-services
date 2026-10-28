@@ -40,7 +40,7 @@ general-purpose tunnel.
 |---|---|
 | `tunnel` | A logical name for the tunnel (used in log output). |
 | `catlet` | The catlet id or name to connect to. |
-| `egress[]` | The guest reaches out through the host. `listen` is the port opened on the **guest's** loopback; the guest connects there and egs-tool dials the single `to` endpoint on the host network. |
+| `egress[]` | The guest reaches out through the host. `listen` is the port opened on the **guest's** loopback; the guest connects there and egs-tool dials the single `to` endpoint on the host network. Optional `listenAddress` (default `127.0.0.1`, must be a loopback literal like `127.0.0.2`) picks the guest-side bind, so you can give each target its own address to map a hostname to. |
 | `ingress[]` | A host-side caller reaches into the guest. `listen` is opened on the **host** (a bare port or `ip:port`; loopback unless you spell out another address); each connection is relayed to the single `to` inside the guest. |
 | `to` | Exactly one `host:port`. Wildcards, port ranges and lists are rejected. Write an IPv6 literal as `[address]:port`. |
 | `keepalive` | Required. Keeps idle connections and the tunnel itself alive: `idleSeconds` before the first probe, `intervalSeconds` between probes, `retries` before a socket is considered dead. |
@@ -62,9 +62,11 @@ the real target, which lives only in the policy on the host. For
   listener, and egs-tool dials the real host. This `/etc/hosts` mapping is part of
   your guest's own provisioning (cloud-config / fodder); egs-tool does not manage it.
 
-Because the guest-side listener is loopback-pinned, targets are distinguished by
-**port** — give two targets that share a port but differ by hostname their own
-`listen` ports.
+For several targets, give each its own guest-side address with `listenAddress`
+(e.g. `127.0.0.2`, `127.0.0.3`) and map each hostname to its address in the guest's
+`/etc/hosts`. Two targets that share a port but differ by hostname then each get a
+distinct bind — without that, loopback-pinned listeners are distinguished only by
+port, so you would need distinct `listen` ports instead.
 
 Note the exposure this implies: whatever can reach the guest `listen` port reaches
 the egress target (egs-tool adds no authentication of its own), and an egress `to` on

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 
 namespace Eryph.GuestServices.Client.ProxyTunnel;
@@ -117,7 +118,7 @@ public static class TunnelPolicyLoader
         if (rules is null)
             return result;
 
-        var listenPorts = new HashSet<int>();
+        var binds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rules.Count; i++)
         {
             var dto = rules[i];
@@ -130,22 +131,38 @@ public static class TunnelPolicyLoader
             var label = RuleLabel("egress", i, dto.Name);
             var name = ValidateName(dto.Name, label, names, problems);
 
-            var listenOk = false;
+            // listenAddress is optional and defaults to 127.0.0.1; when present it
+            // must be a loopback literal.
+            var listenAddress = IPAddress.Loopback;
+            var addressOk = true;
+            if (dto.ListenAddress is not null)
+            {
+                addressOk = TunnelAddress.TryParseLoopbackAddress(dto.ListenAddress, out listenAddress, out var addrError);
+                if (!addressOk)
+                    problems.Add($"{label}: listenAddress {addrError}");
+            }
+
+            var portOk = false;
             if (dto.Listen is null)
                 problems.Add($"{label}: 'listen' is required (the guest-side loopback port)");
             else if (!TunnelAddress.TryValidatePort(dto.Listen.Value, out var portError))
                 problems.Add($"{label}: listen {portError}");
-            else if (!listenPorts.Add(dto.Listen.Value))
-                problems.Add($"{label}: egress listen port {dto.Listen.Value} is used by more than one rule");
             else
-                listenOk = true;
+                portOk = true;
+
+            // A rule is uniquely identified on the guest by bind address + port.
+            if (addressOk && portOk && !binds.Add($"{listenAddress}:{dto.Listen!.Value}"))
+            {
+                problems.Add($"{label}: egress bind {listenAddress}:{dto.Listen.Value} is used by more than one rule");
+                portOk = false;
+            }
 
             var targetOk = TunnelAddress.TryParseTarget(dto.To, out var toHost, out var toPort, out var toError);
             if (!targetOk)
                 problems.Add($"{label}: to {toError}");
 
-            if (name is not null && listenOk && targetOk)
-                result.Add(new EgressRule(name, dto.Listen!.Value, toHost, toPort));
+            if (name is not null && addressOk && portOk && targetOk)
+                result.Add(new EgressRule(name, listenAddress, dto.Listen!.Value, toHost, toPort));
         }
 
         return result;

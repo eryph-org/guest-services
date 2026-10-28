@@ -47,6 +47,58 @@ public class TunnelPolicyLoaderTests
     }
 
     [Fact]
+    public void Egress_listen_address_defaults_to_loopback()
+    {
+        TunnelPolicyLoader.TryParse(ValidPolicy, out var policy, out _).Should().BeTrue();
+        policy!.Egress[0].ListenAddress.Should().Be(IPAddress.Loopback);
+    }
+
+    [Fact]
+    public void Egress_honors_an_explicit_loopback_listen_address()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "listenAddress": "127.0.0.2", "to": "h:1" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+        TunnelPolicyLoader.TryParse(json, out var policy, out var errors).Should().BeTrue(string.Join("; ", errors));
+        policy!.Egress[0].ListenAddress.Should().Be(IPAddress.Parse("127.0.0.2"));
+    }
+
+    [Fact]
+    public void Egress_rejects_a_non_loopback_listen_address()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "listenAddress": "10.0.0.5", "to": "h:1" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("loopback"));
+    }
+
+    [Fact]
+    public void Egress_allows_same_port_on_distinct_loopback_addresses()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [
+                { "name": "a", "listen": 3300, "listenAddress": "127.0.0.1", "to": "h1:1" },
+                { "name": "b", "listen": 3300, "listenAddress": "127.0.0.2", "to": "h2:1" }
+              ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+        TunnelPolicyLoader.TryParse(json, out var policy, out var errors).Should().BeTrue(string.Join("; ", errors));
+        policy!.Egress.Should().HaveCount(2);
+    }
+
+    [Fact]
     public void Accepts_a_policy_with_only_egress()
     {
         const string json = """

@@ -199,6 +199,36 @@ internal static class TunnelAddress
         return true;
     }
 
+    // A guest-side egress bind address: must be a loopback literal (127.0.0.0/8 or
+    // ::1). Keeping it loopback means the reverse-forward listener is never exposed
+    // on the guest's network, matching the loopback-by-default stance.
+    public static bool TryParseLoopbackAddress(string? value, out IPAddress address, out string? error)
+    {
+        address = IPAddress.Loopback;
+
+        if (string.IsNullOrWhiteSpace(value) || HasWhitespaceOrControl(value))
+        {
+            error = $"'{value}' is not a valid address";
+            return false;
+        }
+
+        if (!IPAddress.TryParse(value, out var parsed))
+        {
+            error = $"'{value}' is not an IP address";
+            return false;
+        }
+
+        if (!IPAddress.IsLoopback(parsed))
+        {
+            error = $"'{value}' is not a loopback address (egress binds must stay on loopback)";
+            return false;
+        }
+
+        address = parsed;
+        error = null;
+        return true;
+    }
+
     private static bool HasWhitespaceOrControl(string value) =>
         value.Any(c => char.IsWhiteSpace(c) || char.IsControl(c));
 

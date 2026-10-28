@@ -46,7 +46,7 @@ destinations.
   "tunnel": "sap-prod",
   "catlet": "<catlet-id-or-name>",
   "egress": [
-    { "name": "sap-rfc", "listen": 3300, "to": "wass11.corp.example:3300" }
+    { "name": "sap-rfc", "listen": 3300, "listenAddress": "127.0.0.2", "to": "wass11.corp.example:3300" }
   ],
   "ingress": [
     { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
@@ -56,10 +56,16 @@ destinations.
 ```
 
 - **egress** — the guest reaches an external service *only through the host*. The
-  guest-side `listen` port is opened on the guest's loopback interface; egs-tool
-  dials the single `to` endpoint on the host network and relays the bytes. Realized
-  as an SSH reverse forward (`tcpip-forward`) whose forwarded connections egs-tool
-  relays to the fixed target itself.
+  guest-side `listen` port is opened on the guest's loopback; egs-tool dials the
+  single `to` endpoint on the host network and relays the bytes. Realized as an SSH
+  reverse forward (`tcpip-forward`) whose forwarded connections egs-tool relays to
+  the fixed target itself. An optional `listenAddress` (default `127.0.0.1`, must be
+  a loopback literal such as `127.0.0.2`) lets the policy declare a distinct
+  guest-side bind per target, so the guest's own configuration can map a real
+  hostname to that address — an `/etc/hosts` entry today, or eryph DNS interception
+  later — and an app keeps using the real name while the traffic stays governed. The
+  guest's loopback pin honors the `127.0.0.0/8` range for this, while still forcing
+  any non-loopback bind back to loopback.
 - **ingress** — a host-side caller reaches a single service inside the guest.
   egs-tool opens `listen` on the host (loopback unless an explicit non-loopback IP is
   written) and relays each connection to the single `to` inside the guest, as an SSH

@@ -32,6 +32,10 @@ internal sealed class EgressRuleDto
     // Guest-side loopback port the guest connects to. A JSON number (e.g. 3300).
     public int? Listen { get; set; }
 
+    // Optional guest-side loopback bind address (e.g. "127.0.0.2"). Omitted =>
+    // 127.0.0.1. Must be a loopback address.
+    public string? ListenAddress { get; set; }
+
     // The single host-reachable endpoint egs-tool dials, as "host:port".
     public string? To { get; set; }
 }

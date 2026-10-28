@@ -203,7 +203,7 @@ public sealed class ProxyTunnelEngine(
     private async Task<IDisposable> EstablishEgressAsync(
         PortForwardingService pfs, EgressRule rule, CancellationToken sessionToken, CancellationToken cancellation)
     {
-        var streamer = await pfs.StreamFromRemotePortAsync(IPAddress.Loopback, rule.ListenPort, cancellation);
+        var streamer = await pfs.StreamFromRemotePortAsync(rule.ListenAddress, rule.ListenPort, cancellation);
         if (streamer is null)
             // The gate probe already proved forwarding is on, so a null here is a
             // busy/stale guest listener on this port — transient, let the reconnect
@@ -236,7 +236,7 @@ public sealed class ProxyTunnelEngine(
             StartEgressRelay(rule, stream, limiter, sessionToken);
         };
         writeInfo?.Invoke(
-            $"egress '{rule.Name}': guest 127.0.0.1:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
+            $"egress '{rule.Name}': guest {rule.ListenAddress}:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
         return streamer;
     }
 

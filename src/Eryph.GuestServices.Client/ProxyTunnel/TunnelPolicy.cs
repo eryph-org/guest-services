@@ -16,11 +16,17 @@ public sealed record TunnelPolicy(
     KeepaliveSettings Keepalive);
 
 // Guest -> out via the host ("gelenkte Netzfreigabe"): the guest connects to
-// ListenPort on its own loopback interface, and egs-tool dials the single fixed
+// ListenAddress:ListenPort on its own loopback, and egs-tool dials the single fixed
 // ToHost:ToPort on the host network. Realized as an ssh -R registration whose
 // forwarded connections egs-tool relays to the fixed target itself.
+//
+// ListenAddress is a loopback address (default 127.0.0.1). A distinct loopback
+// address per target lets the guest's own configuration (an /etc/hosts entry, or
+// eryph DNS interception) map the real hostname to that address, so an app can keep
+// using the real name while the traffic is governed through this tunnel.
 public sealed record EgressRule(
     string Name,
+    IPAddress ListenAddress,
     int ListenPort,
     string ToHost,
     int ToPort);
