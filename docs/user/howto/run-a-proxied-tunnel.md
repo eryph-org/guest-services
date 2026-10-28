@@ -24,10 +24,10 @@ general-purpose tunnel.
 
 ```json
 {
-  "tunnel": "sap-prod",
+  "tunnel": "example",
   "catlet": "my-app",
   "egress": [
-    { "name": "sap-rfc", "listen": 3300, "to": "backend.example.com:3300" }
+    { "name": "db", "listen": 3300, "to": "backend.example.com:3300" }
   ],
   "ingress": [
     { "name": "callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
@@ -76,7 +76,7 @@ and any non-loopback ingress bind deliberately.
 ## Validate it
 
 ```
-egs-tool catlet tunnel validate --policy sap-prod.json
+egs-tool catlet tunnel validate --policy example.json
 ```
 
 Reports every problem in the file (unknown keys, a wildcard or multi-target `to`, a
@@ -85,7 +85,7 @@ missing `keepalive`, a duplicate rule name or listen port) and connects to nothi
 ## Run it
 
 ```
-egs-tool catlet tunnel up --policy sap-prod.json
+egs-tool catlet tunnel up --policy example.json
 ```
 
 The tunnel runs until you stop it with Ctrl+C. It reconnects automatically if the

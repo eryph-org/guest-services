@@ -8,13 +8,13 @@ public class TunnelPolicyLoaderTests
 {
     private const string ValidPolicy = """
         {
-          "tunnel": "sap-prod",
+          "tunnel": "example",
           "catlet": "my-catlet",
           "egress": [
-            { "name": "sap-rfc", "listen": 3300, "to": "backend.example.com:3300" }
+            { "name": "db", "listen": 3300, "to": "backend.example.com:3300" }
           ],
           "ingress": [
-            { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
+            { "name": "callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
           ],
           "keepalive": { "idleSeconds": 15, "intervalSeconds": 15, "retries": 5 }
         }
@@ -26,19 +26,19 @@ public class TunnelPolicyLoaderTests
         TunnelPolicyLoader.TryParse(ValidPolicy, out var policy, out var errors)
             .Should().BeTrue(string.Join("; ", errors));
 
-        policy!.Tunnel.Should().Be("sap-prod");
+        policy!.Tunnel.Should().Be("example");
         policy.Catlet.Should().Be("my-catlet");
 
         policy.Egress.Should().ContainSingle();
         var egress = policy.Egress[0];
-        egress.Name.Should().Be("sap-rfc");
+        egress.Name.Should().Be("db");
         egress.ListenPort.Should().Be(3300);
         egress.ToHost.Should().Be("backend.example.com");
         egress.ToPort.Should().Be(3300);
 
         policy.Ingress.Should().ContainSingle();
         var ingress = policy.Ingress[0];
-        ingress.Name.Should().Be("saphttp-callback");
+        ingress.Name.Should().Be("callback");
         ingress.Listen.Should().Be(new IPEndPoint(IPAddress.Loopback, 8080));
         ingress.ToHost.Should().Be("127.0.0.1");
         ingress.ToPort.Should().Be(8080);

@@ -16,9 +16,9 @@ that dials a fixed endpoint, with ports wired by hand. RFC 0030 explicitly left
 at `ssh -L` over the session; nothing packaged that into a first-class, auditable
 feature.
 
-The need is concrete: a guest (e.g. an SAP application server) must reach one
-external endpoint through the host ("gelenkte Netzfreigabe" — a governed network
-release), and/or a host-side caller must reach one service inside the guest — with a
+The need is concrete: a guest (e.g. an application server) must reach one external
+endpoint through the host ("gelenkte Netzfreigabe" — a governed network release),
+and/or a host-side caller must reach one service inside the guest — with a
 default-deny posture, one fixed target per rule, and a connection that survives long
 idle periods.
 
@@ -30,7 +30,7 @@ operation. egs-tool owns both the eryph/SSH channel and the data-plane sockets: 
 proxies the bytes itself, opening no listener beyond what the policy declares and no
 separate forwarder process. Gated by `PortForwardingEnabled` exactly like `-R`.
 
-The feature is generic: no SAP-, product- or deployment-specific knowledge lives in
+The feature is generic: no product- or deployment-specific knowledge lives in
 egs-tool. The policy file (which endpoints, which services) is supplied by the
 consumer; egs-tool only enforces the mechanism.
 
@@ -43,13 +43,13 @@ destinations.
 
 ```json
 {
-  "tunnel": "sap-prod",
+  "tunnel": "example",
   "catlet": "<catlet-id-or-name>",
   "egress": [
-    { "name": "sap-rfc", "listen": 3300, "listenAddress": "127.0.0.2", "to": "backend.example.com:3300" }
+    { "name": "db", "listen": 3300, "listenAddress": "127.0.0.2", "to": "backend.example.com:3300" }
   ],
   "ingress": [
-    { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
+    { "name": "callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
   ],
   "keepalive": { "idleSeconds": 15, "intervalSeconds": 15, "retries": 5 }
 }
