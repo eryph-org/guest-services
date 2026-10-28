@@ -23,6 +23,7 @@
     <PackageReference Include="Eryph.ComputeClient" Version="0.15.0-beta.21" />
     <PackageReference Include="Eryph.IdentityModel.Clients" Version="0.7.0" />
     <PackageReference Include="Microsoft.DevTunnels.Ssh.Keys" Version="3.12.29" />
+    <PackageReference Include="Microsoft.DevTunnels.Ssh.Tcp" Version="3.12.29" />
   </ItemGroup>
 
   <ItemGroup>

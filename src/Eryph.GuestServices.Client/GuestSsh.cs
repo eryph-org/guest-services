@@ -18,9 +18,16 @@ namespace Eryph.GuestServices.Client;
 // uses for the same reason.
 internal static class GuestSsh
 {
-    public static async Task<SshClientSession> EstablishSessionAsync(Stream transport, IKeyPair keyPair)
+    // keepAliveTimeoutSeconds > 0 turns on the SSH control-channel keepalive: the
+    // session sends a periodic keepalive request so a long-idle tunnel stays up and
+    // a dead peer is detected (KeepAliveFailed). 0 keeps the shell/transfer callers
+    // exactly as they were.
+    public static async Task<SshClientSession> EstablishSessionAsync(
+        Stream transport, IKeyPair keyPair, int keepAliveTimeoutSeconds = 0)
     {
         var config = new SshSessionConfiguration();
+        if (keepAliveTimeoutSeconds > 0)
+            config.KeepAliveTimeoutInSeconds = keepAliveTimeoutSeconds;
         var session = new SshClientSession(config, new TraceSource("Client"));
         session.Authenticating += (_, e) =>
         {
