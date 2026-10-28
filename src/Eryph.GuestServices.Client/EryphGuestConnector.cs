@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 
 namespace Eryph.GuestServices.Client;
@@ -14,7 +13,9 @@ public sealed class EryphGuestConnector(
     EryphConnection connection,
     string catletId,
     IKeyPair keyPair,
-    Action<string>? writeWarning = null) : IGuestConnector
+    Action<string>? writeWarning = null,
+    int keepAliveTimeoutSeconds = 0,
+    bool enablePortForwarding = false) : IGuestConnector
 {
     public async Task<GuestSshConnection> ConnectAsync(CancellationToken cancellation)
     {
@@ -37,7 +38,8 @@ public sealed class EryphGuestConnector(
 
         try
         {
-            var session = await GuestSsh.EstablishSessionAsync(stream, keyPair);
+            var session = await GuestSsh.EstablishSessionAsync(
+                stream, keyPair, keepAliveTimeoutSeconds, enablePortForwarding, cancellation);
             return new GuestSshConnection(session, stream);
         }
         catch

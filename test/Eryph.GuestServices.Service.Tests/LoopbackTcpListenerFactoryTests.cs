@@ -22,6 +22,7 @@ public class LoopbackTcpListenerFactoryTests
     [Theory]
     [InlineData("0.0.0.0", "127.0.0.1")]   // IPAddress.Any — what a bare `ssh -R <port>` resolves to
     [InlineData("127.0.0.1", "127.0.0.1")] // already loopback
+    [InlineData("127.0.0.2", "127.0.0.2")] // a loopback alias is honored as-is
     [InlineData("10.1.2.3", "127.0.0.1")]  // a concrete non-loopback IPv4 address
     [InlineData("::", "::1")]              // IPAddress.IPv6Any
     [InlineData("::1", "::1")]             // already IPv6 loopback

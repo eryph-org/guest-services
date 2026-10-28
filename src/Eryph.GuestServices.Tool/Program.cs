@@ -101,6 +101,18 @@ app.Configure(config =>
 
         eryph.AddCommand<CatletDownloadDirectoryCommand>("download-directory")
             .WithDescription("Downloads a directory from the catlet to the host via eryph.");
+
+        eryph.AddBranch("tunnel", tunnel =>
+        {
+            tunnel.SetDescription(
+                "Runs a policy-driven proxied tunnel to a catlet (governed ingress/egress forwards).");
+
+            tunnel.AddCommand<CatletTunnelUpCommand>("up")
+                .WithDescription("Runs the proxied tunnel described by a policy file until stopped.");
+
+            tunnel.AddCommand<CatletTunnelValidateCommand>("validate")
+                .WithDescription("Validates a policy file without connecting.");
+        });
     });
 });
 

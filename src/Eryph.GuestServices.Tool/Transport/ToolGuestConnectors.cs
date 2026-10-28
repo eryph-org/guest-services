@@ -29,7 +29,9 @@ internal static class ToolGuestConnectors
         string? clientId,
         string? configurationName,
         string? identityPath,
-        Action<string>? writeWarning)
+        Action<string>? writeWarning,
+        int keepAliveTimeoutSeconds = 0,
+        bool enablePortForwarding = false)
     {
         var connection = EryphConnection.Resolve(clientId, configurationName)
             ?? throw new GuestConnectionException(
@@ -37,7 +39,8 @@ internal static class ToolGuestConnectors
 
         var keyPair = await ResolveEryphKeyAsync(identityPath);
 
-        return new EryphGuestConnector(connection, catletId, keyPair, writeWarning);
+        return new EryphGuestConnector(
+            connection, catletId, keyPair, writeWarning, keepAliveTimeoutSeconds, enablePortForwarding);
     }
 
     // The managed key (created on demand under the operator's profile) by default,

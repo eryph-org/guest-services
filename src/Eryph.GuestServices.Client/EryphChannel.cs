@@ -36,7 +36,7 @@ public static class EryphChannel
         string operationId;
         try
         {
-            operationId = (await catlets.OpenSshChannelAsync(catletId)).Value.Id;
+            operationId = (await catlets.OpenSshChannelAsync(catletId, cancellationToken: cancellation)).Value.Id;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -106,7 +106,7 @@ public static class EryphChannel
             Operation operation;
             try
             {
-                operation = (await operations.GetAsync(operationId)).Value;
+                operation = (await operations.GetAsync(operationId, cancellationToken: cancellation)).Value;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
