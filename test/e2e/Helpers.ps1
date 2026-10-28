@@ -2137,3 +2137,151 @@ function Test-CatletReversePortForwardWindows {
     Remove-Item -LiteralPath $knownHosts -Force -ErrorAction SilentlyContinue
   }
 }
+
+function Start-CatletTunnel {
+  <#
+  .SYNOPSIS
+    Launches `egs-tool catlet tunnel up --policy <file>` as a background process
+    and waits until it reports the tunnel is up. Returns an object carrying the
+    process and its captured stdout/stderr files; pass it to Stop-CatletTunnel.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $EgsTool,
+    [Parameter(Mandatory = $true)] [string] $PolicyFile,
+    [Parameter()] [int] $UpTimeoutSeconds = 60
+  )
+  $id = [guid]::NewGuid().ToString('N')
+  $outFile = Join-Path $env:TEMP "egs-tunnel-$id.out"
+  $errFile = Join-Path $env:TEMP "egs-tunnel-$id.err"
+  $proc = Start-Process -FilePath $EgsTool `
+    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', $PolicyFile) `
+    -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+    -PassThru -NoNewWindow
+  $deadline = (Get-Date).AddSeconds($UpTimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if ($proc.HasExited) {
+      $text = (Get-Content -Raw -ErrorAction SilentlyContinue $outFile) + (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
+      throw "catlet tunnel exited early (code $($proc.ExitCode)): $text"
+    }
+    $out = Get-Content -Raw -ErrorAction SilentlyContinue $outFile
+    if ($out -match 'is up') {
+      return [pscustomobject]@{ Process = $proc; OutFile = $outFile; ErrFile = $errFile }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  throw "catlet tunnel did not come up within ${UpTimeoutSeconds}s. Output: $(Get-Content -Raw -ErrorAction SilentlyContinue $outFile)"
+}
+
+function Stop-CatletTunnel {
+  [CmdletBinding()]
+  param([Parameter(Mandatory = $true)] $Tunnel)
+  if ($Tunnel -and $Tunnel.Process -and -not $Tunnel.Process.HasExited) {
+    try { $Tunnel.Process.Kill() } catch { }
+    try { $Tunnel.Process.WaitForExit(5000) | Out-Null } catch { }
+  }
+  if ($Tunnel) {
+    Remove-Item -LiteralPath $Tunnel.OutFile, $Tunnel.ErrFile -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Invoke-CatletTunnelToCompletion {
+  <#
+  .SYNOPSIS
+    Runs `catlet tunnel up` expecting it to exit on its own (the fail-closed
+    path), and returns its exit code + combined output. Kills it if it does not
+    exit within the timeout.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [string] $EgsTool,
+    [Parameter(Mandatory = $true)] [string] $PolicyFile,
+    [Parameter()] [int] $TimeoutSeconds = 60
+  )
+  $id = [guid]::NewGuid().ToString('N')
+  $outFile = Join-Path $env:TEMP "egs-tunnel-$id.out"
+  $errFile = Join-Path $env:TEMP "egs-tunnel-$id.err"
+  $proc = Start-Process -FilePath $EgsTool `
+    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', $PolicyFile) `
+    -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
+    -PassThru -NoNewWindow
+  $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
+  if (-not $exited) { try { $proc.Kill() } catch { } }
+  Start-Sleep -Milliseconds 200
+  $text = ((Get-Content -Raw -ErrorAction SilentlyContinue $outFile) + "`n" + (Get-Content -Raw -ErrorAction SilentlyContinue $errFile))
+  $code = $null
+  if ($exited) { try { $code = $proc.ExitCode } catch { } }
+  Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+  return [pscustomobject]@{ ExitCode = $code; Output = $text }
+}
+
+function Read-GuestLoopbackToken {
+  <#
+  .SYNOPSIS
+    From inside a Linux catlet (direct sshd), connects to 127.0.0.1:<Port> and
+    returns the bytes read (the token a probe/tunnel delivers). With
+    -TolerateFailure a refused/timed-out connection returns '' instead of
+    throwing — used to prove a non-declared port is NOT reachable.
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] $Catlet,
+    [Parameter(Mandatory = $true)] [string] $Username,
+    [Parameter(Mandatory = $true)] [int] $Port,
+    [Parameter()] [switch] $TolerateFailure
+  )
+  $py = @"
+import socket, sys
+s = socket.socket()
+s.settimeout(5)
+try:
+    s.connect(('127.0.0.1', $Port))
+    sys.stdout.write(s.recv(256).decode())
+except Exception as e:
+    sys.stderr.write(str(e))
+finally:
+    s.close()
+"@
+  $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($py))
+  $cmd = "echo $b64 | base64 -d | python3 -"
+  $savedPref = $PSNativeCommandUseErrorActionPreference
+  $PSNativeCommandUseErrorActionPreference = $false
+  try {
+    $out = Invoke-CatletAdminSshLinux -Catlet $Catlet -Username $Username -Command $cmd 2>$null
+  } catch {
+    if ($TolerateFailure) { return '' }
+    throw
+  } finally {
+    $PSNativeCommandUseErrorActionPreference = $savedPref
+  }
+  if ($null -eq $out) { return '' }
+  return ($out | Out-String).Trim()
+}
+
+function Read-HostLoopbackToken {
+  <#
+  .SYNOPSIS
+    Connects to 127.0.0.1:<Port> on the HOST and returns the bytes read. Empty
+    string on connect/read failure (used to prove reachability or its absence).
+  #>
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)] [int] $Port,
+    [Parameter()] [int] $TimeoutMs = 5000
+  )
+  $client = [System.Net.Sockets.TcpClient]::new()
+  try {
+    $iar = $client.BeginConnect([System.Net.IPAddress]::Loopback, $Port, $null, $null)
+    if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return '' }
+    $client.EndConnect($iar)
+    $stream = $client.GetStream()
+    $stream.ReadTimeout = $TimeoutMs
+    $buf = [byte[]]::new(256)
+    $n = $stream.Read($buf, 0, $buf.Length)
+    return [System.Text.Encoding]::ASCII.GetString($buf, 0, $n)
+  } catch {
+    return ''
+  } finally {
+    $client.Close()
+  }
+}
