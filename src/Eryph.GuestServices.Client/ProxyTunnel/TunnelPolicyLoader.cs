@@ -109,7 +109,7 @@ public static class TunnelPolicyLoader
     }
 
     private static List<EgressRule> ValidateEgress(
-        List<EgressRuleDto>? rules, HashSet<string> names, List<string> problems)
+        List<EgressRuleDto?>? rules, HashSet<string> names, List<string> problems)
     {
         var result = new List<EgressRule>();
         if (rules is null)
@@ -150,7 +150,7 @@ public static class TunnelPolicyLoader
     }
 
     private static List<IngressRule> ValidateIngress(
-        List<IngressRuleDto>? rules, HashSet<string> names, List<string> problems)
+        List<IngressRuleDto?>? rules, HashSet<string> names, List<string> problems)
     {
         var result = new List<IngressRule>();
         if (rules is null)

@@ -60,6 +60,57 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task Guest_cannot_open_a_channel_back_to_a_host_port()
+    {
+        // The whole VM (incl. egs-service) is untrusted: once the tunnel is up, the
+        // guest must not be able to reach back through egs-tool to an arbitrary
+        // host-local port. The engine pins AcceptRemoteConnectionsForNonForwardedPorts
+        // = false on the client, so a guest-initiated direct-tcpip must be refused.
+        using var hardTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var helper = new SshTestHelper();
+        await helper.SetupAsync(typeof(PortForwardingService));
+        AuthorizeReverseForwards(helper);
+
+        var forbiddenPort = GetFreeLoopbackPort();
+        using var sentinel = StartTokenServer(forbiddenPort, "SHOULD-NOT-BE-REACHED", hardTimeout.Token);
+
+        var up = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var policy = new TunnelPolicy(
+            "test", "catlet",
+            Egress: [new EgressRule("e", GetFreeLoopbackPort(), "127.0.0.1", GetFreeLoopbackPort())],
+            Ingress: [],
+            Keepalive);
+
+        using var run = CancellationTokenSource.CreateLinkedTokenSource(hardTimeout.Token);
+        var engine = new ProxyTunnelEngine(
+            new FixedConnector(helper.ClientSession!), policy,
+            writeInfo: m => { if (m.Contains("is up")) up.TrySetResult(); });
+        var engineTask = engine.RunAsync(run.Token);
+        await up.Task.WaitAsync(hardTimeout.Token);
+
+        // The guest (server) attempts a direct-tcpip channel back to the host port.
+        var guestPfs = helper.ServerSession!.ActivateService<PortForwardingService>();
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(hardTimeout.Token);
+        attempt.CancelAfter(TimeSpan.FromSeconds(8));
+        SshStream? back = null;
+        try
+        {
+            back = await guestPfs.StreamToRemotePortAsync("127.0.0.1", forbiddenPort, attempt.Token);
+        }
+        catch
+        {
+            // A refusal surfaced as an exception is equally acceptable.
+        }
+
+        run.Cancel();
+        await engineTask;
+
+        back.Should().BeNull(
+            "the client pins AcceptRemoteConnectionsForNonForwardedPorts=false, so a guest-initiated "
+            + "direct-tcpip to a host port must be refused");
+    }
+
+    [Fact]
     public async Task Gate_probe_fails_closed_when_the_guest_refuses_forwarding()
     {
         using var hardTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));

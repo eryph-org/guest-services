@@ -1,7 +1,6 @@
 using System.Net;
 using AwesomeAssertions;
 using Eryph.GuestServices.Client.ProxyTunnel;
-using Xunit;
 
 namespace Eryph.GuestServices.Client.Tests.ProxyTunnel;
 

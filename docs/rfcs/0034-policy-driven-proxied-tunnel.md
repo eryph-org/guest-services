@@ -106,10 +106,24 @@ as the SSH `ProxyCommand` stdin/stdout bridge (RFC 0030) and is unchanged.
 
 ## Client-side channel pinning (threat model)
 
+**The whole VM is untrusted — including egs-service (the guest SSH server).** The
+tunnel's job is to let a guest reach exactly the declared services and no more, so
+every "which services are open" decision is enforced **host-side in egs-tool** and
+nothing is delegated to the guest:
+
+- egs-tool opens **only** the listeners the policy declares (ingress on the host;
+  egress is a guest-side loopback listener the guest cannot widen).
+- For egress, egs-tool dials **only** the policy's fixed `to`. The `forwarded-tcpip`
+  channel a connection arrives on carries a guest-supplied originator address;
+  egs-tool ignores it and dials the policy target, so a malicious guest cannot
+  redirect the dial.
+- The single-fixed-target guarantee is therefore a **host-side** property; it does
+  not depend on the guest constraining anything.
+
 egs-tool is the SSH *client*; the guest is the server. A compromised or malicious
 guest must not be able to steer egs-tool into opening data paths the policy did not
-declare. The DevTunnels `PortForwardingService` defaults (`true` for all three) are
-therefore overridden before any forward is established:
+declare. The DevTunnels `PortForwardingService` defaults are therefore overridden
+before any forward is established:
 
 | Property | Set to | Why |
 |---|---|---|

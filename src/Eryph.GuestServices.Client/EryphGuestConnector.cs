@@ -1,5 +1,4 @@
 using System.Net.WebSockets;
-using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 
 namespace Eryph.GuestServices.Client;

@@ -16,8 +16,12 @@ internal sealed class TunnelPolicyDto
 {
     public string? Tunnel { get; set; }
     public string? Catlet { get; set; }
-    public List<EgressRuleDto>? Egress { get; set; }
-    public List<IngressRuleDto>? Ingress { get; set; }
+
+    // Elements are nullable: a JSON array can contain a literal null
+    // (e.g. "egress":[null]), which the deserializer surfaces as a null element
+    // regardless of the list's element annotation. The loader rejects those.
+    public List<EgressRuleDto?>? Egress { get; set; }
+    public List<IngressRuleDto?>? Ingress { get; set; }
     public KeepaliveDto? Keepalive { get; set; }
 }
 

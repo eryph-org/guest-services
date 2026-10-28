@@ -28,8 +28,13 @@ public sealed class SshTestHelper : IDisposable
     }
 
     public SshClientSession? ClientSession { get; private set; }
-    
+
     public SocketSshServer? Server { get; private set; }
+
+    // The accepted server-side session, captured as it authenticates — lets a test
+    // drive the server (guest) end, e.g. to prove a guest-initiated channel back to
+    // the client is refused.
+    public SshServerSession? ServerSession { get; private set; }
 
     public Guid ServiceId { get; init; }
 
@@ -50,7 +55,11 @@ public sealed class SshTestHelper : IDisposable
         
         _serverSocket = await SocketFactory.CreateServerSocket(ListenMode.Loopback, ServiceId, 1);
         
-        Server.SessionAuthenticating += (_, e) => e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
+        Server.SessionAuthenticating += (s, e) =>
+        {
+            ServerSession ??= s as SshServerSession;
+            e.AuthenticationTask = Task.FromResult<ClaimsPrincipal?>(new ClaimsPrincipal());
+        };
         Server.ExceptionRaised += (_, ex) => throw new Exception("Exception in SSH server", ex);
         _ = Server.AcceptSessionsAsync(_serverSocket);
 

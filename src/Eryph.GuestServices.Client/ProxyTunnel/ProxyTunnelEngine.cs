@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Sockets;
-using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Tcp;
 
@@ -201,11 +200,16 @@ public sealed class ProxyTunnelEngine(
             throw new IOException(
                 $"egress rule '{rule.Name}': the guest loopback port {rule.ListenPort} is not available (in use).");
 
-        streamer.StreamOpened += (_, stream) => _ = RelayEgressAsync(rule, stream, sessionToken);
+        streamer.StreamOpened += (_, stream) => StartEgressRelay(rule, stream, sessionToken);
         writeInfo?.Invoke(
             $"egress '{rule.Name}': guest 127.0.0.1:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
         return streamer;
     }
+
+    // Fire-and-forget the per-connection relay; RelayEgressAsync owns its own
+    // error handling, so an unobserved fault cannot escape.
+    private void StartEgressRelay(EgressRule rule, Stream guestStream, CancellationToken cancellation) =>
+        _ = RelayEgressAsync(rule, guestStream, cancellation);
 
     private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, CancellationToken cancellation)
     {
