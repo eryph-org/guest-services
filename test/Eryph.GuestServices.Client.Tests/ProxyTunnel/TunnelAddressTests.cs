@@ -7,7 +7,7 @@ namespace Eryph.GuestServices.Client.Tests.ProxyTunnel;
 public class TunnelAddressTests
 {
     [Theory]
-    [InlineData("wass11.corp.example:3300", "wass11.corp.example", 3300)]
+    [InlineData("backend.example.com:3300", "backend.example.com", 3300)]
     [InlineData("127.0.0.1:8080", "127.0.0.1", 8080)]
     [InlineData("[::1]:8080", "::1", 8080)]
     public void TryParseTarget_accepts_single_host_port(string value, string host, int port)

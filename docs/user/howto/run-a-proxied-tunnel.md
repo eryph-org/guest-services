@@ -27,7 +27,7 @@ general-purpose tunnel.
   "tunnel": "sap-prod",
   "catlet": "my-app",
   "egress": [
-    { "name": "sap-rfc", "listen": 3300, "to": "wass11.corp.example:3300" }
+    { "name": "sap-rfc", "listen": 3300, "to": "backend.example.com:3300" }
   ],
   "ingress": [
     { "name": "callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
@@ -53,12 +53,12 @@ is opt-in — you have to write the address explicitly (e.g. `"0.0.0.0:8080"`).
 An egress rule opens its `listen` port on the **guest's loopback** (`127.0.0.1`). The
 guest reaches the external service by connecting to that local port — it never names
 the real target, which lives only in the policy on the host. For
-`{ "listen": 3300, "to": "wass11.corp.example:3300" }` the guest has two options:
+`{ "listen": 3300, "to": "backend.example.com:3300" }` the guest has two options:
 
 - **Point the app at localhost** — connect to `127.0.0.1:3300`. Simplest.
 - **Keep the real hostname** — add a guest `/etc/hosts` entry
-  `127.0.0.1  wass11.corp.example` and set `listen` to the port the app uses (3300).
-  The app connects to `wass11.corp.example:3300`, which resolves to the loopback
+  `127.0.0.1  backend.example.com` and set `listen` to the port the app uses (3300).
+  The app connects to `backend.example.com:3300`, which resolves to the loopback
   listener, and egs-tool dials the real host. This `/etc/hosts` mapping is part of
   your guest's own provisioning (cloud-config / fodder); egs-tool does not manage it.
 

@@ -11,7 +11,7 @@ public class TunnelPolicyLoaderTests
           "tunnel": "sap-prod",
           "catlet": "my-catlet",
           "egress": [
-            { "name": "sap-rfc", "listen": 3300, "to": "wass11.corp.example:3300" }
+            { "name": "sap-rfc", "listen": 3300, "to": "backend.example.com:3300" }
           ],
           "ingress": [
             { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
@@ -33,7 +33,7 @@ public class TunnelPolicyLoaderTests
         var egress = policy.Egress[0];
         egress.Name.Should().Be("sap-rfc");
         egress.ListenPort.Should().Be(3300);
-        egress.ToHost.Should().Be("wass11.corp.example");
+        egress.ToHost.Should().Be("backend.example.com");
         egress.ToPort.Should().Be(3300);
 
         policy.Ingress.Should().ContainSingle();

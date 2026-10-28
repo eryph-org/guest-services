@@ -37,7 +37,7 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
 
         var policy = new TunnelPolicy(
             "test", "catlet",
-            Egress: [new EgressRule("e", guestPort, "127.0.0.1", toPort)],
+            Egress: [new EgressRule("e", IPAddress.Loopback, guestPort, "127.0.0.1", toPort)],
             Ingress: [],
             Keepalive);
 
@@ -77,7 +77,7 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
         var up = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var policy = new TunnelPolicy(
             "test", "catlet",
-            Egress: [new EgressRule("e", GetFreeLoopbackPort(), "127.0.0.1", GetFreeLoopbackPort())],
+            Egress: [new EgressRule("e", IPAddress.Loopback, GetFreeLoopbackPort(), "127.0.0.1", GetFreeLoopbackPort())],
             Ingress: [],
             Keepalive);
 
@@ -123,7 +123,7 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
 
         var policy = new TunnelPolicy(
             "test", "catlet",
-            Egress: [new EgressRule("e", GetFreeLoopbackPort(), "127.0.0.1", GetFreeLoopbackPort())],
+            Egress: [new EgressRule("e", IPAddress.Loopback, GetFreeLoopbackPort(), "127.0.0.1", GetFreeLoopbackPort())],
             Ingress: [],
             Keepalive);
 

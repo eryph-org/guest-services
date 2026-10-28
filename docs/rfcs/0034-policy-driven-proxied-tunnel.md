@@ -46,7 +46,7 @@ destinations.
   "tunnel": "sap-prod",
   "catlet": "<catlet-id-or-name>",
   "egress": [
-    { "name": "sap-rfc", "listen": 3300, "listenAddress": "127.0.0.2", "to": "wass11.corp.example:3300" }
+    { "name": "sap-rfc", "listen": 3300, "listenAddress": "127.0.0.2", "to": "backend.example.com:3300" }
   ],
   "ingress": [
     { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
