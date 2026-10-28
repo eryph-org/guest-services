@@ -236,13 +236,30 @@ public sealed class ProxyTunnelEngine(
     {
         using var connectDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         connectDeadline.CancelAfter(SetupTimeout);
+
+        // Pass the deadline token to the connector (the SSH handshake and the compute
+        // calls that accept it honor it). But some control-plane steps — e.g. token
+        // minting — ignore cancellation, so also bound the WAIT with a hard timeout:
+        // if the deadline wins, surface a reconnectable error and leave the attempt to
+        // finish detached, disposing it if it later succeeds, so nothing leaks.
+        var connectTask = connector.ConnectAsync(connectDeadline.Token);
+        var timeout = Task.Delay(SetupTimeout, cancellation);
+
+        if (await Task.WhenAny(connectTask, timeout) == timeout)
+        {
+            cancellation.ThrowIfCancellationRequested(); // caller stopped us, not the deadline
+            _ = connectTask.ContinueWith(
+                t => { if (t.Status == TaskStatus.RanToCompletion) _ = t.Result.DisposeAsync(); },
+                TaskScheduler.Default);
+            throw new IOException($"the connection did not complete within {SetupTimeout.TotalSeconds:0}s");
+        }
+
         try
         {
-            return await connector.ConnectAsync(connectDeadline.Token);
+            return await connectTask;
         }
         catch (OperationCanceledException) when (connectDeadline.IsCancellationRequested && !cancellation.IsCancellationRequested)
         {
-            // The deadline fired, not the caller — surface a reconnectable error.
             throw new IOException($"the connection did not complete within {SetupTimeout.TotalSeconds:0}s");
         }
     }
@@ -541,23 +558,37 @@ public sealed class ProxyTunnelEngine(
         // Separate read scopes: a channel close cancels only the host-side read.
         using var hostReadScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         using var guestReadScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        void EndRelay() { Cancel(hostReadScope); Cancel(guestReadScope); }
 
+        // Writes are never cancelled, so a pump can sit in a write a peer refuses to
+        // consume. The drain deadline is the backstop: it force-closes BOTH the host
+        // socket and the guest channel, which unblocks any such write, bounding how
+        // long a connection (and its limiter slot) can linger during teardown.
         using var drainTimer = new CancellationTokenSource();
+        void StartDrain()
+        {
+            try { drainTimer.CancelAfter(DrainDeadline); }
+            catch (ObjectDisposedException) { }
+        }
+
         drainTimer.Token.Register(() =>
         {
-            // The drain ran out of time (a stalled host client): force the socket
-            // closed to unblock any pending write, then stop the guest read.
             try { hostSocket.Dispose(); } catch { /* already gone */ }
+            try { guestStream.Dispose(); } catch { /* already gone */ }
+            Cancel(hostReadScope);
             Cancel(guestReadScope);
         });
+
+        // Terminal: cancel both reads and arm the drain so a stuck write cannot hang
+        // Task.WhenAll (and hold the connection-limit slot) indefinitely.
+        void EndRelay() { Cancel(hostReadScope); Cancel(guestReadScope); StartDrain(); }
 
         var channel = (guestStream as SshStream)?.Channel;
         void OnClosed()
         {
+            // Guest gone: stop reading from the host (nothing to deliver), but let the
+            // guest->host read drain buffered response bytes under the drain deadline.
             Cancel(hostReadScope);
-            try { drainTimer.CancelAfter(DrainDeadline); }
-            catch (ObjectDisposedException) { }
+            StartDrain();
         }
 
         void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => OnClosed();
