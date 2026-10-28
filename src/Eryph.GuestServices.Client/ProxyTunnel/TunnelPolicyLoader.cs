@@ -21,7 +21,8 @@ public static class TunnelPolicyLoader
         {
             json = File.ReadAllText(path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                      or ArgumentException or NotSupportedException or System.Security.SecurityException)
         {
             throw new TunnelPolicyException($"The policy file '{path}' could not be read: {ex.Message}");
         }
@@ -114,9 +115,16 @@ public static class TunnelPolicyLoader
         if (rules is null)
             return result;
 
+        var listenPorts = new HashSet<int>();
         for (var i = 0; i < rules.Count; i++)
         {
             var dto = rules[i];
+            if (dto is null)
+            {
+                problems.Add($"egress[{i}] is null");
+                continue;
+            }
+
             var label = RuleLabel("egress", i, dto.Name);
             var name = ValidateName(dto.Name, label, names, problems);
 
@@ -125,6 +133,8 @@ public static class TunnelPolicyLoader
                 problems.Add($"{label}: 'listen' is required (the guest-side loopback port)");
             else if (!TunnelAddress.TryValidatePort(dto.Listen.Value, out var portError))
                 problems.Add($"{label}: listen {portError}");
+            else if (!listenPorts.Add(dto.Listen.Value))
+                problems.Add($"{label}: egress listen port {dto.Listen.Value} is used by more than one rule");
             else
                 listenOk = true;
 
@@ -146,15 +156,27 @@ public static class TunnelPolicyLoader
         if (rules is null)
             return result;
 
+        var binds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < rules.Count; i++)
         {
             var dto = rules[i];
+            if (dto is null)
+            {
+                problems.Add($"ingress[{i}] is null");
+                continue;
+            }
+
             var label = RuleLabel("ingress", i, dto.Name);
             var name = ValidateName(dto.Name, label, names, problems);
 
             var listenOk = TunnelAddress.TryParseListen(dto.Listen, out var listen, out var listenError);
             if (!listenOk)
                 problems.Add($"{label}: listen {listenError}");
+            else if (!binds.Add(listen.ToString()))
+            {
+                problems.Add($"{label}: ingress listen bind {listen} is used by more than one rule");
+                listenOk = false;
+            }
 
             var targetOk = TunnelAddress.TryParseTarget(dto.To, out var toHost, out var toPort, out var toError);
             if (!targetOk)

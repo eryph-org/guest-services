@@ -143,10 +143,20 @@ internal static class TunnelAddress
             return true;
         }
 
+        var firstColon = value.IndexOf(':');
         var lastColon = value.LastIndexOf(':');
         if (lastColon < 0)
         {
             error = $"'{value}' is missing a port; use host:port";
+            return false;
+        }
+
+        // More than one colon and no brackets is an ambiguous IPv6 literal
+        // (e.g. "fe80::1" would silently parse as host "fe80:" port "1"). Require
+        // the bracket form so an IPv6 address can never be misread as host:port.
+        if (firstColon != lastColon)
+        {
+            error = $"'{value}' is ambiguous; write an IPv6 address as [address]:port";
             return false;
         }
 

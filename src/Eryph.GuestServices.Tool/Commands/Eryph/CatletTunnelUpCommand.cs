@@ -79,6 +79,7 @@ public sealed class CatletTunnelUpCommand : AsyncCommand<CatletTunnelUpCommand.S
         try
         {
             await engine.RunAsync(cts.Token);
+            AnsiConsole.MarkupLine($"[grey]Tunnel '{policy.Tunnel.EscapeMarkup()}' stopped.[/]");
             return 0;
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)

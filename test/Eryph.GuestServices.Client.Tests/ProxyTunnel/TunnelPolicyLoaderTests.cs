@@ -183,6 +183,72 @@ public class TunnelPolicyLoaderTests
     }
 
     [Fact]
+    public void Rejects_null_rule_element()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ null ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("null"));
+    }
+
+    [Fact]
+    public void Rejects_duplicate_egress_listen_port()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [
+                { "name": "a", "listen": 3300, "to": "h1:1" },
+                { "name": "b", "listen": 3300, "to": "h2:2" }
+              ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("more than one rule"));
+    }
+
+    [Fact]
+    public void Rejects_duplicate_ingress_bind()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "ingress": [
+                { "name": "a", "listen": "127.0.0.1:8080", "to": "127.0.0.1:1" },
+                { "name": "b", "listen": "8080", "to": "127.0.0.1:2" }
+              ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("more than one rule"));
+    }
+
+    [Fact]
+    public void Rejects_unbracketed_ipv6_target()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "fe80::1:3300" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("ambiguous") || e.Contains("IPv6"));
+    }
+
+    [Fact]
     public void Rejects_unsafe_catlet_token()
     {
         const string json = """
