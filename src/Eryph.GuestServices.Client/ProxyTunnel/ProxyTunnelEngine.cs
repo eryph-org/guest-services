@@ -63,21 +63,27 @@ public sealed class ProxyTunnelEngine(
         var plans = PlanSessions();
 
         using var scope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        var pending = plans.Count;
-        void OnPlanFirstEstablished()
+
+        // Track how many plans are CURRENTLY established (not how many ever connected),
+        // so "tunnel is up" reflects the real state: it is announced on the rising edge
+        // to all-up, and again if a reconnect later restores the last missing plan.
+        var currentlyUp = 0;
+        void OnPlanUp()
         {
-            if (Interlocked.Decrement(ref pending) == 0)
+            if (Interlocked.Increment(ref currentlyUp) == plans.Count)
                 writeInfo?.Invoke(
                     $"Tunnel '{policy.Tunnel}' is up: {plans.Count} session(s), "
                     + $"{policy.Egress.Count} egress, {policy.Ingress.Count} ingress. Press Ctrl+C to stop.");
         }
+
+        void OnPlanDown() => Interlocked.Decrement(ref currentlyUp);
 
         ExceptionDispatchInfo? fatal = null;
         async Task RunOne(SessionPlan plan)
         {
             try
             {
-                await RunPlanAsync(plan, OnPlanFirstEstablished, scope.Token);
+                await RunPlanAsync(plan, OnPlanUp, OnPlanDown, scope.Token);
             }
             catch (OperationCanceledException) when (scope.IsCancellationRequested)
             {
@@ -155,10 +161,9 @@ public sealed class ProxyTunnelEngine(
         return groups;
     }
 
-    private async Task RunPlanAsync(SessionPlan plan, Action onFirstEstablished, CancellationToken cancellation)
+    private async Task RunPlanAsync(SessionPlan plan, Action onPlanUp, Action onPlanDown, CancellationToken cancellation)
     {
         var everEstablished = false;
-        var firstReported = false;
         var attempt = 0;
 
         while (!cancellation.IsCancellationRequested)
@@ -173,12 +178,9 @@ public sealed class ProxyTunnelEngine(
                     {
                         everEstablished = true;
                         sessionStart = DateTimeOffset.UtcNow;
-                        if (!firstReported)
-                        {
-                            firstReported = true;
-                            onFirstEstablished();
-                        }
                     },
+                    onPlanUp,
+                    onPlanDown,
                     cancellation);
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -245,7 +247,8 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    private async Task RunSessionAsync(SessionPlan plan, Action markEstablished, CancellationToken cancellation)
+    private async Task RunSessionAsync(
+        SessionPlan plan, Action markEstablished, Action onUp, Action onDown, CancellationToken cancellation)
     {
         await using var connection = await ConnectWithDeadlineAsync(cancellation);
         var session = connection.Session;
@@ -285,6 +288,7 @@ public sealed class ProxyTunnelEngine(
         session.KeepAliveFailed += OnKeepAliveFailed;
 
         var teardown = new List<IDisposable>();
+        var reportedUp = false;
         try
         {
             await EnsureGateAsync(pfs, sessionScope.Token);
@@ -299,13 +303,19 @@ public sealed class ProxyTunnelEngine(
             // report it as established — let the plan reconnect (and keep counting
             // toward the startup limit) instead of latching everEstablished.
             if (!sessionScope.IsCancellationRequested)
+            {
                 markEstablished();
+                onUp();          // this plan is now established (current-state count)
+                reportedUp = true;
+            }
 
             await using (cancellation.Register(() => dropped.TrySetResult()))
                 await dropped.Task;
         }
         finally
         {
+            if (reportedUp)
+                onDown();        // this plan is no longer established
             session.Closed -= OnClosed;
             session.KeepAliveFailed -= OnKeepAliveFailed;
             try { sessionScope.Cancel(); }
@@ -456,7 +466,11 @@ public sealed class ProxyTunnelEngine(
             {
                 // A client that aborts mid-handshake can fault one Accept (e.g.
                 // ConnectionReset on Windows); that must not kill the whole listener.
+                // Pause briefly so a persistent fault (e.g. resource shortage) cannot
+                // spin the loop and flood warnings.
                 writeWarning?.Invoke($"ingress '{rule.Name}': accept failed: {ex.Message}");
+                try { await Task.Delay(100, cancellation); }
+                catch (OperationCanceledException) { break; }
                 continue;
             }
 
