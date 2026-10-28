@@ -43,6 +43,7 @@ module names, frequencies, and semaphore layout — adapted to Windows.
 - [Configure networking](howto/configure-networking.md)
 - [Reset and re-run provisioning](howto/reset-and-rerun.md)
 - [Collect logs for support](howto/collect-logs-for-support.md)
+- [Run a policy-driven proxied tunnel](howto/run-a-proxied-tunnel.md)
 
 ## Reference
 
