@@ -247,10 +247,13 @@ public sealed class ProxyTunnelEngine(
 
         if (await Task.WhenAny(connectTask, timeout) == timeout)
         {
-            cancellation.ThrowIfCancellationRequested(); // caller stopped us, not the deadline
+            // Install the late-result cleanup FIRST — whether we leave because the
+            // deadline fired or because the caller/a sibling cancelled, a connect that
+            // completes afterwards must still have its session + transport disposed.
             _ = connectTask.ContinueWith(
                 t => { if (t.Status == TaskStatus.RanToCompletion) _ = t.Result.DisposeAsync(); },
                 TaskScheduler.Default);
+            cancellation.ThrowIfCancellationRequested(); // caller stopped us, not the deadline
             throw new IOException($"the connection did not complete within {SetupTimeout.TotalSeconds:0}s");
         }
 
@@ -420,23 +423,43 @@ public sealed class ProxyTunnelEngine(
     private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation)
     {
         Socket? socket = null;
+
+        // Cancel the outbound dial if the guest closes its channel while we are still
+        // connecting: otherwise a target that drops connection attempts would pin the
+        // socket and the limiter slot until the OS connect timeout, and 128 such
+        // attempts would block the rule.
+        var guestChannel = (guestStream as SshStream)?.Channel;
+        using var dialScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => Cancel(dialScope);
+        if (guestChannel is not null)
+        {
+            guestChannel.Closed += OnChannelClosed;
+            if (guestChannel.IsClosed) Cancel(dialScope);
+        }
+
         try
         {
             socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-            await socket.ConnectAsync(rule.ToHost, rule.ToPort, cancellation);
+            await socket.ConnectAsync(rule.ToHost, rule.ToPort, dialScope.Token);
             SocketKeepAlive.Apply(socket, policy.Keepalive);
 
             await using var hostStream = new NetworkStream(socket, ownsSocket: false);
             // Egress: the host socket is the dialed target — the server.
             await RelayAsync(socket, hostStream, guestStream, hostIsServer: true, cancellation);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            // The dial was cancelled (session stopping or the guest closed the channel
+            // mid-connect) — a clean teardown, not a failure to report.
+        }
+        catch (Exception ex)
         {
             writeWarning?.Invoke(
                 $"egress '{rule.Name}': connection to {rule.ToHost}:{rule.ToPort} failed: {ex.Message}");
         }
         finally
         {
+            if (guestChannel is not null) guestChannel.Closed -= OnChannelClosed;
             socket?.Dispose();
             // Release the slot even if disposing the (already torn-down) guest stream
             // throws — otherwise a guest could leak the rule's connection slots.
