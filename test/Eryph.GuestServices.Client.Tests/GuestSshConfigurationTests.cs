@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Eryph.GuestServices.Client;
 using Microsoft.DevTunnels.Ssh.Tcp;
 
 namespace Eryph.GuestServices.Client.Tests;

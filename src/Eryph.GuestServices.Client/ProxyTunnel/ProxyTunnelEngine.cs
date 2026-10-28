@@ -319,21 +319,25 @@ public sealed class ProxyTunnelEngine(
         }
 
         var limiter = new ConnectionLimiter(MaxConnectionsPerRule);
-        streamer.StreamOpened += (_, stream) =>
-        {
-            if (!limiter.TryAcquire())
-            {
-                writeWarning?.Invoke(
-                    $"egress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
-                _ = stream.DisposeAsync();
-                return;
-            }
-
-            _ = RelayEgressAsync(rule, stream, limiter, sessionToken);
-        };
+        streamer.StreamOpened += (_, stream) => OnEgressStreamOpened(rule, limiter, stream, sessionToken);
         writeInfo?.Invoke(
             $"egress '{rule.Name}': guest {rule.ListenAddress}:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
         return streamer;
+    }
+
+    private void OnEgressStreamOpened(EgressRule rule, ConnectionLimiter limiter, Stream stream, CancellationToken sessionToken)
+    {
+        // A guest can open connections on its loopback listener at will; cap how many
+        // we carry through the host at once for this rule, then relay the rest.
+        if (!limiter.TryAcquire())
+        {
+            writeWarning?.Invoke(
+                $"egress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
+            _ = stream.DisposeAsync();
+            return;
+        }
+
+        _ = RelayEgressAsync(rule, stream, limiter, sessionToken);
     }
 
     private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation)
