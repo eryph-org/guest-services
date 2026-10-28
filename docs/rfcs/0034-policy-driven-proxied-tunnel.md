@@ -134,12 +134,17 @@ before any forward is established:
 still work regardless of these settings — that is the only remote-initiated path,
 and it is bounded to the policy's declared ports.
 
-egs-tool never auto-dials: egress uses a `RemotePortStreamer`
-(`StreamFromRemotePortAsync`) and dials the rule's fixed `to` itself from the
-`StreamOpened` handler, so there is no library-owned outbound connection to
-constrain. (`ForwardConnectionsToLocalPorts` is therefore left at its default — the
-streamer's delivery path depends on it, and it only governs the
-`ForwardFromRemotePortAsync` auto-dialer, which this engine does not use.)
+For egress, egs-tool uses a `RemotePortStreamer` (`StreamFromRemotePortAsync`) and
+dials the rule's fixed `to` itself from the `StreamOpened` handler, and it verifies
+the port the guest bound matches the one requested.
+
+`ForwardConnectionsToLocalPorts` is deliberately left at its **default (true)** — the
+streamer's delivery path depends on it. This is *not* defense in depth: with it true
+the library would, for a guest-initiated `direct-tcpip` channel, dial the
+guest-supplied `host:port` from the host. The single control preventing that is
+`AcceptRemoteConnectionsForNonForwardedPorts = false`, which rejects the channel
+before any dial. That one pin must never be relaxed, and any future second session
+path must set it too.
 
 | Adversary | Protected? |
 |---|---|

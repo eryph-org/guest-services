@@ -14,7 +14,8 @@ public sealed class EryphGuestConnector(
     string catletId,
     IKeyPair keyPair,
     Action<string>? writeWarning = null,
-    int keepAliveTimeoutSeconds = 0) : IGuestConnector
+    int keepAliveTimeoutSeconds = 0,
+    bool enablePortForwarding = false) : IGuestConnector
 {
     public async Task<GuestSshConnection> ConnectAsync(CancellationToken cancellation)
     {
@@ -37,7 +38,8 @@ public sealed class EryphGuestConnector(
 
         try
         {
-            var session = await GuestSsh.EstablishSessionAsync(stream, keyPair, keepAliveTimeoutSeconds);
+            var session = await GuestSsh.EstablishSessionAsync(
+                stream, keyPair, keepAliveTimeoutSeconds, enablePortForwarding);
             return new GuestSshConnection(session, stream);
         }
         catch

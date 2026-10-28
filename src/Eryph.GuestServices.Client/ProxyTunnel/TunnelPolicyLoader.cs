@@ -62,11 +62,13 @@ public static class TunnelPolicyLoader
 
         if (string.IsNullOrWhiteSpace(dto.Tunnel))
             problems.Add("'tunnel' is required (a logical name for the tunnel)");
+        else if (dto.Tunnel.Any(char.IsControl))
+            problems.Add("'tunnel' must not contain control characters");
 
         if (string.IsNullOrWhiteSpace(dto.Catlet))
             problems.Add("'catlet' is required (the catlet id or name to bind to)");
-        else if (!IsSafeCatletToken(dto.Catlet))
-            problems.Add("'catlet' may only contain letters, digits, '.', '-' and '_'");
+        else if (!IsSafeCatletToken(dto.Catlet.Trim()))
+            problems.Add("'catlet' may only contain letters, digits, '.', '-' and '_' and needs at least one letter or digit");
 
         var keepalive = ValidateKeepalive(dto.Keepalive, problems);
 
@@ -229,5 +231,6 @@ public static class TunnelPolicyLoader
         string.IsNullOrWhiteSpace(name) ? $"{section}[{index}]" : $"{section} '{name.Trim()}'";
 
     private static bool IsSafeCatletToken(string value) =>
-        value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
+        value.Any(char.IsAsciiLetterOrDigit)
+        && value.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.');
 }

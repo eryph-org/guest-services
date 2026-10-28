@@ -53,7 +53,8 @@ public sealed class CatletTunnelUpCommand : AsyncCommand<CatletTunnelUpCommand.S
                 settings.Configuration,
                 settings.Identity,
                 writeWarning: message => AnsiConsole.MarkupLine($"[yellow]{message.EscapeMarkup()}[/]"),
-                keepAliveTimeoutSeconds: policy.Keepalive.IntervalSeconds);
+                keepAliveTimeoutSeconds: policy.Keepalive.IntervalSeconds,
+                enablePortForwarding: true);
         }
         catch (GuestConnectionException ex)
         {

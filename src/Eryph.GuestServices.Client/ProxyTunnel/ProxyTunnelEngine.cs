@@ -119,17 +119,22 @@ public sealed class ProxyTunnelEngine(
         var session = connection.Session;
 
         var pfs = session.ActivateService<PortForwardingService>();
-        // Reject a guest-initiated direct-tcpip channel to an arbitrary host-local
-        // port: a compromised guest must not be able to reach back through egs-tool.
+        // The whole VM (incl. the guest SSH server) is untrusted, so pin the client's
+        // forwarding posture. GuestSsh already set these before connect for the eryph
+        // path; re-assert them here (idempotent) so the engine is correct for any
+        // connector and the invariant lives next to the code that depends on it.
+        //
+        //   AcceptRemoteConnectionsForNonForwardedPorts = false is THE control that
+        //   stops a guest-initiated direct-tcpip from reaching a host-local port. Note
+        //   ForwardConnectionsToLocalPorts stays at its default (true): the library
+        //   WOULD dial a guest-supplied host:port for such a channel, and the only
+        //   thing preventing that is this flag being false — do not relax it. (It must
+        //   also stay true because the RemotePortStreamer that delivers egress
+        //   connections rides that path; false silently drops every egress connection.)
         pfs.AcceptRemoteConnectionsForNonForwardedPorts = false;
         // No library-owned local listener; ingress listeners are opened here,
         // loopback-bound unless the policy opts out.
         pfs.AcceptLocalConnectionsForForwardedPorts = false;
-        // ForwardConnectionsToLocalPorts stays at its default: the RemotePortStreamer
-        // that delivers egress (forwarded-tcpip) connections rides this path, so
-        // turning it off silently drops every egress connection. It does NOT make the
-        // library auto-dial — that only happens via ForwardFromRemotePort, which this
-        // engine never uses (egress uses a streamer and egs-tool dials the 'to' itself).
 
         using var sessionScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -199,6 +204,15 @@ public sealed class ProxyTunnelEngine(
             // path retry rather than failing the whole tunnel.
             throw new IOException(
                 $"egress rule '{rule.Name}': the guest loopback port {rule.ListenPort} is not available (in use).");
+
+        // Do not trust the port the guest echoes back: if it does not match what we
+        // asked to forward, refuse rather than carry a rule whose audit line would lie.
+        if (streamer.RemotePort != rule.ListenPort)
+        {
+            streamer.Dispose();
+            throw new TunnelPolicyException(
+                $"egress rule '{rule.Name}': the guest bound port {streamer.RemotePort}, not the requested {rule.ListenPort}.");
+        }
 
         streamer.StreamOpened += (_, stream) => StartEgressRelay(rule, stream, sessionToken);
         writeInfo?.Invoke(

@@ -108,6 +108,8 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
         back.Should().BeNull(
             "the client pins AcceptRemoteConnectionsForNonForwardedPorts=false, so a guest-initiated "
             + "direct-tcpip to a host port must be refused");
+        sentinel.Accepts.Should().Be(0,
+            "the guest-initiated channel must never have been dialed through to the host port");
     }
 
     [Fact]
@@ -173,13 +175,15 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
         var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
         var bytes = Encoding.ASCII.GetBytes(token);
-        var loop = Task.Run(async () =>
+        var server = new TokenServer(listener);
+        server.Loop = Task.Run(async () =>
         {
             try
             {
                 while (!cancellation.IsCancellationRequested)
                 {
                     var socket = await listener.AcceptSocketAsync(cancellation);
+                    Interlocked.Increment(ref server.AcceptCount);
                     await socket.SendAsync(bytes, SocketFlags.None, cancellation);
                     socket.Shutdown(SocketShutdown.Send);
                     socket.Dispose();
@@ -190,7 +194,7 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
             catch (SocketException) { }
         }, cancellation);
 
-        return new TokenServer(listener, loop);
+        return server;
     }
 
     private static int GetFreeLoopbackPort()
@@ -216,12 +220,17 @@ public class ProxyTunnelEngineTests(Xunit.Abstractions.ITestOutputHelper output)
             Task.FromResult(new GuestSshConnection(session, new MemoryStream()));
     }
 
-    private sealed class TokenServer(TcpListener listener, Task loop) : IDisposable
+    private sealed class TokenServer(TcpListener listener) : IDisposable
     {
+        public int AcceptCount;
+        public Task? Loop;
+
+        public int Accepts => Volatile.Read(ref AcceptCount);
+
         public void Dispose()
         {
             listener.Stop();
-            try { loop.Wait(TimeSpan.FromSeconds(2)); }
+            try { Loop?.Wait(TimeSpan.FromSeconds(2)); }
             catch { /* best effort */ }
         }
     }

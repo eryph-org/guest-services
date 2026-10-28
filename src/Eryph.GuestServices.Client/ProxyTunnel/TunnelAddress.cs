@@ -26,6 +26,12 @@ internal static class TunnelAddress
             return false;
         }
 
+        if (HasWhitespaceOrControl(value))
+        {
+            error = $"'{value}' contains whitespace or control characters";
+            return false;
+        }
+
         if (value.Contains('*'))
         {
             error = $"'{value}' is not allowed: wildcards are forbidden, name a single host:port";
@@ -74,6 +80,12 @@ internal static class TunnelAddress
         if (string.IsNullOrWhiteSpace(value))
         {
             error = "a listen endpoint is required (a port, or ip:port)";
+            return false;
+        }
+
+        if (HasWhitespaceOrControl(value))
+        {
+            error = $"'{value}' contains whitespace or control characters";
             return false;
         }
 
@@ -186,6 +198,9 @@ internal static class TunnelAddress
         port = parsed;
         return true;
     }
+
+    private static bool HasWhitespaceOrControl(string value) =>
+        value.Any(c => char.IsWhiteSpace(c) || char.IsControl(c));
 
     // Shared with the egress rule, whose listen is a JSON number rather than a
     // string: the same 1-65535 bound, reported the same way.
