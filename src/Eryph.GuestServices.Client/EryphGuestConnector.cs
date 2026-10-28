@@ -39,7 +39,7 @@ public sealed class EryphGuestConnector(
         try
         {
             var session = await GuestSsh.EstablishSessionAsync(
-                stream, keyPair, keepAliveTimeoutSeconds, enablePortForwarding);
+                stream, keyPair, keepAliveTimeoutSeconds, enablePortForwarding, cancellation);
             return new GuestSshConnection(session, stream);
         }
         catch

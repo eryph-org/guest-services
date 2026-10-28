@@ -40,7 +40,8 @@ internal static class GuestSsh
     // exactly as they were. enablePortForwarding registers + pre-hardens the
     // PortForwardingService for the proxied-tunnel path.
     public static async Task<SshClientSession> EstablishSessionAsync(
-        Stream transport, IKeyPair keyPair, int keepAliveTimeoutSeconds = 0, bool enablePortForwarding = false)
+        Stream transport, IKeyPair keyPair, int keepAliveTimeoutSeconds = 0, bool enablePortForwarding = false,
+        CancellationToken cancellation = default)
     {
         var config = BuildClientConfiguration(keepAliveTimeoutSeconds, enablePortForwarding);
         var session = new SshClientSession(config, new TraceSource("Client"));
@@ -63,8 +64,8 @@ internal static class GuestSsh
 
         try
         {
-            await session.ConnectAsync(transport);
-            var authenticated = await session.AuthenticateAsync(new SshClientCredentials("egs", keyPair));
+            await session.ConnectAsync(transport, cancellation);
+            var authenticated = await session.AuthenticateAsync(new SshClientCredentials("egs", keyPair), cancellation);
             if (!authenticated)
                 throw new GuestConnectionException("Could not connect. The authentication failed.");
         }

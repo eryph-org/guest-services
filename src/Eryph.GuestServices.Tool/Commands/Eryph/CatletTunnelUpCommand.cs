@@ -63,11 +63,16 @@ public sealed class CatletTunnelUpCommand : AsyncCommand<CatletTunnelUpCommand.S
         }
 
         using var cts = new CancellationTokenSource();
+        var stopping = 0;
         ConsoleCancelEventHandler onCancel = (_, e) =>
         {
-            // First Ctrl+C: stop the tunnel cleanly rather than killing the process.
-            e.Cancel = true;
-            cts.Cancel();
+            // First Ctrl+C: stop the tunnel cleanly. A second Ctrl+C means graceful
+            // shutdown is stalling, so let it terminate the process.
+            if (Interlocked.Exchange(ref stopping, 1) == 0)
+            {
+                e.Cancel = true;
+                cts.Cancel();
+            }
         };
         Console.CancelKeyPress += onCancel;
 

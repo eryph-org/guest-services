@@ -97,6 +97,15 @@ as the SSH `ProxyCommand` stdin/stdout bridge (RFC 0030) and is unchanged.
   ingress it opens its own host `TcpListener` and relays to the guest; for egress it
   registers a guest-side loopback listener and dials the `to` target with its own
   socket. No external forwarder; no listener beyond the policy.
+- **Multi-session.** DevTunnels keys reverse-forwards by port, so two egress rules on
+  the same port cannot share one SSH session. egs-tool therefore partitions egress
+  rules into the fewest sessions such that no session repeats a port (ingress rides
+  the first session), opening one eryph channel per session. This is what makes
+  overlapping fixed ports across targets work (e.g. several backends all on 3300),
+  each bound on its own loopback address (`listenAddress`); it requires that same-port
+  rules carry distinct loopback addresses, which the loader's `(address, port)`
+  uniqueness already guarantees. Each session reconnects independently; a fail-closed
+  refusal in any session stops the whole tunnel.
 - **Idle-stability.** A quiet connection must not be torn down. egs-tool sets TCP
   keepalive (`SO_KEEPALIVE` + the policy's idle/interval/retry) on every data-plane
   socket it owns, and sets the SSH session's control-channel keepalive

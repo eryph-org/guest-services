@@ -1,15 +1,16 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Tcp;
 
 namespace Eryph.GuestServices.Client.ProxyTunnel;
 
-// Runs a proxied tunnel in-process: opens the eryph/SSH channel through the
-// supplied connector, and for every policy rule forwards bytes between a
-// data-plane socket egs-tool owns and an SSH channel. No external forwarder and no
-// listener beyond what the policy declares.
+// Runs a proxied tunnel in-process: opens eryph/SSH channels through the supplied
+// connector, and for every policy rule forwards bytes between a data-plane socket
+// egs-tool owns and an SSH channel. No external forwarder and no listener beyond
+// what the policy declares.
 //
 // egs-tool, not the DevTunnels library, owns the data plane:
 //   * ingress: egs-tool opens its own host listener and relays each connection as a
@@ -17,16 +18,20 @@ namespace Eryph.GuestServices.Client.ProxyTunnel;
 //   * egress: egs-tool registers a guest-side loopback listener (tcpip-forward) and,
 //     for each forwarded connection, dials the rule's single fixed host target with
 //     its own socket.
-// Because egs-tool owns both legs it sets TCP keepalive on each socket, and the SSH
-// session carries a control-channel keepalive, so a quiet tunnel survives.
 //
-// Security pinning (the client must not be steered by a compromised guest):
+// Multi-session: DevTunnels keys reverse-forwards by port alone, so two egress rules
+// on the same port cannot share one SSH session even on different loopback addresses.
+// Such rules are split across separate sessions (one eryph channel each), each
+// binding its own guest loopback address. Ingress has no such constraint and rides
+// the first session.
+//
+// Security pinning (the whole VM, incl. egs-service, is untrusted):
 //   * AcceptRemoteConnectionsForNonForwardedPorts = false — never accept a
-//     guest-initiated direct-tcpip channel to an arbitrary host-local port.
-//   * ForwardConnectionsToLocalPorts = false — the library never auto-dials; egress
-//     targets are dialed here, only ever the rule's fixed 'to'.
-//   * AcceptLocalConnectionsForForwardedPorts = false — no library-owned listener;
-//     ingress listeners are opened here, loopback-bound unless the policy opts out.
+//     guest-initiated direct-tcpip channel to an arbitrary host-local port. This is
+//     THE control; ForwardConnectionsToLocalPorts must stay at its default (true),
+//     both because the egress RemotePortStreamer rides that path and because this pin
+//     is what stops a guest-steered dial.
+//   * AcceptLocalConnectionsForForwardedPorts = false — no library-owned listener.
 public sealed class ProxyTunnelEngine(
     IGuestConnector connector,
     TunnelPolicy policy,
@@ -40,22 +45,116 @@ public sealed class ProxyTunnelEngine(
     // fixed target; it also bounds how many half-closed relays can accumulate.
     private const int MaxConnectionsPerRule = 128;
 
-    // How long a session must stay up before we treat the next drop as a fresh
-    // flap and reset the backoff — so an immediately-closing guest backs off instead
-    // of hot-looping at the minimum delay.
+    // How long a session must stay up before the next drop resets the backoff.
     private static readonly TimeSpan StableThreshold = TimeSpan.FromSeconds(30);
 
-    // Transient failures before the tunnel has ever come up are retried this many
-    // times (a slow eryph channel, say) before we give up and report startup failure.
+    // Transient failures before a session has ever come up are retried this many
+    // times before giving up and reporting startup failure.
     private const int StartupRetryLimit = 5;
 
-    // Runs until cancelled. A rule that cannot be established because the guest
-    // refuses port forwarding fails closed (TunnelPolicyException, never a fallback
-    // to an open forward); a dropped session or a transient error reconnects and
-    // re-establishes every rule.
+    // Runs until cancelled. Each session plan reconnects independently; a rule the
+    // guest refuses (port forwarding off) fails closed and cancels the whole tunnel.
     public async Task RunAsync(CancellationToken cancellation)
     {
+        var plans = PlanSessions();
+
+        using var scope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var pending = plans.Count;
+        void OnPlanFirstEstablished()
+        {
+            if (Interlocked.Decrement(ref pending) == 0)
+                writeInfo?.Invoke(
+                    $"Tunnel '{policy.Tunnel}' is up: {plans.Count} session(s), "
+                    + $"{policy.Egress.Count} egress, {policy.Ingress.Count} ingress. Press Ctrl+C to stop.");
+        }
+
+        ExceptionDispatchInfo? fatal = null;
+        async Task RunOne(SessionPlan plan)
+        {
+            try
+            {
+                await RunPlanAsync(plan, OnPlanFirstEstablished, scope.Token);
+            }
+            catch (OperationCanceledException) when (scope.IsCancellationRequested)
+            {
+                // Cancelled because a sibling plan failed, or the caller stopped us.
+            }
+            catch (Exception ex)
+            {
+                // A plan failed closed: record the first such failure, stop the rest.
+                Interlocked.CompareExchange(ref fatal, ExceptionDispatchInfo.Capture(ex), null);
+                await scope.CancelAsync();
+                throw;
+            }
+        }
+
+        var tasks = plans.Select(RunOne).ToArray();
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch
+        {
+            // Swallow here; the captured fatal (if any) is rethrown below with its
+            // original stack. A plain cancellation leaves fatal null.
+        }
+
+        // A fail-closed refusal in any plan propagates; a plain stop returns normally.
+        fatal?.Throw();
+    }
+
+    // Partitions egress rules so no two in a session share a port; ingress rides the
+    // first session. The policy loader guarantees (address, port) uniqueness, so two
+    // rules sharing a port necessarily differ in bind address and land in different
+    // sessions binding different guest loopback addresses.
+    private List<SessionPlan> PlanSessions()
+    {
+        var groups = GroupEgressByDistinctPorts(policy.Egress);
+        if (groups.Count == 0)
+            groups.Add([]);
+
+        var plans = new List<SessionPlan>();
+        for (var i = 0; i < groups.Count; i++)
+            plans.Add(new SessionPlan(groups[i], i == 0 ? policy.Ingress : []));
+
+        return plans;
+    }
+
+    // Groups egress rules so that no group contains two rules on the same port
+    // (DevTunnels keys reverse-forwards by port, so same-port rules must land in
+    // different SSH sessions). Greedy first-fit keeps the session count minimal:
+    // it equals the highest number of rules sharing any one port.
+    internal static List<List<EgressRule>> GroupEgressByDistinctPorts(IReadOnlyList<EgressRule> egress)
+    {
+        var groups = new List<List<EgressRule>>();
+        var groupPorts = new List<HashSet<int>>();
+
+        foreach (var rule in egress)
+        {
+            var index = -1;
+            for (var i = 0; i < groups.Count; i++)
+            {
+                if (!groupPorts[i].Contains(rule.ListenPort)) { index = i; break; }
+            }
+
+            if (index < 0)
+            {
+                groups.Add([]);
+                groupPorts.Add([]);
+                index = groups.Count - 1;
+            }
+
+            groups[index].Add(rule);
+            groupPorts[index].Add(rule.ListenPort);
+        }
+
+        return groups;
+    }
+
+    private async Task RunPlanAsync(SessionPlan plan, Action onFirstEstablished, CancellationToken cancellation)
+    {
         var everEstablished = false;
+        var firstReported = false;
         var attempt = 0;
 
         while (!cancellation.IsCancellationRequested)
@@ -64,26 +163,34 @@ public sealed class ProxyTunnelEngine(
             try
             {
                 await RunSessionAsync(
+                    plan,
                     () =>
                     {
                         everEstablished = true;
                         sessionStart = DateTimeOffset.UtcNow;
+                        if (!firstReported)
+                        {
+                            firstReported = true;
+                            onFirstEstablished();
+                        }
                     },
                     cancellation);
 
-                // A normal return means the session dropped (cancellation would have
-                // thrown). Fall through to the reconnect backoff.
-                writeWarning?.Invoke($"Tunnel '{policy.Tunnel}' dropped. Reconnecting…");
+                writeWarning?.Invoke($"Tunnel '{policy.Tunnel}' session dropped. Reconnecting…");
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
                 break;
             }
+            catch (OperationCanceledException)
+            {
+                // The session dropped while still establishing (its scope was
+                // cancelled by Closed/KeepAliveFailed). Treat as a reconnectable drop.
+                writeWarning?.Invoke($"Tunnel '{policy.Tunnel}' dropped during setup. Reconnecting…");
+            }
             catch (TunnelPolicyException)
             {
-                // The guest refused a rule (port forwarding off): fail closed, never
-                // reconnect into a weaker setup.
-                throw;
+                throw; // fail closed — do not reconnect into a weaker setup
             }
             catch (Exception ex)
             {
@@ -100,7 +207,6 @@ public sealed class ProxyTunnelEngine(
             if (cancellation.IsCancellationRequested)
                 break;
 
-            // Reset the backoff only after a session that actually stayed up.
             if (everEstablished && DateTimeOffset.UtcNow - sessionStart > StableThreshold)
                 attempt = 0;
 
@@ -119,50 +225,44 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    private async Task RunSessionAsync(Action markEstablished, CancellationToken cancellation)
+    private async Task RunSessionAsync(SessionPlan plan, Action markEstablished, CancellationToken cancellation)
     {
         await using var connection = await connector.ConnectAsync(cancellation);
         var session = connection.Session;
 
         var pfs = session.ActivateService<PortForwardingService>();
-        // The whole VM (incl. the guest SSH server) is untrusted, so pin the client's
-        // forwarding posture. GuestSsh already set these before connect for the eryph
-        // path; re-assert them here (idempotent) so the engine is correct for any
-        // connector and the invariant lives next to the code that depends on it.
-        //
-        //   AcceptRemoteConnectionsForNonForwardedPorts = false is THE control that
-        //   stops a guest-initiated direct-tcpip from reaching a host-local port. Note
-        //   ForwardConnectionsToLocalPorts stays at its default (true): the library
-        //   WOULD dial a guest-supplied host:port for such a channel, and the only
-        //   thing preventing that is this flag being false — do not relax it. (It must
-        //   also stay true because the RemotePortStreamer that delivers egress
-        //   connections rides that path; false silently drops every egress connection.)
         pfs.AcceptRemoteConnectionsForNonForwardedPorts = false;
-        // No library-owned local listener; ingress listeners are opened here,
-        // loopback-bound unless the policy opts out.
         pfs.AcceptLocalConnectionsForForwardedPorts = false;
 
+        // A drop (Closed / KeepAliveFailed) cancels the session scope so that an
+        // in-flight forwarding setup request unblocks and the plan can reconnect,
+        // rather than hanging on a guest that stopped responding mid-setup.
         using var sessionScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         var dropped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void OnClosed(object? s, SshSessionClosedEventArgs e) => dropped.TrySetResult();
-        void OnKeepAliveFailed(object? s, SshKeepAliveEventArgs e) => dropped.TrySetResult();
+        void Drop()
+        {
+            dropped.TrySetResult();
+            try { sessionScope.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        void OnClosed(object? s, SshSessionClosedEventArgs e) => Drop();
+        void OnKeepAliveFailed(object? s, SshKeepAliveEventArgs e) => Drop();
         session.Closed += OnClosed;
         session.KeepAliveFailed += OnKeepAliveFailed;
 
         var teardown = new List<IDisposable>();
         try
         {
-            await EnsureGateAsync(pfs, cancellation);
+            await EnsureGateAsync(pfs, sessionScope.Token);
 
-            foreach (var rule in policy.Egress)
-                teardown.Add(await EstablishEgressAsync(pfs, rule, sessionScope.Token, cancellation));
+            foreach (var rule in plan.Egress)
+                teardown.Add(await EstablishEgressAsync(pfs, rule, sessionScope.Token));
 
-            foreach (var rule in policy.Ingress)
+            foreach (var rule in plan.Ingress)
                 teardown.Add(StartIngressListener(pfs, rule, sessionScope.Token));
 
             markEstablished();
-            writeInfo?.Invoke(
-                $"Tunnel '{policy.Tunnel}' is up: {policy.Egress.Count} egress, {policy.Ingress.Count} ingress. Press Ctrl+C to stop.");
 
             await using (cancellation.Register(() => dropped.TrySetResult()))
                 await dropped.Task;
@@ -171,7 +271,8 @@ public sealed class ProxyTunnelEngine(
         {
             session.Closed -= OnClosed;
             session.KeepAliveFailed -= OnKeepAliveFailed;
-            sessionScope.Cancel();
+            try { sessionScope.Cancel(); }
+            catch (ObjectDisposedException) { }
             foreach (var disposable in teardown)
             {
                 try { disposable.Dispose(); }
@@ -182,13 +283,10 @@ public sealed class ProxyTunnelEngine(
         cancellation.ThrowIfCancellationRequested();
     }
 
-    // Fail-closed gate probe. A throwaway reverse-forward on an ephemeral guest
-    // loopback port exercises the exact tcpip-forward authorization an egress rule
-    // needs; when PortForwardingEnabled is off the guest refuses it (null) and the
-    // whole tunnel is refused rather than brought up partially. direct-tcpip
-    // (ingress) is gated by the same server-side switch, so this one probe covers
-    // both directions and lets a later per-rule refusal be read as "port in use"
-    // rather than "forwarding off".
+    // Fail-closed gate probe. An ephemeral reverse forward exercises the exact
+    // tcpip-forward authorization an egress rule needs; when PortForwardingEnabled is
+    // off the guest refuses it (null) and the whole tunnel is refused rather than
+    // brought up partially. direct-tcpip (ingress) is gated by the same switch.
     private async Task EnsureGateAsync(PortForwardingService pfs, CancellationToken cancellation)
     {
         RemotePortStreamer? probe = await pfs.StreamFromRemotePortAsync(IPAddress.Loopback, 0, cancellation);
@@ -201,15 +299,15 @@ public sealed class ProxyTunnelEngine(
     }
 
     private async Task<IDisposable> EstablishEgressAsync(
-        PortForwardingService pfs, EgressRule rule, CancellationToken sessionToken, CancellationToken cancellation)
+        PortForwardingService pfs, EgressRule rule, CancellationToken sessionToken)
     {
-        var streamer = await pfs.StreamFromRemotePortAsync(rule.ListenAddress, rule.ListenPort, cancellation);
+        var streamer = await pfs.StreamFromRemotePortAsync(rule.ListenAddress, rule.ListenPort, sessionToken);
         if (streamer is null)
             // The gate probe already proved forwarding is on, so a null here is a
             // busy/stale guest listener on this port — transient, let the reconnect
             // path retry rather than failing the whole tunnel.
             throw new IOException(
-                $"egress rule '{rule.Name}': the guest loopback port {rule.ListenPort} is not available (in use).");
+                $"egress rule '{rule.Name}': the guest port {rule.ListenAddress}:{rule.ListenPort} is not available (in use).");
 
         // Do not trust the port the guest echoes back: if it does not match what we
         // asked to forward, refuse rather than carry a rule whose audit line would lie.
@@ -223,8 +321,6 @@ public sealed class ProxyTunnelEngine(
         var limiter = new ConnectionLimiter(MaxConnectionsPerRule);
         streamer.StreamOpened += (_, stream) =>
         {
-            // A guest can open connections on its loopback listener at will; cap how
-            // many we will carry through the host at once for this rule.
             if (!limiter.TryAcquire())
             {
                 writeWarning?.Invoke(
@@ -233,17 +329,12 @@ public sealed class ProxyTunnelEngine(
                 return;
             }
 
-            StartEgressRelay(rule, stream, limiter, sessionToken);
+            _ = RelayEgressAsync(rule, stream, limiter, sessionToken);
         };
         writeInfo?.Invoke(
             $"egress '{rule.Name}': guest {rule.ListenAddress}:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
         return streamer;
     }
-
-    // Fire-and-forget the per-connection relay; RelayEgressAsync owns its own
-    // error handling, so an unobserved fault cannot escape.
-    private void StartEgressRelay(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation) =>
-        _ = RelayEgressAsync(rule, guestStream, limiter, cancellation);
 
     private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation)
     {
@@ -335,35 +426,36 @@ public sealed class ProxyTunnelEngine(
     }
 
     // Bidirectional relay between a host socket egs-tool owns and an SSH channel.
-    // Both directions are pumped to completion (not torn down on the first EOF), so
-    // a host caller that half-closes its send side after a request still receives
-    // the full response. When the guest side ends, the host socket's send is
-    // half-closed so the caller observes EOF while the other direction keeps
-    // draining. (SSH channels here have no half-close, so a host-side EOF cannot be
-    // signalled to the guest without a full close; a protocol that waits for the
-    // caller's EOF before replying relies on session teardown to end.)
+    // On a clean EOF in one direction, the peer's write side is half-closed so the
+    // other direction can keep draining (a caller that half-closed its send still
+    // gets the full response). On an I/O failure, the paired direction is aborted so
+    // the relay cannot hang and leak a connection-limit slot. When the SSH channel
+    // closes, only the host socket's receive side is shut down, unblocking the
+    // host->guest read without truncating in-flight guest->host data.
+    //
+    // (SSH channels here have no half-close, so a clean host-side EOF cannot be
+    // signalled to the guest without a full close; a guest protocol that waits for
+    // the caller's EOF before replying relies on the channel/session closing to end.)
     private static async Task RelayAsync(
         Socket hostSocket, Stream hostStream, Stream guestStream, CancellationToken cancellation)
     {
-        // When the SSH channel fully CLOSES, the host->guest pump may still be blocked
-        // reading from a target that holds its connection open; dispose the host socket
-        // so that read unblocks and the relay ends. This fires on channel close, not a
-        // one-direction EOF, so a caller that half-closed its send side still receives
-        // the full response.
-        var channel = (guestStream as SshStream)?.Channel;
-        void OnChannelClosed(object? s, SshChannelClosedEventArgs e)
-        {
-            try { hostSocket.Dispose(); }
-            catch { /* already disposed */ }
-        }
+        using var relayScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
 
+        var channel = (guestStream as SshStream)?.Channel;
+        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => TryShutdown(hostSocket, SocketShutdown.Receive);
         if (channel is not null)
+        {
             channel.Closed += OnChannelClosed;
+            // Guard the race where the channel closed while we were dialing the host,
+            // before we subscribed — the event would not replay.
+            if (channel.IsClosed)
+                TryShutdown(hostSocket, SocketShutdown.Receive);
+        }
 
         try
         {
-            var hostToGuest = PumpAsync(hostStream, guestStream, null, cancellation);
-            var guestToHost = PumpAsync(guestStream, hostStream, () => TryShutdownSend(hostSocket), cancellation);
+            var hostToGuest = PumpAsync(hostStream, guestStream, relayScope, onEof: null);
+            var guestToHost = PumpAsync(guestStream, hostStream, relayScope, onEof: () => TryShutdown(hostSocket, SocketShutdown.Send));
             await Task.WhenAll(hostToGuest, guestToHost);
         }
         finally
@@ -373,37 +465,42 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    private static async Task PumpAsync(Stream from, Stream to, Action? onCompleted, CancellationToken cancellation)
+    private static async Task PumpAsync(Stream from, Stream to, CancellationTokenSource relayScope, Action? onEof)
     {
         try
         {
-            await from.CopyToAsync(to, cancellation);
+            await from.CopyToAsync(to, relayScope.Token);
+            // Clean EOF from 'from': propagate it to the peer's write side if we can.
+            try { onEof?.Invoke(); }
+            catch { /* socket already closed */ }
+        }
+        catch (OperationCanceledException)
+        {
+            // The paired direction aborted, or the session was cancelled.
         }
         catch
         {
-            // Peer closed, cancelled, or the paired direction tore the streams down.
-        }
-        finally
-        {
-            try { onCompleted?.Invoke(); }
-            catch { /* socket already closed */ }
+            // I/O failure on this leg: abort the paired direction so Task.WhenAll
+            // cannot block and the connection-limit slot is released.
+            try { await relayScope.CancelAsync(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
-    private static void TryShutdownSend(Socket socket)
+    private static void TryShutdown(Socket socket, SocketShutdown how)
     {
-        try { socket.Shutdown(SocketShutdown.Send); }
+        try { socket.Shutdown(how); }
         catch { /* already closed / not connected */ }
     }
+
+    private sealed record SessionPlan(IReadOnlyList<EgressRule> Egress, IReadOnlyList<IngressRule> Ingress);
 
     private sealed class ListenerHandle(TcpListener listener) : IDisposable
     {
         public void Dispose() => listener.Stop();
     }
 
-    // Bounds concurrent data-plane connections for one rule. TryAcquire admits a
-    // connection only while the active count is below the cap; Release is called
-    // once per admitted connection when its relay ends.
+    // Bounds concurrent data-plane connections for one rule.
     private sealed class ConnectionLimiter(int max)
     {
         private int _active;

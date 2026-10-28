@@ -62,11 +62,12 @@ the real target, which lives only in the policy on the host. For
   listener, and egs-tool dials the real host. This `/etc/hosts` mapping is part of
   your guest's own provisioning (cloud-config / fodder); egs-tool does not manage it.
 
-For several targets, give each its own guest-side address with `listenAddress`
-(e.g. `127.0.0.2`, `127.0.0.3`) and map each hostname to its address in the guest's
-`/etc/hosts`. Two targets that share a port but differ by hostname then each get a
-distinct bind — without that, loopback-pinned listeners are distinguished only by
-port, so you would need distinct `listen` ports instead.
+For several targets — including several that use the **same** port (e.g. multiple
+backends all on 3300) — give each its own guest-side address with `listenAddress`
+(`127.0.0.2`, `127.0.0.3`, …) and map each hostname to its address in the guest's
+`/etc/hosts`. Each distinct `listenAddress` is bound in its own SSH session under the
+hood, so same-port targets no longer need distinct ports; an app can keep using the
+real host and the real port.
 
 Note the exposure this implies: whatever can reach the guest `listen` port reaches
 the egress target (egs-tool adds no authentication of its own), and an egress `to` on
