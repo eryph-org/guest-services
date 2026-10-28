@@ -1,0 +1,199 @@
+using System.Net;
+using AwesomeAssertions;
+using Eryph.GuestServices.Client.ProxyTunnel;
+using Xunit;
+
+namespace Eryph.GuestServices.Client.Tests.ProxyTunnel;
+
+public class TunnelPolicyLoaderTests
+{
+    private const string ValidPolicy = """
+        {
+          "tunnel": "sap-prod",
+          "catlet": "my-catlet",
+          "egress": [
+            { "name": "sap-rfc", "listen": 3300, "to": "wass11.corp.example:3300" }
+          ],
+          "ingress": [
+            { "name": "saphttp-callback", "listen": "127.0.0.1:8080", "to": "127.0.0.1:8080" }
+          ],
+          "keepalive": { "idleSeconds": 15, "intervalSeconds": 15, "retries": 5 }
+        }
+        """;
+
+    [Fact]
+    public void Parses_a_valid_policy()
+    {
+        TunnelPolicyLoader.TryParse(ValidPolicy, out var policy, out var errors)
+            .Should().BeTrue(string.Join("; ", errors));
+
+        policy!.Tunnel.Should().Be("sap-prod");
+        policy.Catlet.Should().Be("my-catlet");
+
+        policy.Egress.Should().ContainSingle();
+        var egress = policy.Egress[0];
+        egress.Name.Should().Be("sap-rfc");
+        egress.ListenPort.Should().Be(3300);
+        egress.ToHost.Should().Be("wass11.corp.example");
+        egress.ToPort.Should().Be(3300);
+
+        policy.Ingress.Should().ContainSingle();
+        var ingress = policy.Ingress[0];
+        ingress.Name.Should().Be("saphttp-callback");
+        ingress.Listen.Should().Be(new IPEndPoint(IPAddress.Loopback, 8080));
+        ingress.ToHost.Should().Be("127.0.0.1");
+        ingress.ToPort.Should().Be(8080);
+
+        policy.Keepalive.Should().Be(new KeepaliveSettings(15, 15, 5));
+    }
+
+    [Fact]
+    public void Accepts_a_policy_with_only_egress()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out var policy, out var errors)
+            .Should().BeTrue(string.Join("; ", errors));
+        policy!.Ingress.Should().BeEmpty();
+        policy.Egress.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Rejects_unknown_top_level_key()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c", "bogus": true,
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().ContainSingle().Which.Should().Contain("JSON");
+    }
+
+    [Fact]
+    public void Rejects_unknown_rule_key()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300", "extra": 1 } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().NotBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("*.corp:3300", "wildcard")]
+    [InlineData("host:3300,host2:3300", "list")]
+    [InlineData("host:3300-3400", "range")]
+    public void Rejects_non_single_target_egress(string to, string scenario)
+    {
+        _ = scenario;
+        var json = $$"""
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "{{to}}" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Rejects_missing_keepalive()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ]
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("keepalive"));
+    }
+
+    [Fact]
+    public void Rejects_non_positive_keepalive()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
+              "keepalive": { "idleSeconds": 0, "intervalSeconds": -1, "retries": 5 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("idleSeconds"))
+            .And.Contain(e => e.Contains("intervalSeconds"));
+    }
+
+    [Fact]
+    public void Rejects_duplicate_rule_names_across_sections()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "dup", "listen": 3300, "to": "host:3300" } ],
+              "ingress": [ { "name": "dup", "listen": "8080", "to": "127.0.0.1:80" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("dup") && e.Contains("more than once"));
+    }
+
+    [Fact]
+    public void Rejects_empty_policy_with_no_rules()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("at least one"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{ not json")]
+    public void Rejects_malformed_json(string json)
+    {
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void Rejects_unsafe_catlet_token()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "../evil",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("catlet"));
+    }
+}
