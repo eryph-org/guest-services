@@ -48,6 +48,29 @@ general-purpose tunnel.
 Listeners are loopback-bound by default. A non-loopback host bind for an ingress rule
 is opt-in — you have to write the address explicitly (e.g. `"0.0.0.0:8080"`).
 
+## How the guest reaches an egress target
+
+An egress rule opens its `listen` port on the **guest's loopback** (`127.0.0.1`). The
+guest reaches the external service by connecting to that local port — it never names
+the real target, which lives only in the policy on the host. For
+`{ "listen": 3300, "to": "wass11.corp.example:3300" }` the guest has two options:
+
+- **Point the app at localhost** — connect to `127.0.0.1:3300`. Simplest.
+- **Keep the real hostname** — add a guest `/etc/hosts` entry
+  `127.0.0.1  wass11.corp.example` and set `listen` to the port the app uses (3300).
+  The app connects to `wass11.corp.example:3300`, which resolves to the loopback
+  listener, and egs-tool dials the real host. This `/etc/hosts` mapping is part of
+  your guest's own provisioning (cloud-config / fodder); egs-tool does not manage it.
+
+Because the guest-side listener is loopback-pinned, targets are distinguished by
+**port** — give two targets that share a port but differ by hostname their own
+`listen` ports.
+
+Note the exposure this implies: whatever can reach the guest `listen` port reaches
+the egress target (egs-tool adds no authentication of its own), and an egress `to` on
+the host's own loopback hands the guest access to a host-local service. Choose `to`
+and any non-loopback ingress bind deliberately.
+
 ## Validate it
 
 ```

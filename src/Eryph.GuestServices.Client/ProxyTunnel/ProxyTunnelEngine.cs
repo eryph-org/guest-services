@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Events;
 using Microsoft.DevTunnels.Ssh.Tcp;
 
@@ -33,6 +34,11 @@ public sealed class ProxyTunnelEngine(
     Action<string>? writeWarning = null)
 {
     private static readonly TimeSpan MaxReconnectBackoff = TimeSpan.FromSeconds(30);
+
+    // Cap on concurrent data-plane connections per rule. For egress this bounds a
+    // malicious guest's ability to amplify connections through the host against the
+    // fixed target; it also bounds how many half-closed relays can accumulate.
+    private const int MaxConnectionsPerRule = 128;
 
     // How long a session must stay up before we treat the next drop as a fresh
     // flap and reset the backoff — so an immediately-closing guest backs off instead
@@ -214,7 +220,21 @@ public sealed class ProxyTunnelEngine(
                 $"egress rule '{rule.Name}': the guest bound port {streamer.RemotePort}, not the requested {rule.ListenPort}.");
         }
 
-        streamer.StreamOpened += (_, stream) => StartEgressRelay(rule, stream, sessionToken);
+        var limiter = new ConnectionLimiter(MaxConnectionsPerRule);
+        streamer.StreamOpened += (_, stream) =>
+        {
+            // A guest can open connections on its loopback listener at will; cap how
+            // many we will carry through the host at once for this rule.
+            if (!limiter.TryAcquire())
+            {
+                writeWarning?.Invoke(
+                    $"egress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
+                _ = stream.DisposeAsync();
+                return;
+            }
+
+            StartEgressRelay(rule, stream, limiter, sessionToken);
+        };
         writeInfo?.Invoke(
             $"egress '{rule.Name}': guest 127.0.0.1:{rule.ListenPort} -> {rule.ToHost}:{rule.ToPort}");
         return streamer;
@@ -222,10 +242,10 @@ public sealed class ProxyTunnelEngine(
 
     // Fire-and-forget the per-connection relay; RelayEgressAsync owns its own
     // error handling, so an unobserved fault cannot escape.
-    private void StartEgressRelay(EgressRule rule, Stream guestStream, CancellationToken cancellation) =>
-        _ = RelayEgressAsync(rule, guestStream, cancellation);
+    private void StartEgressRelay(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation) =>
+        _ = RelayEgressAsync(rule, guestStream, limiter, cancellation);
 
-    private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, CancellationToken cancellation)
+    private async Task RelayEgressAsync(EgressRule rule, Stream guestStream, ConnectionLimiter limiter, CancellationToken cancellation)
     {
         Socket? socket = null;
         try
@@ -246,6 +266,7 @@ public sealed class ProxyTunnelEngine(
         {
             socket?.Dispose();
             await guestStream.DisposeAsync();
+            limiter.Release();
         }
     }
 
@@ -263,12 +284,21 @@ public sealed class ProxyTunnelEngine(
     private async Task AcceptIngressLoopAsync(
         PortForwardingService pfs, IngressRule rule, TcpListener listener, CancellationToken cancellation)
     {
+        var limiter = new ConnectionLimiter(MaxConnectionsPerRule);
         try
         {
             while (!cancellation.IsCancellationRequested)
             {
                 var client = await listener.AcceptSocketAsync(cancellation);
-                _ = RelayIngressAsync(pfs, rule, client, cancellation);
+                if (!limiter.TryAcquire())
+                {
+                    writeWarning?.Invoke(
+                        $"ingress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
+                    client.Dispose();
+                    continue;
+                }
+
+                _ = RelayIngressAsync(pfs, rule, client, limiter, cancellation);
             }
         }
         catch (OperationCanceledException) { }
@@ -277,7 +307,7 @@ public sealed class ProxyTunnelEngine(
     }
 
     private async Task RelayIngressAsync(
-        PortForwardingService pfs, IngressRule rule, Socket client, CancellationToken cancellation)
+        PortForwardingService pfs, IngressRule rule, Socket client, ConnectionLimiter limiter, CancellationToken cancellation)
     {
         using (client)
         {
@@ -297,6 +327,10 @@ public sealed class ProxyTunnelEngine(
             {
                 writeWarning?.Invoke($"ingress '{rule.Name}': {ex.Message}");
             }
+            finally
+            {
+                limiter.Release();
+            }
         }
     }
 
@@ -311,9 +345,32 @@ public sealed class ProxyTunnelEngine(
     private static async Task RelayAsync(
         Socket hostSocket, Stream hostStream, Stream guestStream, CancellationToken cancellation)
     {
-        var hostToGuest = PumpAsync(hostStream, guestStream, null, cancellation);
-        var guestToHost = PumpAsync(guestStream, hostStream, () => TryShutdownSend(hostSocket), cancellation);
-        await Task.WhenAll(hostToGuest, guestToHost);
+        // When the SSH channel fully CLOSES, the host->guest pump may still be blocked
+        // reading from a target that holds its connection open; dispose the host socket
+        // so that read unblocks and the relay ends. This fires on channel close, not a
+        // one-direction EOF, so a caller that half-closed its send side still receives
+        // the full response.
+        var channel = (guestStream as SshStream)?.Channel;
+        void OnChannelClosed(object? s, SshChannelClosedEventArgs e)
+        {
+            try { hostSocket.Dispose(); }
+            catch { /* already disposed */ }
+        }
+
+        if (channel is not null)
+            channel.Closed += OnChannelClosed;
+
+        try
+        {
+            var hostToGuest = PumpAsync(hostStream, guestStream, null, cancellation);
+            var guestToHost = PumpAsync(guestStream, hostStream, () => TryShutdownSend(hostSocket), cancellation);
+            await Task.WhenAll(hostToGuest, guestToHost);
+        }
+        finally
+        {
+            if (channel is not null)
+                channel.Closed -= OnChannelClosed;
+        }
     }
 
     private static async Task PumpAsync(Stream from, Stream to, Action? onCompleted, CancellationToken cancellation)
@@ -342,5 +399,24 @@ public sealed class ProxyTunnelEngine(
     private sealed class ListenerHandle(TcpListener listener) : IDisposable
     {
         public void Dispose() => listener.Stop();
+    }
+
+    // Bounds concurrent data-plane connections for one rule. TryAcquire admits a
+    // connection only while the active count is below the cap; Release is called
+    // once per admitted connection when its relay ends.
+    private sealed class ConnectionLimiter(int max)
+    {
+        private int _active;
+
+        public bool TryAcquire()
+        {
+            if (Interlocked.Increment(ref _active) <= max)
+                return true;
+
+            Interlocked.Decrement(ref _active);
+            return false;
+        }
+
+        public void Release() => Interlocked.Decrement(ref _active);
     }
 }

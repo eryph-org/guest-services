@@ -103,6 +103,13 @@ as the SSH `ProxyCommand` stdin/stdout bridge (RFC 0030) and is unchanged.
   open or wider forward. A startup gate probe (an ephemeral reverse forward) refuses
   the whole tunnel up front when port forwarding is off, for ingress-only policies
   too.
+- **Bounded resource use.** Each rule admits at most a fixed number of concurrent
+  data-plane connections (128); beyond that, new connections are refused. This caps a
+  malicious guest's ability to amplify connections through the host against the fixed
+  egress target. A relay is also torn down when its SSH channel closes (not merely on
+  a one-direction EOF), so a half-closed connection against a target that holds its
+  socket open cannot accumulate — while a legitimately half-closed caller still
+  receives its full response.
 
 ## Client-side channel pinning (threat model)
 
