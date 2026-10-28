@@ -176,6 +176,10 @@ public static class TunnelPolicyLoader
             return result;
 
         var binds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Per host port, remember whether any rule bound a wildcard (0.0.0.0 / ::),
+        // which overlaps every other bind on that port.
+        var wildcardPorts = new HashSet<int>();
+        var portHasSpecificBind = new HashSet<int>();
         for (var i = 0; i < rules.Count; i++)
         {
             var dto = rules[i];
@@ -190,11 +194,33 @@ public static class TunnelPolicyLoader
 
             var listenOk = TunnelAddress.TryParseListen(dto.Listen, out var listen, out var listenError);
             if (!listenOk)
+            {
                 problems.Add($"{label}: listen {listenError}");
+            }
             else if (!binds.Add(listen.ToString()))
             {
                 problems.Add($"{label}: ingress listen bind {listen} is used by more than one rule");
                 listenOk = false;
+            }
+            else
+            {
+                // A wildcard bind collides with any other bind on the same port, and
+                // a specific bind collides with an existing wildcard on that port.
+                var isWildcard = listen.Address.Equals(IPAddress.Any) || listen.Address.Equals(IPAddress.IPv6Any);
+                if ((isWildcard && (wildcardPorts.Contains(listen.Port) || portHasSpecificBind.Contains(listen.Port)))
+                    || (!isWildcard && wildcardPorts.Contains(listen.Port)))
+                {
+                    problems.Add($"{label}: ingress bind on port {listen.Port} overlaps another rule's bind");
+                    listenOk = false;
+                }
+                else if (isWildcard)
+                {
+                    wildcardPorts.Add(listen.Port);
+                }
+                else
+                {
+                    portHasSpecificBind.Add(listen.Port);
+                }
             }
 
             var targetOk = TunnelAddress.TryParseTarget(dto.To, out var toHost, out var toPort, out var toError);
@@ -218,6 +244,12 @@ public static class TunnelPolicyLoader
         }
 
         var trimmed = name.Trim();
+        if (trimmed.Any(char.IsControl))
+        {
+            problems.Add($"{label}: 'name' must not contain control characters");
+            return null;
+        }
+
         if (!names.Add(trimmed))
         {
             problems.Add($"{label}: the rule name '{trimmed}' is used more than once");

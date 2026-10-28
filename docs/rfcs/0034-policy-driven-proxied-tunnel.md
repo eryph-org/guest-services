@@ -60,7 +60,7 @@ destinations.
   single `to` endpoint on the host network and relays the bytes. Realized as an SSH
   reverse forward (`tcpip-forward`) whose forwarded connections egs-tool relays to
   the fixed target itself. An optional `listenAddress` (default `127.0.0.1`, must be
-  a loopback literal such as `127.0.0.2`) lets the policy declare a distinct
+  an IPv4 loopback address in `127.0.0.0/8` such as `127.0.0.2`) lets the policy declare a distinct
   guest-side bind per target, so the guest's own configuration can map a real
   hostname to that address — an `/etc/hosts` entry today, or eryph DNS interception
   later — and an app keeps using the real name while the traffic stays governed. The

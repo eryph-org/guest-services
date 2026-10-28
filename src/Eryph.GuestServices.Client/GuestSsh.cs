@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.DevTunnels.Ssh;
 using Microsoft.DevTunnels.Ssh.Algorithms;
 using Microsoft.DevTunnels.Ssh.Events;
+using Microsoft.DevTunnels.Ssh.Messages;
 using Microsoft.DevTunnels.Ssh.Tcp;
 
 namespace Eryph.GuestServices.Client;
@@ -60,6 +61,18 @@ internal static class GuestSsh
             var portForwarding = session.ActivateService<PortForwardingService>();
             portForwarding.AcceptRemoteConnectionsForNonForwardedPorts = false;
             portForwarding.AcceptLocalConnectionsForForwardedPorts = false;
+
+            // The only channel a guest may open to us is 'forwarded-tcpip' (an egress
+            // connection on a port we reverse-forwarded). Reject every other
+            // remote-initiated channel type: the library would otherwise confirm an
+            // unhandled channel (e.g. 'session', 'x11'), which a malicious guest could
+            // use to stall the receive loop or pile up unserviced channels. Our own
+            // (client-initiated) direct-tcpip opens for ingress are not remote requests.
+            session.ChannelOpening += (_, e) =>
+            {
+                if (e.IsRemoteRequest && e.Request.ChannelType != "forwarded-tcpip")
+                    e.FailureReason = SshChannelOpenFailureReason.AdministrativelyProhibited;
+            };
         }
 
         try

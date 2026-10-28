@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 
 namespace Eryph.GuestServices.Client.ProxyTunnel;
 
@@ -54,12 +55,16 @@ internal static class TunnelAddress
         }
 
         // A bind-any address is not a dial target: it stands for "every interface",
-        // not one endpoint. Reject it so a target is unambiguously a single host.
-        if (IPAddress.TryParse(rawHost, out var ip)
-            && (ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any)))
+        // not one endpoint. Reject it (including the IPv4-mapped form ::ffff:0.0.0.0)
+        // so a target is unambiguously a single host.
+        if (IPAddress.TryParse(rawHost, out var ip))
         {
-            error = $"'{value}' is not a single target: {rawHost} means any address";
-            return false;
+            var normalized = ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
+            if (normalized.Equals(IPAddress.Any) || normalized.Equals(IPAddress.IPv6Any))
+            {
+                error = $"'{value}' is not a single target: {rawHost} means any address";
+                return false;
+            }
         }
 
         if (!TryParsePort(rawPort, out port, out error))
@@ -199,9 +204,13 @@ internal static class TunnelAddress
         return true;
     }
 
-    // A guest-side egress bind address: must be a loopback literal (127.0.0.0/8 or
-    // ::1). Keeping it loopback means the reverse-forward listener is never exposed
-    // on the guest's network, matching the loopback-by-default stance.
+    // A guest-side egress bind address: an IPv4 loopback literal (127.0.0.0/8).
+    // Keeping it loopback means the reverse-forward listener is never exposed on the
+    // guest's network. IPv4-only on purpose: ::1 is the single IPv6 loopback and the
+    // library dual-binds it with 127.0.0.1 on the same port, which would collide
+    // across the per-port sessions; 127.0.0.0/8 already offers plenty of distinct
+    // addresses for same-port targets. This also rejects IPv4-mapped IPv6
+    // (::ffff:127.0.0.1), which is AddressFamily InterNetworkV6.
     public static bool TryParseLoopbackAddress(string? value, out IPAddress address, out string? error)
     {
         address = IPAddress.Loopback;
@@ -218,9 +227,9 @@ internal static class TunnelAddress
             return false;
         }
 
-        if (!IPAddress.IsLoopback(parsed))
+        if (parsed.AddressFamily != AddressFamily.InterNetwork || !IPAddress.IsLoopback(parsed))
         {
-            error = $"'{value}' is not a loopback address (egress binds must stay on loopback)";
+            error = $"'{value}' is not an IPv4 loopback address (egress binds must be in 127.0.0.0/8)";
             return false;
         }
 

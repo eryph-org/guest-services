@@ -53,7 +53,12 @@ public sealed class CatletTunnelUpCommand : AsyncCommand<CatletTunnelUpCommand.S
                 settings.Configuration,
                 settings.Identity,
                 writeWarning: message => AnsiConsole.MarkupLine($"[yellow]{message.EscapeMarkup()}[/]"),
-                keepAliveTimeoutSeconds: policy.Keepalive.IntervalSeconds,
+                // The SSH control-channel keepalive is a liveness *timeout*, not the
+                // per-socket probe interval, so give it the full idle+probe budget
+                // (idle before the first probe, then interval × retries) — otherwise a
+                // small intervalSeconds would make the session flap on a brief hiccup.
+                keepAliveTimeoutSeconds:
+                    policy.Keepalive.IdleSeconds + (policy.Keepalive.IntervalSeconds * policy.Keepalive.Retries),
                 enablePortForwarding: true);
         }
         catch (GuestConnectionException ex)

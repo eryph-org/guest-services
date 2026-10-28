@@ -182,18 +182,17 @@ public sealed class ProxyTunnelEngine(
             {
                 break;
             }
-            catch (OperationCanceledException)
-            {
-                // The session dropped while still establishing (its scope was
-                // cancelled by Closed/KeepAliveFailed). Treat as a reconnectable drop.
-                writeWarning?.Invoke($"Tunnel '{policy.Tunnel}' dropped during setup. Reconnecting…");
-            }
             catch (TunnelPolicyException)
             {
                 throw; // fail closed — do not reconnect into a weaker setup
             }
             catch (Exception ex)
             {
+                // Everything else — a dropped/aborted setup (the session scope was
+                // cancelled mid-establish, surfacing as OperationCanceledException), a
+                // transient connect error, or a mid-run fault — is reconnectable, but
+                // bounded before the session has ever come up so a guest that hangs
+                // during setup does not retry forever without reporting failure.
                 if (!everEstablished && attempt >= StartupRetryLimit)
                     throw new TunnelPolicyException(
                         $"The tunnel '{policy.Tunnel}' could not be established: {ex.Message}");
@@ -230,7 +229,20 @@ public sealed class ProxyTunnelEngine(
         await using var connection = await connector.ConnectAsync(cancellation);
         var session = connection.Session;
 
-        var pfs = session.ActivateService<PortForwardingService>();
+        PortForwardingService pfs;
+        try
+        {
+            pfs = session.ActivateService<PortForwardingService>();
+        }
+        catch (KeyNotFoundException)
+        {
+            // The connector produced a session without PortForwardingService
+            // registered (a programming error, not a network condition) — fail fast
+            // rather than retry.
+            throw new TunnelPolicyException(
+                "Internal error: the SSH session was not configured for port forwarding.");
+        }
+
         pfs.AcceptRemoteConnectionsForNonForwardedPorts = false;
         pfs.AcceptLocalConnectionsForForwardedPorts = false;
 
@@ -262,7 +274,11 @@ public sealed class ProxyTunnelEngine(
             foreach (var rule in plan.Ingress)
                 teardown.Add(StartIngressListener(pfs, rule, sessionScope.Token));
 
-            markEstablished();
+            // If the session already dropped while we were still setting up, do not
+            // report it as established — let the plan reconnect (and keep counting
+            // toward the startup limit) instead of latching everEstablished.
+            if (!sessionScope.IsCancellationRequested)
+                markEstablished();
 
             await using (cancellation.Register(() => dropped.TrySetResult()))
                 await dropped.Task;
@@ -301,7 +317,20 @@ public sealed class ProxyTunnelEngine(
     private async Task<IDisposable> EstablishEgressAsync(
         PortForwardingService pfs, EgressRule rule, CancellationToken sessionToken)
     {
-        var streamer = await pfs.StreamFromRemotePortAsync(rule.ListenAddress, rule.ListenPort, sessionToken);
+        RemotePortStreamer? streamer;
+        try
+        {
+            streamer = await pfs.StreamFromRemotePortAsync(rule.ListenAddress, rule.ListenPort, sessionToken);
+        }
+        catch (ArgumentException)
+        {
+            // The library indexes forwards by port: a guest that echoes a port already
+            // bound by another rule trips an ArgumentException after the request
+            // succeeded. Fail closed rather than retry a policy the guest is fighting.
+            throw new TunnelPolicyException(
+                $"egress rule '{rule.Name}': the guest echoed a port already bound by another rule.");
+        }
+
         if (streamer is null)
             // The gate probe already proved forwarding is on, so a null here is a
             // busy/stale guest listener on this port — transient, let the reconnect
@@ -350,7 +379,8 @@ public sealed class ProxyTunnelEngine(
             SocketKeepAlive.Apply(socket, policy.Keepalive);
 
             await using var hostStream = new NetworkStream(socket, ownsSocket: false);
-            await RelayAsync(socket, hostStream, guestStream, cancellation);
+            // Egress: the host socket is the dialed target — the server.
+            await RelayAsync(socket, hostStream, guestStream, hostIsServer: true, cancellation);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -368,6 +398,9 @@ public sealed class ProxyTunnelEngine(
     private IDisposable StartIngressListener(PortForwardingService pfs, IngressRule rule, CancellationToken sessionToken)
     {
         var listener = new TcpListener(rule.Listen);
+        // Refuse to share the bind: another local process must not be able to
+        // SO_REUSEADDR onto this ingress port and steal connections into the guest.
+        listener.ExclusiveAddressUse = true;
         listener.Start();
         writeInfo?.Invoke(
             $"ingress '{rule.Name}': host {rule.Listen} -> guest {rule.ToHost}:{rule.ToPort}");
@@ -380,25 +413,39 @@ public sealed class ProxyTunnelEngine(
         PortForwardingService pfs, IngressRule rule, TcpListener listener, CancellationToken cancellation)
     {
         var limiter = new ConnectionLimiter(MaxConnectionsPerRule);
-        try
+        while (!cancellation.IsCancellationRequested)
         {
-            while (!cancellation.IsCancellationRequested)
+            Socket client;
+            try
             {
-                var client = await listener.AcceptSocketAsync(cancellation);
-                if (!limiter.TryAcquire())
-                {
-                    writeWarning?.Invoke(
-                        $"ingress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
-                    client.Dispose();
-                    continue;
-                }
-
-                _ = RelayIngressAsync(pfs, rule, client, limiter, cancellation);
+                client = await listener.AcceptSocketAsync(cancellation);
             }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break; // the listener was stopped during teardown
+            }
+            catch (SocketException ex)
+            {
+                // A client that aborts mid-handshake can fault one Accept (e.g.
+                // ConnectionReset on Windows); that must not kill the whole listener.
+                writeWarning?.Invoke($"ingress '{rule.Name}': accept failed: {ex.Message}");
+                continue;
+            }
+
+            if (!limiter.TryAcquire())
+            {
+                writeWarning?.Invoke(
+                    $"ingress '{rule.Name}': refused a connection, {MaxConnectionsPerRule} concurrent limit reached.");
+                client.Dispose();
+                continue;
+            }
+
+            _ = RelayIngressAsync(pfs, rule, client, limiter, cancellation);
         }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
-        catch (SocketException) { }
     }
 
     private async Task RelayIngressAsync(
@@ -416,7 +463,8 @@ public sealed class ProxyTunnelEngine(
 
                 await using (var hostStream = new NetworkStream(client, ownsSocket: false))
                 await using (guestStream)
-                    await RelayAsync(client, hostStream, guestStream, cancellation);
+                    // Ingress: the host socket is the accepted caller — the client.
+                    await RelayAsync(client, hostStream, guestStream, hostIsServer: false, cancellation);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -429,38 +477,58 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    // Bidirectional relay between a host socket egs-tool owns and an SSH channel.
-    // On a clean EOF in one direction, the peer's write side is half-closed so the
-    // other direction can keep draining (a caller that half-closed its send still
-    // gets the full response). On an I/O failure, the paired direction is aborted so
-    // the relay cannot hang and leak a connection-limit slot. When the SSH channel
-    // closes, only the host socket's receive side is shut down, unblocking the
-    // host->guest read without truncating in-flight guest->host data.
+    // Bidirectional relay between a host socket egs-tool owns and an SSH channel to
+    // the guest. One peer is the client, the other the server; hostIsServer tells
+    // them apart (egress: the host socket is the dialed target = server; ingress: the
+    // host socket is the accepted caller = client).
     //
-    // (SSH channels here have no half-close, so a clean host-side EOF cannot be
-    // signalled to the guest without a full close; a guest protocol that waits for
-    // the caller's EOF before replying relies on the channel/session closing to end.)
+    // The relay ends — relayScope is cancelled — when the server finishes responding
+    // (its send side reaches EOF), when the SSH channel closes, or on any I/O error.
+    // A clean EOF from the CLIENT is a half-close: it is forwarded to the server as a
+    // FIN only where the transport allows it (a host socket, via Shutdown(Send)); the
+    // SSH channel has no half-close, so a client FIN that would need to reach a guest
+    // server is simply not forwarded (guest servers are expected to be request-
+    // delimited), and the opposite direction keeps draining the response until the
+    // server closes.
+    //
+    // Teardown is driven by cancelling relayScope, which NetworkStream and SshStream
+    // reads honor — NOT by Shutdown(Receive), which does not reliably unblock a
+    // pending read on Windows (the platform egs-tool ships for).
     private static async Task RelayAsync(
-        Socket hostSocket, Stream hostStream, Stream guestStream, CancellationToken cancellation)
+        Socket hostSocket, Stream hostStream, Stream guestStream, bool hostIsServer, CancellationToken cancellation)
     {
         using var relayScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
 
         var channel = (guestStream as SshStream)?.Channel;
-        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => TryShutdown(hostSocket, SocketShutdown.Receive);
+        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => Cancel(relayScope);
         if (channel is not null)
         {
             channel.Closed += OnChannelClosed;
-            // Guard the race where the channel closed while we were dialing the host,
-            // before we subscribed — the event would not replay.
+            // Race: the channel may have closed while we were dialing, before we
+            // subscribed — the event would not replay.
             if (channel.IsClosed)
-                TryShutdown(hostSocket, SocketShutdown.Receive);
+                Cancel(relayScope);
         }
 
         try
         {
-            var hostToGuest = PumpAsync(hostStream, guestStream, relayScope, onEof: null);
-            var guestToHost = PumpAsync(guestStream, hostStream, relayScope, onEof: () => TryShutdown(hostSocket, SocketShutdown.Send));
-            await Task.WhenAll(hostToGuest, guestToHost);
+            // Name the directions by role so the half-close / end-of-relay rules read
+            // the same for egress and ingress.
+            Task serverToClient, clientToServer;
+            if (hostIsServer)
+            {
+                serverToClient = PumpAsync(hostStream, guestStream, relayScope, onEof: null, endRelayOnEof: true);
+                clientToServer = PumpAsync(guestStream, hostStream, relayScope,
+                    onEof: () => TryShutdown(hostSocket, SocketShutdown.Send), endRelayOnEof: false);
+            }
+            else
+            {
+                serverToClient = PumpAsync(guestStream, hostStream, relayScope,
+                    onEof: () => TryShutdown(hostSocket, SocketShutdown.Send), endRelayOnEof: true);
+                clientToServer = PumpAsync(hostStream, guestStream, relayScope, onEof: null, endRelayOnEof: false);
+            }
+
+            await Task.WhenAll(serverToClient, clientToServer);
         }
         finally
         {
@@ -469,14 +537,19 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    private static async Task PumpAsync(Stream from, Stream to, CancellationTokenSource relayScope, Action? onEof)
+    private static async Task PumpAsync(
+        Stream from, Stream to, CancellationTokenSource relayScope, Action? onEof, bool endRelayOnEof)
     {
         try
         {
             await from.CopyToAsync(to, relayScope.Token);
-            // Clean EOF from 'from': propagate it to the peer's write side if we can.
+            // Clean EOF from 'from': forward it to the peer's write side if we can,
+            // and — when this is the server's response direction — end the relay so
+            // the other direction cannot hang holding a connection-limit slot.
             try { onEof?.Invoke(); }
             catch { /* socket already closed */ }
+            if (endRelayOnEof)
+                Cancel(relayScope);
         }
         catch (OperationCanceledException)
         {
@@ -486,8 +559,7 @@ public sealed class ProxyTunnelEngine(
         {
             // I/O failure on this leg: abort the paired direction so Task.WhenAll
             // cannot block and the connection-limit slot is released.
-            try { await relayScope.CancelAsync(); }
-            catch (ObjectDisposedException) { }
+            Cancel(relayScope);
         }
     }
 
@@ -495,6 +567,12 @@ public sealed class ProxyTunnelEngine(
     {
         try { socket.Shutdown(how); }
         catch { /* already closed / not connected */ }
+    }
+
+    private static void Cancel(CancellationTokenSource cts)
+    {
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     private sealed record SessionPlan(IReadOnlyList<EgressRule> Egress, IReadOnlyList<IngressRule> Ingress);
