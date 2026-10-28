@@ -1,6 +1,10 @@
 # RFC 0034 — Policy-driven proxied tunnel in egs-tool
 
-Status: Draft
+Status: Implemented
+
+Implemented in #76 — the `egs-tool catlet tunnel up/validate` commands, the
+`Eryph.GuestServices.Client.ProxyTunnel` engine (JSON policy, multi-session egress,
+in-process relay), and the guest-side loopback-range reverse-forward pin.
 
 ## Problem
 

@@ -47,6 +47,7 @@ Design notes for the eryph guest provisioning agent. Each RFC captures a deferre
 | [0031](0031-cloud-init-compatible-kvp-status.md) | Cloud-init-compatible provisioning status over Hyper-V KVP | Implemented |
 | [0032](0032-cloud-config-merge-model.md) | Cloud-config merge model & merge control | Implemented |
 | [0033](0033-packages-umbrella.md) | `packages` cloud-config umbrella (winget / chocolatey routing) | Implemented |
+| [0034](0034-policy-driven-proxied-tunnel.md) | Policy-driven proxied tunnel in egs-tool (`catlet tunnel`) | Implemented |
 
 ## Authoring
 
