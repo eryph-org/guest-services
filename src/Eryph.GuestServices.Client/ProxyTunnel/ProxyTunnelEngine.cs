@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
@@ -51,6 +52,9 @@ public sealed class ProxyTunnelEngine(
     // Transient failures before a session has ever come up are retried this many
     // times before giving up and reporting startup failure.
     private const int StartupRetryLimit = 5;
+
+    // Deadline for one connect + SSH handshake attempt (no keepalive exists yet).
+    private static readonly TimeSpan SetupTimeout = TimeSpan.FromSeconds(60);
 
     // Runs until cancelled. Each session plan reconnects independently; a rule the
     // guest refuses (port forwarding off) fails closed and cancels the whole tunnel.
@@ -160,6 +164,7 @@ public sealed class ProxyTunnelEngine(
         while (!cancellation.IsCancellationRequested)
         {
             var sessionStart = DateTimeOffset.UtcNow;
+            string? failure = null; // null => the session returned (a clean drop)
             try
             {
                 await RunSessionAsync(
@@ -175,8 +180,6 @@ public sealed class ProxyTunnelEngine(
                         }
                     },
                     cancellation);
-
-                writeWarning?.Invoke($"Tunnel '{policy.Tunnel}' session dropped. Reconnecting…");
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
             {
@@ -188,23 +191,26 @@ public sealed class ProxyTunnelEngine(
             }
             catch (Exception ex)
             {
-                // Everything else — a dropped/aborted setup (the session scope was
-                // cancelled mid-establish, surfacing as OperationCanceledException), a
-                // transient connect error, or a mid-run fault — is reconnectable, but
-                // bounded before the session has ever come up so a guest that hangs
-                // during setup does not retry forever without reporting failure.
-                if (!everEstablished && attempt >= StartupRetryLimit)
-                    throw new TunnelPolicyException(
-                        $"The tunnel '{policy.Tunnel}' could not be established: {ex.Message}");
-
-                writeWarning?.Invoke(
-                    everEstablished
-                        ? $"Tunnel '{policy.Tunnel}' dropped: {ex.Message}. Reconnecting…"
-                        : $"Tunnel '{policy.Tunnel}' not up yet: {ex.Message}. Retrying…");
+                // A dropped/aborted setup (session scope cancelled mid-establish → OCE),
+                // a transient connect error, or a mid-run fault — all reconnectable.
+                failure = ex.Message;
             }
 
             if (cancellation.IsCancellationRequested)
                 break;
+
+            // Count any attempt that never reached "established" — whether it threw or
+            // returned after a drop right after setup — toward the startup limit, so a
+            // guest that always drops before establishing cannot retry forever.
+            if (!everEstablished && attempt >= StartupRetryLimit)
+                throw new TunnelPolicyException(
+                    $"The tunnel '{policy.Tunnel}' could not be established"
+                    + (failure is null ? "." : $": {failure}."));
+
+            writeWarning?.Invoke(
+                everEstablished
+                    ? $"Tunnel '{policy.Tunnel}' dropped{(failure is null ? "" : $": {failure}")}. Reconnecting…"
+                    : $"Tunnel '{policy.Tunnel}' not up yet{(failure is null ? "" : $": {failure}")}. Retrying…");
 
             if (everEstablished && DateTimeOffset.UtcNow - sessionStart > StableThreshold)
                 attempt = 0;
@@ -224,9 +230,24 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
+    private async Task<GuestSshConnection> ConnectWithDeadlineAsync(CancellationToken cancellation)
+    {
+        using var connectDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        connectDeadline.CancelAfter(SetupTimeout);
+        try
+        {
+            return await connector.ConnectAsync(connectDeadline.Token);
+        }
+        catch (OperationCanceledException) when (connectDeadline.IsCancellationRequested && !cancellation.IsCancellationRequested)
+        {
+            // The deadline fired, not the caller — surface a reconnectable error.
+            throw new IOException($"the connection did not complete within {SetupTimeout.TotalSeconds:0}s");
+        }
+    }
+
     private async Task RunSessionAsync(SessionPlan plan, Action markEstablished, CancellationToken cancellation)
     {
-        await using var connection = await connector.ConnectAsync(cancellation);
+        await using var connection = await ConnectWithDeadlineAsync(cancellation);
         var session = connection.Session;
 
         PortForwardingService pfs;
@@ -480,58 +501,74 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
+    private const int RelayBufferSize = 81920;
+    private static readonly TimeSpan DrainDeadline = TimeSpan.FromSeconds(30);
+
     // Bidirectional relay between a host socket egs-tool owns and an SSH channel to
     // the guest. One peer is the client, the other the server; hostIsServer tells
     // them apart (egress: the host socket is the dialed target = server; ingress: the
     // host socket is the accepted caller = client).
     //
-    // The relay ends — relayScope is cancelled — when the server finishes responding
-    // (its send side reaches EOF), when the SSH channel closes, or on any I/O error.
-    // A clean EOF from the CLIENT is a half-close: it is forwarded to the server as a
-    // FIN only where the transport allows it (a host socket, via Shutdown(Send)); the
-    // SSH channel has no half-close, so a client FIN that would need to reach a guest
-    // server is simply not forwarded (guest servers are expected to be request-
-    // delimited), and the opposite direction keeps draining the response until the
-    // server closes.
+    // Teardown cancels READS only — never writes. Cancelling a write on an SshStream
+    // can interrupt a packet on the SHARED SSH session and disrupt other channels /
+    // relays on it (DevTunnels' own forwarder avoids cancelling destination writes),
+    // so an in-flight write is always allowed to finish; a write that cannot finish
+    // ends when its stream is disposed on teardown.
     //
-    // Teardown is driven by cancelling relayScope, which NetworkStream and SshStream
-    // reads honor — NOT by Shutdown(Receive), which does not reliably unblock a
-    // pending read on Windows (the platform egs-tool ships for).
+    // End-of-stream rules: the server's response direction ending ends the whole
+    // relay; the client's request direction ending is a half-close, forwarded to the
+    // server as a FIN only on a host socket (Shutdown(Send)) — the SSH channel has no
+    // half-close. When the SSH channel closes, the host-side read is cancelled (there
+    // is nothing to write to the gone guest) while the guest-side read drains any
+    // buffered response to the host client, bounded by a drain deadline.
     private static async Task RelayAsync(
         Socket hostSocket, Stream hostStream, Stream guestStream, bool hostIsServer, CancellationToken cancellation)
     {
-        using var relayScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        // Separate read scopes: a channel close cancels only the host-side read.
+        using var hostReadScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        using var guestReadScope = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        void EndRelay() { Cancel(hostReadScope); Cancel(guestReadScope); }
+
+        using var drainTimer = new CancellationTokenSource();
+        drainTimer.Token.Register(() =>
+        {
+            // The drain ran out of time (a stalled host client): force the socket
+            // closed to unblock any pending write, then stop the guest read.
+            try { hostSocket.Dispose(); } catch { /* already gone */ }
+            Cancel(guestReadScope);
+        });
 
         var channel = (guestStream as SshStream)?.Channel;
-        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => Cancel(relayScope);
+        void OnClosed()
+        {
+            Cancel(hostReadScope);
+            try { drainTimer.CancelAfter(DrainDeadline); }
+            catch (ObjectDisposedException) { }
+        }
+
+        void OnChannelClosed(object? s, SshChannelClosedEventArgs e) => OnClosed();
         if (channel is not null)
         {
             channel.Closed += OnChannelClosed;
-            // Race: the channel may have closed while we were dialing, before we
-            // subscribed — the event would not replay.
+            // Race: the channel may have closed before we subscribed — the event
+            // would not replay.
             if (channel.IsClosed)
-                Cancel(relayScope);
+                OnClosed();
         }
 
         try
         {
-            // Name the directions by role so the half-close / end-of-relay rules read
-            // the same for egress and ingress.
-            Task serverToClient, clientToServer;
-            if (hostIsServer)
-            {
-                serverToClient = PumpAsync(hostStream, guestStream, relayScope, onEof: null, endRelayOnEof: true);
-                clientToServer = PumpAsync(guestStream, hostStream, relayScope,
-                    onEof: () => TryShutdown(hostSocket, SocketShutdown.Send), endRelayOnEof: false);
-            }
-            else
-            {
-                serverToClient = PumpAsync(guestStream, hostStream, relayScope,
-                    onEof: () => TryShutdown(hostSocket, SocketShutdown.Send), endRelayOnEof: true);
-                clientToServer = PumpAsync(hostStream, guestStream, relayScope, onEof: null, endRelayOnEof: false);
-            }
+            // hostReading: host -> guest.  guestReading: guest -> host.
+            var hostReading = PumpAsync(hostStream, guestStream, hostReadScope.Token,
+                onEof: hostIsServer ? EndRelay : null,          // egress host=server->client ends; ingress host=client->server half-closes
+                onError: EndRelay);
+            var guestReading = PumpAsync(guestStream, hostStream, guestReadScope.Token,
+                onEof: hostIsServer
+                    ? () => TryShutdown(hostSocket, SocketShutdown.Send)                       // egress guest=client->server: FIN the host server
+                    : () => { TryShutdown(hostSocket, SocketShutdown.Send); EndRelay(); },     // ingress guest=server->client: FIN the host client, then end
+                onError: EndRelay);
 
-            await Task.WhenAll(serverToClient, clientToServer);
+            await Task.WhenAll(hostReading, guestReading);
         }
         finally
         {
@@ -540,29 +577,45 @@ public sealed class ProxyTunnelEngine(
         }
     }
 
-    private static async Task PumpAsync(
-        Stream from, Stream to, CancellationTokenSource relayScope, Action? onEof, bool endRelayOnEof)
+    // Copies one direction. The READ honors readToken (cancelled on teardown); the
+    // WRITE runs uncancelled so an SSH packet is never cut mid-flight. onEof fires on
+    // a clean end-of-stream; onError aborts the pair on an I/O fault.
+    private static async Task PumpAsync(Stream from, Stream to, CancellationToken readToken, Action? onEof, Action onError)
     {
+        var buffer = ArrayPool<byte>.Shared.Rent(RelayBufferSize);
         try
         {
-            await from.CopyToAsync(to, relayScope.Token);
-            // Clean EOF from 'from': forward it to the peer's write side if we can,
-            // and — when this is the server's response direction — end the relay so
-            // the other direction cannot hang holding a connection-limit slot.
-            try { onEof?.Invoke(); }
-            catch { /* socket already closed */ }
-            if (endRelayOnEof)
-                Cancel(relayScope);
-        }
-        catch (OperationCanceledException)
-        {
-            // The paired direction aborted, or the session was cancelled.
+            while (true)
+            {
+                int read;
+                try
+                {
+                    read = await from.ReadAsync(buffer.AsMemory(0, RelayBufferSize), readToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return; // teardown — reads are cancellable
+                }
+
+                if (read == 0)
+                {
+                    try { onEof?.Invoke(); }
+                    catch { /* socket already closed */ }
+                    return;
+                }
+
+                await to.WriteAsync(buffer.AsMemory(0, read), CancellationToken.None);
+            }
         }
         catch
         {
-            // I/O failure on this leg: abort the paired direction so Task.WhenAll
-            // cannot block and the connection-limit slot is released.
-            Cancel(relayScope);
+            // A read I/O fault (not cancellation) or a write fault: abort the pair so
+            // Task.WhenAll cannot hang and the connection-limit slot is released.
+            onError();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

@@ -224,6 +224,9 @@ Describe 'Proxied tunnel (Linux, eryph channel)' {
 
         $result = Invoke-CatletTunnelToCompletion -EgsTool $script:EgsTool -PolicyFile $file `
           -TimeoutSeconds 60
+        # It must have actually exited (a null ExitCode means it was killed on timeout,
+        # i.e. it hung instead of failing closed — that is a failure, not a pass).
+        $result.ExitCode | Should -Not -BeNullOrEmpty
         $result.ExitCode | Should -Not -Be 0
         $result.Output | Should -Match 'port forwarding'
       } finally {

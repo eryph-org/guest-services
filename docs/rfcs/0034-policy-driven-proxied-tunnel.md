@@ -146,6 +146,15 @@ nothing is delegated to the guest:
 - The single-fixed-target guarantee is therefore a **host-side** property; it does
   not depend on the guest constraining anything.
 
+The **enforced** boundary is host-side: which host listeners exist (ingress) and
+which single host target each egress dials. The guest-side loopback bind of an
+egress listener is a **cooperative default**, not an enforceable boundary — an
+untrusted guest can bind it wider or re-export it on another interface, and egs-tool
+cannot verify which guest interface accepted a forwarded connection. That does not
+weaken the host guarantee (egress still dials only the fixed `to`); it only means the
+guest-side reachability of an egress listener is the guest's own concern, so put any
+authentication at the target, never relying on the guest bind.
+
 egs-tool is the SSH *client*; the guest is the server. A compromised or malicious
 guest must not be able to steer egs-tool into opening data paths the policy did not
 declare. The DevTunnels `PortForwardingService` defaults are therefore overridden

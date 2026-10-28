@@ -1,4 +1,5 @@
 using Eryph.GuestServices.Client.ProxyTunnel;
+using Eryph.GuestServices.Tool.Interceptors;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -10,7 +11,9 @@ namespace Eryph.GuestServices.Tool.Commands.Eryph;
 // problem found, so a malformed or over-broad policy is caught before it is run.
 public sealed class CatletTunnelValidateCommand : AsyncCommand<CatletTunnelValidateCommand.Settings>
 {
-    public sealed class Settings : CommandSettings
+    // Offline policy validation connects to nothing, so it must not require elevation
+    // — otherwise `tunnel validate` would demand more than `tunnel up`, which is exempt.
+    public sealed class Settings : CommandSettings, IElevationExempt
     {
         [CommandOption("--policy <PATH>")]
         public string Policy { get; set; } = string.Empty;
