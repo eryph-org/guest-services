@@ -132,27 +132,42 @@ Describe 'Proxied tunnel (Linux, eryph channel)' {
     }
   }
 
-  Context 'egress — binds a distinct guest loopback address (listenAddress)' {
+  Context 'egress — same port on two targets via distinct loopback addresses (multi-session)' {
+    # Two egress rules on the SAME guest port (33xx-style), distinguished only by
+    # bind address. DevTunnels keys reverse-forwards by port, so the engine must run
+    # each in its own SSH session; both must route to their own host target.
     BeforeAll {
-      $script:EgaToken = "egs-egaddr-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-      $script:EgaHostProbe = Start-HostLoopbackTcpProbe -Token $script:EgaToken
+      $script:MsPort = 23350
+      $script:MsTokenA = "egs-msa-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+      $script:MsTokenB = "egs-msb-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+      $script:MsProbeA = Start-HostLoopbackTcpProbe -Token $script:MsTokenA
+      $script:MsProbeB = Start-HostLoopbackTcpProbe -Token $script:MsTokenB
       $policy = @{
-        tunnel = 'e2e-egress-addr'; catlet = $catlet.Id
-        egress = @(@{ name = 'probe'; listen = 23301; listenAddress = '127.0.0.2'; to = "127.0.0.1:$($script:EgaHostProbe.Port)" })
+        tunnel = 'e2e-egress-multisession'; catlet = $catlet.Id
+        egress = @(
+          @{ name = 'a'; listen = $script:MsPort; listenAddress = '127.0.0.2'; to = "127.0.0.1:$($script:MsProbeA.Port)" },
+          @{ name = 'b'; listen = $script:MsPort; listenAddress = '127.0.0.3'; to = "127.0.0.1:$($script:MsProbeB.Port)" }
+        )
         keepalive = @{ idleSeconds = 10; intervalSeconds = 10; retries = 3 }
       }
-      $file = Join-Path $script:PolicyDir 'egress-addr.json'
+      $file = Join-Path $script:PolicyDir 'egress-multisession.json'
       ($policy | ConvertTo-Json -Depth 6) | Set-Content -Path $file -Encoding utf8
-      $script:EgaTunnel = Start-CatletTunnel -EgsTool $script:EgsTool -PolicyFile $file
+      $script:MsTunnel = Start-CatletTunnel -EgsTool $script:EgsTool -PolicyFile $file
     }
     AfterAll {
-      Stop-CatletTunnel -Tunnel $script:EgaTunnel
-      if ($script:EgaHostProbe) { Stop-HostLoopbackTcpProbe -Probe $script:EgaHostProbe }
+      Stop-CatletTunnel -Tunnel $script:MsTunnel
+      if ($script:MsProbeA) { Stop-HostLoopbackTcpProbe -Probe $script:MsProbeA }
+      if ($script:MsProbeB) { Stop-HostLoopbackTcpProbe -Probe $script:MsProbeB }
     }
 
-    It 'relays a guest connection on 127.0.0.2 to the single host target' {
-      $token = Read-GuestLoopbackToken -Catlet $catlet -Username 'e2euser' -Address '127.0.0.2' -Port 23301
-      $token | Should -Be $script:EgaToken
+    It 'routes guest 127.0.0.2 (shared port) to the first target' {
+      $token = Read-GuestLoopbackToken -Catlet $catlet -Username 'e2euser' -Address '127.0.0.2' -Port $script:MsPort
+      $token | Should -Be $script:MsTokenA
+    }
+
+    It 'routes guest 127.0.0.3 (shared port) to the second target' {
+      $token = Read-GuestLoopbackToken -Catlet $catlet -Username 'e2euser' -Address '127.0.0.3' -Port $script:MsPort
+      $token | Should -Be $script:MsTokenB
     }
   }
 

@@ -2154,14 +2154,17 @@ function Start-CatletTunnel {
   $id = [guid]::NewGuid().ToString('N')
   $outFile = Join-Path $env:TEMP "egs-tunnel-$id.out"
   $errFile = Join-Path $env:TEMP "egs-tunnel-$id.err"
+  # Quote the policy path: Start-Process flattens ArgumentList into one command line,
+  # so a path containing spaces would otherwise be split into separate arguments.
   $proc = Start-Process -FilePath $EgsTool `
-    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', $PolicyFile) `
+    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', "`"$PolicyFile`"") `
     -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
     -PassThru -NoNewWindow
   $deadline = (Get-Date).AddSeconds($UpTimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     if ($proc.HasExited) {
       $text = (Get-Content -Raw -ErrorAction SilentlyContinue $outFile) + (Get-Content -Raw -ErrorAction SilentlyContinue $errFile)
+      Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
       throw "catlet tunnel exited early (code $($proc.ExitCode)): $text"
     }
     $out = Get-Content -Raw -ErrorAction SilentlyContinue $outFile
@@ -2170,7 +2173,11 @@ function Start-CatletTunnel {
     }
     Start-Sleep -Milliseconds 500
   }
-  throw "catlet tunnel did not come up within ${UpTimeoutSeconds}s. Output: $(Get-Content -Raw -ErrorAction SilentlyContinue $outFile)"
+  # Did not come up: stop the orphan process (the caller never got a handle) and clean up.
+  $text = Get-Content -Raw -ErrorAction SilentlyContinue $outFile
+  try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
+  Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
+  throw "catlet tunnel did not come up within ${UpTimeoutSeconds}s. Output: $text"
 }
 
 function Stop-CatletTunnel {
@@ -2202,7 +2209,7 @@ function Invoke-CatletTunnelToCompletion {
   $outFile = Join-Path $env:TEMP "egs-tunnel-$id.out"
   $errFile = Join-Path $env:TEMP "egs-tunnel-$id.err"
   $proc = Start-Process -FilePath $EgsTool `
-    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', $PolicyFile) `
+    -ArgumentList @('catlet', 'tunnel', 'up', '--policy', "`"$PolicyFile`"") `
     -RedirectStandardOutput $outFile -RedirectStandardError $errFile `
     -PassThru -NoNewWindow
   $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
