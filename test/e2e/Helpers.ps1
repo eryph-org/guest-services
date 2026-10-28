@@ -2218,8 +2218,8 @@ function Invoke-CatletTunnelToCompletion {
 function Read-GuestLoopbackToken {
   <#
   .SYNOPSIS
-    From inside a Linux catlet (direct sshd), connects to 127.0.0.1:<Port> and
-    returns the bytes read (the token a probe/tunnel delivers). With
+    From inside a Linux catlet (direct sshd), connects to <Address>:<Port> (default
+    127.0.0.1) and returns the bytes read (the token a probe/tunnel delivers). With
     -TolerateFailure a refused/timed-out connection returns '' instead of
     throwing — used to prove a non-declared port is NOT reachable.
   #>
@@ -2228,6 +2228,7 @@ function Read-GuestLoopbackToken {
     [Parameter(Mandatory = $true)] $Catlet,
     [Parameter(Mandatory = $true)] [string] $Username,
     [Parameter(Mandatory = $true)] [int] $Port,
+    [Parameter()] [string] $Address = '127.0.0.1',
     [Parameter()] [switch] $TolerateFailure
   )
   $py = @"
@@ -2235,7 +2236,7 @@ import socket, sys
 s = socket.socket()
 s.settimeout(5)
 try:
-    s.connect(('127.0.0.1', $Port))
+    s.connect(('$Address', $Port))
     sys.stdout.write(s.recv(256).decode())
 except Exception as e:
     sys.stderr.write(str(e))

@@ -132,6 +132,30 @@ Describe 'Proxied tunnel (Linux, eryph channel)' {
     }
   }
 
+  Context 'egress — binds a distinct guest loopback address (listenAddress)' {
+    BeforeAll {
+      $script:EgaToken = "egs-egaddr-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+      $script:EgaHostProbe = Start-HostLoopbackTcpProbe -Token $script:EgaToken
+      $policy = @{
+        tunnel = 'e2e-egress-addr'; catlet = $catlet.Id
+        egress = @(@{ name = 'probe'; listen = 23301; listenAddress = '127.0.0.2'; to = "127.0.0.1:$($script:EgaHostProbe.Port)" })
+        keepalive = @{ idleSeconds = 10; intervalSeconds = 10; retries = 3 }
+      }
+      $file = Join-Path $script:PolicyDir 'egress-addr.json'
+      ($policy | ConvertTo-Json -Depth 6) | Set-Content -Path $file -Encoding utf8
+      $script:EgaTunnel = Start-CatletTunnel -EgsTool $script:EgsTool -PolicyFile $file
+    }
+    AfterAll {
+      Stop-CatletTunnel -Tunnel $script:EgaTunnel
+      if ($script:EgaHostProbe) { Stop-HostLoopbackTcpProbe -Probe $script:EgaHostProbe }
+    }
+
+    It 'relays a guest connection on 127.0.0.2 to the single host target' {
+      $token = Read-GuestLoopbackToken -Catlet $catlet -Username 'e2euser' -Address '127.0.0.2' -Port 23301
+      $token | Should -Be $script:EgaToken
+    }
+  }
+
   Context 'ingress — host reaches a single guest service through egs-tool' {
     BeforeAll {
       $script:InToken = "egs-ingress-$([guid]::NewGuid().ToString('N').Substring(0,8))"
