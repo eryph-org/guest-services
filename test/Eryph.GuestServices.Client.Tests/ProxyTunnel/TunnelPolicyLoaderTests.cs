@@ -247,12 +247,15 @@ public class TunnelPolicyLoaderTests
         errors.Should().Contain(e => e.Contains("ambiguous") || e.Contains("IPv6"));
     }
 
-    [Fact]
-    public void Rejects_unsafe_catlet_token()
+    [Theory]
+    [InlineData("../evil")]  // path separator
+    [InlineData(".")]        // no alphanumeric
+    [InlineData("..")]       // no alphanumeric
+    public void Rejects_unsafe_catlet_token(string catlet)
     {
-        const string json = """
+        var json = $$"""
             {
-              "tunnel": "t", "catlet": "../evil",
+              "tunnel": "t", "catlet": "{{catlet}}",
               "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
               "keepalive": { "idleSeconds": 1, "intervalSeconds": 1, "retries": 1 }
             }

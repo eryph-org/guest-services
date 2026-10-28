@@ -28,6 +28,8 @@ public class TunnelAddressTests
     [InlineData("host:70000")]            // port out of range
     [InlineData("0.0.0.0:3300")]          // bind-any is not a single target
     [InlineData("fe80::1:3300")]          // unbracketed IPv6 is ambiguous
+    [InlineData(" host:3300")]            // leading whitespace
+    [InlineData("ho st:3300")]            // internal whitespace
     [InlineData("")]
     [InlineData(null)]
     public void TryParseTarget_rejects_non_single_targets(string? value)
