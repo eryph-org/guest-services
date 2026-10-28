@@ -57,8 +57,12 @@ public sealed class CatletTunnelUpCommand : AsyncCommand<CatletTunnelUpCommand.S
                 // per-socket probe interval, so give it the full idle+probe budget
                 // (idle before the first probe, then interval × retries) — otherwise a
                 // small intervalSeconds would make the session flap on a brief hiccup.
-                keepAliveTimeoutSeconds:
-                    policy.Keepalive.IdleSeconds + (policy.Keepalive.IntervalSeconds * policy.Keepalive.Retries),
+                // Compute in long and clamp: a floor so tiny policy values don't flap,
+                // a cap so large ones can't overflow the int field (which would read as
+                // 0 and silently disable the keepalive).
+                keepAliveTimeoutSeconds: (int)Math.Clamp(
+                    (long)policy.Keepalive.IdleSeconds + ((long)policy.Keepalive.IntervalSeconds * policy.Keepalive.Retries),
+                    10L, 86400L),
                 enablePortForwarding: true);
         }
         catch (GuestConnectionException ex)

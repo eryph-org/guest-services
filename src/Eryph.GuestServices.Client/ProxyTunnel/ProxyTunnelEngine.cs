@@ -390,7 +390,10 @@ public sealed class ProxyTunnelEngine(
         finally
         {
             socket?.Dispose();
-            await guestStream.DisposeAsync();
+            // Release the slot even if disposing the (already torn-down) guest stream
+            // throws — otherwise a guest could leak the rule's connection slots.
+            try { await guestStream.DisposeAsync(); }
+            catch { /* channel/session already gone */ }
             limiter.Release();
         }
     }

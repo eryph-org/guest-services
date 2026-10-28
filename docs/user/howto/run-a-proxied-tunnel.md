@@ -74,6 +74,12 @@ the egress target (egs-tool adds no authentication of its own), and an egress `t
 the host's own loopback hands the guest access to a host-local service. Choose `to`
 and any non-loopback ingress bind deliberately.
 
+One protocol caveat: a half-close (a caller that shuts down its send side to signal
+"request complete" but keeps reading, e.g. `nc -N`) is forwarded host→guest but not
+guest→host — the SSH channel has no half-close. Request/response services that close
+when done work fine; a service that waits for the caller's EOF before replying will
+not see it until the connection fully closes.
+
 ## Validate it
 
 ```

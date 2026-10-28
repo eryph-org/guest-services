@@ -259,6 +259,11 @@ public static class TunnelPolicyLoader
         return trimmed;
     }
 
+    // Keepalive values are seconds; cap them at a day so the derived SSH timeout
+    // (idle + interval × retries) stays well within a positive int and a typo like
+    // 99999999 is rejected rather than silently disabling the keepalive.
+    private const int MaxKeepaliveSeconds = 86400;
+
     private static bool RequirePositive(int? value, string field, List<string> problems)
     {
         if (value is null)
@@ -270,6 +275,12 @@ public static class TunnelPolicyLoader
         if (value.Value <= 0)
         {
             problems.Add($"'{field}' must be greater than zero");
+            return false;
+        }
+
+        if (value.Value > MaxKeepaliveSeconds)
+        {
+            problems.Add($"'{field}' must be at most {MaxKeepaliveSeconds}");
             return false;
         }
 

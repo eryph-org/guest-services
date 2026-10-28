@@ -179,6 +179,21 @@ public class TunnelPolicyLoaderTests
     }
 
     [Fact]
+    public void Rejects_absurdly_large_keepalive()
+    {
+        const string json = """
+            {
+              "tunnel": "t", "catlet": "c",
+              "egress": [ { "name": "e", "listen": 3300, "to": "host:3300" } ],
+              "keepalive": { "idleSeconds": 1, "intervalSeconds": 99999999, "retries": 5 }
+            }
+            """;
+
+        TunnelPolicyLoader.TryParse(json, out _, out var errors).Should().BeFalse();
+        errors.Should().Contain(e => e.Contains("intervalSeconds") && e.Contains("at most"));
+    }
+
+    [Fact]
     public void Rejects_non_positive_keepalive()
     {
         const string json = """
